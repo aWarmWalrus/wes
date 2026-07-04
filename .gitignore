@@ -7,3 +7,4 @@ hailort.log
 *.un~
 *~
 tests/.pytest_cache/
+tests/eval/fixtures/

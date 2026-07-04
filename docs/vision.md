@@ -17,10 +17,15 @@ Three vision capabilities, all fed to Claude as tools or as prefetched context:
 
 ## `describe_scene` — rich description (local Gemma VLM)
 
-- **Ollama** on the PC runs **`gemma3:4b`** (multimodal, ~2.9GB, 100% on the 1660),
-  kept resident via `keep_alive: -1` + startup warmup (cold ~80s; warm ~1–3s).
-  `WES_VLM_MODEL` swaps it — `gemma4:e4b` (9.6GB) once a bigger GPU lands (Gemma 4 has
-  no 4B variant, won't fit the 6GB 1660).
+- **Ollama** on the PC runs **`gemma4:12b`** (multimodal, 8.1GB VRAM, 100% on the
+  5060 Ti), kept resident via `keep_alive: -1` + startup warmup. **Measured warm
+  inference ≈ 15s per frame** (image prefill dominates) — acceptable only because the
+  wake-word prefetch hides it; an ad-hoc cache-miss `describe_scene` is slow.
+  `WES_VLM_MODEL` swaps it (launcher-set; the code default in `wes_server.py` is still
+  the old `gemma3:4b`). Chat stays on `gemma4:e4b`, which **cannot serve as the VLM**:
+  its Ollama build ignores `images` on `/api/generate` ("no image was provided" —
+  verified 2026-07-04), so the 12b isn't just richer, it's the only local gemma4
+  option that sees at all. Both models fit the 16GB card together (11.4GB).
 - Flow: Pi `capture_frame.py` (system python3 + cv2) → JPEG → PC `describe_scene` →
   Gemma → Claude relays. Single frame, **not** a video stream.
 - Claude chooses: `look` (fast object list) vs `describe_scene` (rich, Gemma).

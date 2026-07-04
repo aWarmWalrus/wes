@@ -1,0 +1,460 @@
+"""Eval harness, phases 1-2 (docs/eval-design.md): golden set, deterministic
+checks, and an LLM judge with selectable backends.
+
+Runs each case in eval/golden.yaml through the LIVE server's /respond_stream
+(real STT -> LLM tool loop -> streaming TTS), re-transcribes the reply PCM with
+a local tiny.en whisper (zero server changes — doubles as a TTS intelligibility
+check), and applies the case's deterministic checks. Phase 2: each case's
+`judge:` question is also scored by one LLM-judge call (correct/concise/
+natural 0-2 + hallucination flag).
+
+Judge backends (--judge / WES_EVAL_JUDGE, default haiku):
+  haiku   claude-haiku-4-5 — the sharper signal; pennies per run. Use when
+          deciding something (prompt/model/routing changes). Needs
+          ANTHROPIC_API_KEY; without one the judge turns off with a hint.
+  local   gemma4:12b via Ollama — free, key-less, a bit noisier. Use for
+          nightly/unattended runs. Deliberately NOT gemma4:e4b: that is the
+          model under test, and self-judging is the classic LLM-judge bias.
+  both    scores every case with both and prints an agreement summary
+          (records the haiku scores). Run occasionally to confirm the local
+          judge still tracks haiku before trusting it for nightly gating.
+  off     deterministic checks only (--no-judge is an alias).
+
+History rows record which judge scored them, and the judge gate only compares
+runs scored by the SAME backend — haiku and local medians are never mixed.
+
+Results append to eval_history.csv; the run FAILS (exit 1) if
+  - any case that passed in the previous run fails now (named-case regression,
+    printed by id), or
+  - the run's judge `correct` average drops more than 0.3 below the median of
+    the last 5 recorded runs by the same judge backend.
+
+    C:\\Users\\awarm\\wes-pc\\.venv\\Scripts\\python.exe Z:\\wes\\tests\\eval_turns.py
+    ... --only time-basic     # run one case
+    ... --url http://...      # non-default server
+    ... --judge local         # free local judge (nightly)
+    ... --judge both          # judge-agreement check
+    ... --no-judge            # deterministic checks only
+
+Audio goes over HTTP only; nothing is ever played on a speaker.
+"""
+import argparse
+import csv
+import io
+import json
+import os
+import re
+import statistics
+import struct
+import subprocess
+import sys
+import time
+import urllib.request
+import wave
+
+# cp1252 console: a judge note containing '→' etc. must degrade, not crash
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(errors="replace")
+    except (AttributeError, ValueError):  # non-reconfigurable (pytest capture)
+        pass
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "pc"))
+
+from stream_client import post_stream, SAMPLE_RATE  # noqa: E402
+
+GOLDEN = os.path.join(HERE, "eval", "golden.yaml")
+FIXTURES = os.path.join(HERE, "eval", "fixtures")
+HISTORY = os.path.join(HERE, "eval_history.csv")
+SERVER = os.environ.get("WES_TEST_URL", "http://127.0.0.1:8080")
+PI_STATE = os.environ.get("WES_PI_STATE_URL", "http://10.0.0.79:8090")
+MAX_TOTAL_MS_DEFAULT = 30000
+
+FIELDS = ["ts", "case", "passed", "fails", "transcript", "reply", "spec",
+          "stt_ms", "ttfa_ms", "total_ms", "audio_s", "judge",
+          "judge_correct", "judge_concise", "judge_natural",
+          "hallucination", "judge_note"]
+
+JUDGE_BACKEND = os.environ.get("WES_EVAL_JUDGE", "haiku")  # haiku|local|off
+JUDGE_MODEL = os.environ.get("WES_EVAL_JUDGE_MODEL", "claude-haiku-4-5")
+JUDGE_LOCAL_MODEL = os.environ.get("WES_EVAL_JUDGE_LOCAL_MODEL", "gemma4:12b")
+OLLAMA_URL = os.environ.get("WES_OLLAMA_URL", "http://127.0.0.1:11434")
+JUDGE_DROP = 0.3          # fail if correct-avg drops more than this vs median
+JUDGE_MEDIAN_OF = 5       # ... of the last N recorded runs
+JUDGE_SYSTEM = (
+    "You are grading a home voice assistant's spoken reply. The assistant is "
+    "Wesley; it genuinely runs on a Raspberry Pi with live status tools, so "
+    "statements to that effect are true, not hallucinations. Both the "
+    "question and the reply were round-tripped through speech recognition: "
+    "ignore punctuation and casing, and treat garbled numbers, years, or "
+    "words that are plausibly transcription artifacts charitably. Reason in "
+    "the note field FIRST, then score; mark incorrect/hallucination only for "
+    "clear content errors. Return ONLY a JSON object, no prose."
+)
+
+
+def load_golden():
+    import yaml
+    with open(GOLDEN, encoding="utf-8") as f:
+        cases = yaml.safe_load(f)
+    ids = [c["id"] for c in cases]
+    assert len(ids) == len(set(ids)), "duplicate case ids in golden.yaml"
+    return cases
+
+
+def pi_reachable():
+    try:
+        with urllib.request.urlopen(PI_STATE + "/state", timeout=3) as r:
+            return r.status == 200
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def case_turns(case):
+    """A case is one utterance (`say`) or a multi-turn conversation (`turns`);
+    checks always apply to the reply of the LAST turn."""
+    return case["turns"] if "turns" in case else [case["say"]]
+
+
+def fixture_wav(case, turn_i=0):
+    """Synthesized (or silence) WAV bytes for one turn, cached on disk."""
+    os.makedirs(FIXTURES, exist_ok=True)
+    say = case_turns(case)[turn_i]
+    name = case["id"] + (f"-{turn_i}" if turn_i else "")
+    path = os.path.join(FIXTURES, name + ".wav")
+    if not os.path.exists(path):
+        if say == "SILENCE":
+            with wave.open(path, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(16000)
+                w.writeframes(struct.pack("<h", 0) * 16000)  # 1s of silence
+        else:
+            import wes_server as ws
+            subprocess.run(
+                [ws.PIPER_BIN, "-m", ws.VOICE_MODEL, "-f", path],
+                input=say.encode(), check=True, capture_output=True,
+            )
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def reset_server_conversation(url):
+    """The server keeps conversation memory across turns; clear it so every
+    case starts from a blank context and cases stay order-independent."""
+    try:
+        req = urllib.request.Request(url + "/reset_conversation", data=b"")
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception as e:  # noqa: BLE001  (older server without the route)
+        print(f"! reset_conversation unavailable: {e}")
+
+
+_stt = None
+
+
+def retranscribe(pcm):
+    """Reply PCM -> text via a local tiny.en whisper (CPU). What this hears is
+    what the user hears — garbled TTS fails reply_regex, by design."""
+    global _stt
+    if not pcm:
+        return ""
+    if _stt is None:
+        from faster_whisper import WhisperModel
+        _stt = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes(pcm)
+    buf.seek(0)
+    segments, _ = _stt.transcribe(buf)
+    return " ".join(s.text.strip() for s in segments).strip()
+
+
+def check_case(case, res, reply_text):
+    """Deterministic checks -> list of failure strings (empty = pass)."""
+    exp = case.get("expect", {})
+    fails = []
+    for sub in exp.get("transcript_includes", []):
+        if sub.lower() not in res["transcript"].lower():
+            fails.append(f"transcript missing {sub!r}: {res['transcript']!r}")
+    rx = exp.get("reply_regex")
+    if rx and not re.search(rx, reply_text, re.IGNORECASE):
+        fails.append(f"reply_regex {rx!r} unmatched: {reply_text!r}")
+    if res["audio_s"] < exp.get("min_audio_s", 0):
+        fails.append(f"reply too short: {res['audio_s']}s")
+    if res["audio_s"] > exp.get("max_audio_s", 10 ** 6):
+        fails.append(f"reply too long: {res['audio_s']}s (brevity)")
+    if res["total_ms"] > exp.get("max_total_ms", MAX_TOTAL_MS_DEFAULT):
+        fails.append(f"too slow: {res['total_ms']}ms")
+    return fails
+
+
+def parse_judge(text):
+    """Judge reply text -> scores dict, or None if it isn't valid/complete."""
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return None
+    try:
+        d = json.loads(m.group(0))
+        return {
+            "judge_correct": int(d["correct"]),
+            "judge_concise": int(d["concise"]),
+            "judge_natural": int(d["natural"]),
+            "hallucination": int(bool(d.get("hallucination", False))),
+            "judge_note": str(d.get("note", ""))[:200],
+        }
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def judge_prompt(case, transcript, reply):
+    """The one grading prompt — identical for every backend, so backends are
+    comparable and --judge both measures the judges, not the prompts."""
+    check = case.get(
+        "judge", "Is the reply a reasonable spoken answer to the question?")
+    now = time.strftime("%A, %B %d %Y, %I:%M %p")
+    return (
+        f"Actual current date/time (for grading): {now}\n"
+        f"Question (as transcribed): {transcript or '(silence)'}\n"
+        f"Reply spoken to the user: {reply}\n"
+        f"Case-specific check: {check}\n"
+        'Return JSON: {"note": "<one line of reasoning>", '
+        '"correct": 0-2, "concise": 0-2, "natural": 0-2, '
+        '"hallucination": true/false}'
+    )
+
+
+_haiku = None
+
+
+def _judge_raw_haiku(user_content):
+    global _haiku
+    if _haiku is None:
+        import anthropic
+        _haiku = anthropic.Anthropic()
+    msg = _haiku.messages.create(
+        model=JUDGE_MODEL, max_tokens=250, system=JUDGE_SYSTEM,
+        messages=[{"role": "user", "content": user_content}])
+    return msg.content[0].text
+
+
+def _judge_raw_local(user_content):
+    # gemma4:12b is already resident on the card as the VLM; a text-only chat
+    # call costs no extra VRAM and runs in a couple of seconds. format=json +
+    # temperature 0 keep the small judge parseable and repeatable.
+    body = json.dumps({
+        "model": JUDGE_LOCAL_MODEL, "stream": False, "format": "json",
+        "options": {"temperature": 0},
+        "messages": [{"role": "system", "content": JUDGE_SYSTEM},
+                     {"role": "user", "content": user_content}],
+    }).encode()
+    req = urllib.request.Request(
+        OLLAMA_URL + "/api/chat", data=body,
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.load(r)["message"]["content"]
+
+
+def judge_case(case, transcript, reply, backend):
+    """One judge call scoring what deterministic checks can't. None on any
+    failure — the judge must never break a run."""
+    raw = {"haiku": _judge_raw_haiku, "local": _judge_raw_local}[backend]
+    try:
+        scores = parse_judge(raw(judge_prompt(case, transcript, reply)))
+        if scores is None:
+            print(f"     ! {backend} judge output unparseable — case unscored")
+        return scores
+    except Exception as e:  # noqa: BLE001
+        print(f"     ! {backend} judge error: {e}")
+        return None
+
+
+def judge_gate(current_avg, prior_avgs):
+    """True (= fail the run) if this run's correct-avg dropped too far below
+    the median of the recent recorded runs."""
+    if current_avg is None or not prior_avgs:
+        return False
+    baseline = statistics.median(prior_avgs[-JUDGE_MEDIAN_OF:])
+    return current_avg < baseline - JUDGE_DROP
+
+
+def prior_judge_averages(backend):
+    """Per-run judge_correct averages from the history, oldest first — only
+    runs scored by the SAME backend (different judges have different
+    baselines; comparing across them would make the gate meaningless).
+    Rows from before the judge column existed were scored by haiku."""
+    if not os.path.exists(HISTORY):
+        return []
+    with open(HISTORY, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    runs = {}  # ts -> [scores]  (dicts keep insertion order = file order)
+    for r in rows:
+        if r.get("judge_correct") and (r.get("judge") or "haiku") == backend:
+            runs.setdefault(r["ts"], []).append(int(r["judge_correct"]))
+    return [sum(v) / len(v) for v in runs.values()]
+
+
+def previous_results():
+    """case -> passed? from the most recent run recorded in the history."""
+    if not os.path.exists(HISTORY):
+        return {}
+    with open(HISTORY, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        return {}
+    last_ts = rows[-1]["ts"]
+    return {r["case"]: r["passed"] == "1" for r in rows if r["ts"] == last_ts}
+
+
+def append_history(rows):
+    if os.path.exists(HISTORY):
+        with open(HISTORY, newline="", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+        if header is not None and header != FIELDS:
+            # schema grew (e.g. phase-2 judge columns): rewrite with the new
+            # header, padding old rows with blanks
+            with open(HISTORY, newline="", encoding="utf-8") as f:
+                old = list(csv.DictReader(f))
+            with open(HISTORY, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=FIELDS, restval="",
+                                   extrasaction="ignore")
+                w.writeheader()
+                w.writerows(old)
+    new = not os.path.exists(HISTORY)
+    with open(HISTORY, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=FIELDS)
+        if new:
+            w.writeheader()
+        w.writerows(rows)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--only", help="run a single case id")
+    ap.add_argument("--url", default=SERVER)
+    ap.add_argument("--no-history", action="store_true",
+                    help="don't append to eval_history.csv (ad-hoc debugging)")
+    ap.add_argument("--judge", choices=["haiku", "local", "both", "off"],
+                    default=None,
+                    help="judge backend (default: WES_EVAL_JUDGE or haiku); "
+                         "'both' also scores with local and reports agreement")
+    ap.add_argument("--no-judge", action="store_true",
+                    help="alias for --judge off (deterministic checks only)")
+    args = ap.parse_args()
+
+    backend = args.judge or ("off" if args.no_judge else JUDGE_BACKEND)
+    if backend in ("haiku", "both") and \
+            not os.environ.get("ANTHROPIC_API_KEY"):
+        fallback = "local" if backend == "both" else "off"
+        print(f"judge: no ANTHROPIC_API_KEY — {backend} unavailable, using "
+              f"{fallback} (hint: --judge local is free and key-less)")
+        backend = fallback
+    # 'both' grades with both judges but RECORDS haiku (the sharper signal);
+    # its purpose is checking that the local judge still tracks haiku
+    primary = "haiku" if backend == "both" else backend
+    if backend == "off":
+        print("judge: OFF")
+
+    cases = load_golden()
+    if args.only:
+        cases = [c for c in cases if c["id"] == args.only]
+        if not cases:
+            sys.exit(f"no case with id {args.only!r}")
+    pi_up = pi_reachable()
+
+    prev = previous_results()
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    rows, regressions, agreement, n_pass, n_skip = [], [], [], 0, 0
+    for case in cases:
+        if case.get("requires_pi") and not pi_up:
+            print(f"SKIP {case['id']}  (Pi unreachable)")
+            n_skip += 1
+            continue
+        reset_server_conversation(args.url)
+        for turn_i in range(len(case_turns(case))):  # checks target last turn
+            res = post_stream(args.url, fixture_wav(case, turn_i),
+                              collect_audio=True)
+            reply_text = retranscribe(res.pop("pcm"))
+        fails = check_case(case, res, reply_text)
+        ok = not fails
+        n_pass += ok
+        mark = "PASS" if ok else "FAIL"
+        print(f"{mark} {case['id']:22s} stt={res['stt_ms']}ms "
+              f"total={res['total_ms']}ms audio={res['audio_s']}s")
+        for fail in fails:
+            print(f"     - {fail}")
+        if not ok and prev.get(case["id"]) is True:
+            regressions.append(case["id"])
+        scores = None
+        if primary != "off":
+            scores = judge_case(case, res["transcript"], reply_text, primary)
+        if scores:
+            print(f"     {primary}: correct={scores['judge_correct']} "
+                  f"concise={scores['judge_concise']} "
+                  f"natural={scores['judge_natural']}"
+                  + (" HALLUCINATION" if scores["hallucination"] else "")
+                  + f"  ({scores['judge_note']})")
+        if backend == "both":
+            ls = judge_case(case, res["transcript"], reply_text, "local")
+            if ls:
+                print(f"     local: correct={ls['judge_correct']} "
+                      f"concise={ls['judge_concise']} "
+                      f"natural={ls['judge_natural']}"
+                      + (" HALLUCINATION" if ls["hallucination"] else "")
+                      + f"  ({ls['judge_note']})")
+            if scores and ls:
+                agreement.append(
+                    (case["id"], scores["judge_correct"],
+                     ls["judge_correct"]))
+        rows.append({
+            "ts": ts, "case": case["id"], "passed": int(ok),
+            "fails": "; ".join(fails), "transcript": res["transcript"],
+            "reply": reply_text, "spec": res["spec"], "stt_ms": res["stt_ms"],
+            "ttfa_ms": res["ttfa_ms"], "total_ms": res["total_ms"],
+            "audio_s": res["audio_s"],
+            "judge": primary if scores else "",
+            **(scores or {"judge_correct": "", "judge_concise": "",
+                          "judge_natural": "", "hallucination": "",
+                          "judge_note": ""}),
+        })
+
+    scored = [r for r in rows if r["judge_correct"] != ""]
+    judge_avg = (sum(r["judge_correct"] for r in scored) / len(scored)
+                 if scored else None)
+    # read BEFORE appending this run; same-backend runs only
+    prior_avgs = prior_judge_averages(primary) if primary != "off" else []
+
+    if rows and not args.no_history and not args.only:
+        append_history(rows)
+    ran = len(rows)
+    print(f"\n{n_pass}/{ran} passed" + (f", {n_skip} skipped" if n_skip else ""))
+    if judge_avg is not None:
+        print(f"judge ({primary}) correct-avg: {judge_avg:.2f}/2"
+              + (f" (recent {primary} median "
+                 f"{statistics.median(prior_avgs[-JUDGE_MEDIAN_OF:]):.2f})"
+                 if prior_avgs else f" (first {primary}-judged run)"))
+    if agreement:
+        diffs = [abs(h - l) for _, h, l in agreement]
+        off = [f"{c} (haiku {h} vs local {l})"
+               for c, h, l in agreement if h != l]
+        print(f"judge agreement (correct, {len(agreement)} cases): "
+              f"mean |diff| {sum(diffs) / len(diffs):.2f}"
+              + ("; disagreed: " + ", ".join(off) if off else "; identical"))
+    if regressions:
+        print("REGRESSIONS (passed last run, fail now): " + ", ".join(regressions))
+        sys.exit(1)
+    if judge_gate(judge_avg, prior_avgs):
+        print(f"JUDGE REGRESSION: correct-avg {judge_avg:.2f} dropped >"
+              f"{JUDGE_DROP} below the recent median")
+        sys.exit(1)
+    if ran and n_pass < ran and not prev:
+        print("(first recorded run — failures above are baseline, not regressions)")
+
+
+if __name__ == "__main__":
+    main()

@@ -4,6 +4,7 @@ Run: cd Z:\\wes\\tests && python -m pytest        (from the wes-pc venv)
 These are the regression tripwires for the server's non-LLM logic.
 """
 import json
+import re
 import threading
 import time
 
@@ -118,6 +119,16 @@ class TestRunTool:
         out = ws.run_tool("get_datetime", {})
         assert any(y in out for y in ("2025", "2026", "2027", "2028"))
 
+    def test_get_datetime_is_speakable(self):
+        # gemma repeats this near-verbatim into TTS: month by name, 12h clock
+        # with AM/PM, no seconds, no zero-padded hour/day
+        out = ws.run_tool("get_datetime", {})
+        assert re.search(r"January|February|March|April|May|June|July|August"
+                         r"|September|October|November|December", out)
+        assert re.search(r"\b\d{1,2}:\d{2} [AP]M", out)
+        assert not re.search(r"\d{1,2}:\d{2}:\d{2}", out)  # no seconds
+        assert " 0" not in out                             # no zero padding
+
     def test_unknown_tool(self):
         assert "unknown tool" in ws.run_tool("does_not_exist", {})
 
@@ -148,6 +159,60 @@ class TestDescribeSceneCache:
         except OSError:
             result = None
         assert result is None or result.get("description") != "Old stale scene."
+
+
+class TestConversationMemory:
+    """Sliding-window conversation memory (LiveKit ChatContext pattern)."""
+
+    def setup_method(self):
+        ws.reset_conversation()
+
+    def teardown_method(self):
+        ws.reset_conversation()
+
+    def test_round_trip_in_order(self):
+        ws.record_turn("hi", "hello there")
+        ws.record_turn("what time is it", "It is noon.")
+        assert ws.conversation_context() == [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello there"},
+            {"role": "user", "content": "what time is it"},
+            {"role": "assistant", "content": "It is noon."},
+        ]
+
+    def test_silence_and_empty_replies_are_not_memory(self):
+        ws.record_turn("", "Sorry, I didn't catch that.")
+        ws.record_turn("   ", "reply")
+        ws.record_turn("question", "")
+        assert ws.conversation_context() == []
+
+    def test_window_keeps_last_n_exchanges(self):
+        for i in range(ws.CONV_TURNS + 3):
+            ws.record_turn(f"q{i}", f"a{i}")
+        ctx = ws.conversation_context()
+        assert len(ctx) == 2 * ws.CONV_TURNS
+        assert ctx[0]["content"] == "q3"      # oldest three dropped
+        assert ctx[-1]["content"] == f"a{ws.CONV_TURNS + 2}"
+
+    def test_idle_ttl_clears_context(self):
+        ws.record_turn("hi", "hello")
+        ws._conv_last = time.time() - ws.CONV_TTL - 1
+        assert ws.conversation_context() == []
+
+    def test_reset_returns_turn_count(self):
+        ws.record_turn("a", "b")
+        ws.record_turn("c", "d")
+        assert ws.reset_conversation() == 2
+        assert ws.conversation_context() == []
+
+    def test_roles_always_alternate_user_first(self):
+        # the Anthropic API rejects non-alternating roles; the window cap is
+        # in whole exchanges so this must hold for any history state
+        for i in range(ws.CONV_TURNS + 5):
+            ws.record_turn(f"q{i}", f"a{i}")
+        ctx = ws.conversation_context()
+        assert [m["role"] for m in ctx[0::2]] == ["user"] * (len(ctx) // 2)
+        assert [m["role"] for m in ctx[1::2]] == ["assistant"] * (len(ctx) // 2)
 
 
 class TestOllamaBackend:
@@ -199,6 +264,25 @@ class TestOllamaBackend:
         assert "".join(ws._stream_local("hi")) == "Hello there."
         assert calls[0]["model"] == ws.LOCAL_LLM_MODEL
         assert calls[0]["think"] is False  # spoken replies: no thinking tokens
+
+    def test_stream_local_carries_conversation(self, monkeypatch):
+        ws.reset_conversation()
+        ws.record_turn("my name is charlie", "Nice to meet you, Charlie.")
+        fake, calls = self._fake_urlopen([[
+            {"message": {"content": "You are Charlie."}, "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        try:
+            out = "".join(ws._stream_local("what is my name?"))
+        finally:
+            ws.reset_conversation()
+        assert out == "You are Charlie."
+        msgs = calls[0]["messages"]
+        assert msgs[0]["role"] == "system"
+        assert msgs[1:] == [
+            {"role": "user", "content": "my name is charlie"},
+            {"role": "assistant", "content": "Nice to meet you, Charlie."},
+            {"role": "user", "content": "what is my name?"},
+        ]
 
     def test_stream_local_tool_loop(self, monkeypatch):
         fake, calls = self._fake_urlopen([
@@ -281,8 +365,27 @@ class TestEscalation:
         ])
         monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
         monkeypatch.setattr(ws, "_stream_claude", lambda t: iter(["Claude answer."]))
-        assert "".join(ws._stream_local("prove this theorem")) == "Claude answer."
+        out = list(ws._stream_local("prove this theorem"))
+        # Server-injected ack first (masks Claude spin-up), then Claude's reply.
+        assert out == [ws.ESCALATE_ACK, "Claude answer."]
         assert len(calls) == 1  # handed off — no further local rounds
+
+    def test_escalation_ack_is_a_flushable_sentence(self):
+        # The ack must end terminator+space or the TTS splitter would hold it
+        # until Claude's first token, defeating its purpose.
+        sent, rest = ws.next_sentence(ws.ESCALATE_ACK)
+        assert sent is not None and rest == ""
+
+    def test_escalation_ack_disabled_by_empty_string(self, monkeypatch):
+        fake, _ = TestOllamaBackend._fake_urlopen([
+            [{"message": {"content": "", "tool_calls": [
+                {"function": {"name": "escalate_to_claude", "arguments": {}}}]},
+              "done": True}],
+        ])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        monkeypatch.setattr(ws, "ESCALATE_ACK", "")
+        monkeypatch.setattr(ws, "_stream_claude", lambda t: iter(["Claude answer."]))
+        assert list(ws._stream_local("q")) == ["Claude answer."]
 
     def test_no_handoff_after_speech_started(self, monkeypatch):
         fake, calls = TestOllamaBackend._fake_urlopen([
@@ -300,6 +403,36 @@ class TestEscalation:
         # The suppressed escalation went back as a tool result.
         roles = [m["role"] for m in calls[1]["messages"]]
         assert "tool" in roles
+
+
+class TestTtsClean:
+    """Markdown/symbol stripping so piper never reads 'asterisk asterisk'."""
+
+    def test_plain_text_untouched(self):
+        assert ws.tts_clean("It's 9:32 AM on July 4th.") == "It's 9:32 AM on July 4th."
+
+    def test_emphasis_stripped(self):
+        assert ws.tts_clean("the answer is **7pm**, not *6pm*") == \
+            "the answer is 7pm, not 6pm"
+
+    def test_link_keeps_text(self):
+        assert ws.tts_clean("see [the docs](https://x.y/z) for more") == \
+            "see the docs for more"
+
+    def test_lists_and_headings_stripped(self):
+        out = ws.tts_clean("## Steps\n- first thing\n2. second thing")
+        assert out == "Steps\nfirst thing\nsecond thing"
+
+    def test_code_fence_and_inline_code(self):
+        assert ws.tts_clean("run ```bash\nls -la\n``` or `pwd`") == \
+            "run \nls -la\n or pwd"
+
+    def test_symbols_translated(self):
+        assert ws.tts_clean("A → B ✓") == "A to B"
+
+    def test_ack_survives_cleaning(self):
+        # The escalation ack goes through the same path; it must not vanish.
+        assert ws.tts_clean(ws.ESCALATE_ACK) == ws.ESCALATE_ACK.strip()
 
 
 class TestFaceSummary:

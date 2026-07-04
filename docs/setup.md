@@ -40,6 +40,21 @@ Get-ScheduledTaskInfo -TaskName "WES Server"   # status
 
 Still Flask's dev server — fine for home use; swap for waitress/NSSM to harden later.
 
+### Nightly eval task
+
+Scheduled task **"WES Nightly Eval"** (daily 3:30 AM) runs
+`C:\Users\awarm\wes-pc\run_nightly_eval.ps1`: `perf_check.py` +
+`eval_turns.py --judge local` against the live server; one verdict line per
+night in `C:\Users\awarm\wes-pc\logs\eval.log`, full output in
+`logs\eval_last.log`. Details: `docs/eval-design.md` §7. To re-register:
+
+```powershell
+$action = New-ScheduledTaskAction -Execute "powershell.exe" `
+  -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\Users\awarm\wes-pc\run_nightly_eval.ps1'
+Register-ScheduledTask -TaskName "WES Nightly Eval" -Action $action `
+  -Trigger (New-ScheduledTaskTrigger -Daily -At 3:30AM)
+```
+
 ## Tier 1 (Pi) client
 
 Deps in `~/wes/.venv` (openwakeword, pyaudio, requests, numpy); the "hey_jarvis" model

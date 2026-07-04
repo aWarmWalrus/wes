@@ -1,0 +1,121 @@
+# Golden set for the eval harness (docs/eval-design.md). Phase 1 fields:
+#   id                  unique name; also the fixture filename
+#   say                 sentence synthesized with piper and POSTed as the turn
+#                       (special value SILENCE posts 1s of silence)
+#   turns               instead of `say`: a list of utterances posted in order
+#                       as one conversation (server memory); all `expect`
+#                       checks and the judge apply to the LAST turn's reply.
+#                       The runner resets server conversation memory before
+#                       every case, so cases never leak into each other.
+#   requires_pi         skip unless the Pi's :8090 answers (vision/status cases)
+#   expect:
+#     transcript_includes  substrings the STT transcript must contain (case-insens)
+#     reply_regex          must match the RE-TRANSCRIBED reply audio (case-insens);
+#                          keep loose — it survives a whisper round-trip
+#     min_audio_s / max_audio_s   spoken-reply length bounds (brevity checks)
+#     max_total_ms         wall-clock bound for the whole turn (default 30000)
+# Phase 3 will add exact `tools:` / `route:` assertions via X-Tools/X-Route
+# headers; `judge:` is scored by Haiku from phase 2 on.
+
+- id: time-basic
+  say: "What time is it right now"
+  expect:
+    transcript_includes: [time]
+    reply_regex: '\d{1,2}|o.?clock|morning|afternoon|evening'
+    min_audio_s: 1.0
+    max_audio_s: 15
+  judge: "Does the reply state the current time plausibly and concisely?"
+
+- id: date-today
+  say: "What is the date today"
+  expect:
+    transcript_includes: [date]
+    reply_regex: 'january|february|march|april|may|june|july|august|september|october|november|december'
+    min_audio_s: 1.0
+    max_audio_s: 15
+  judge: "Does the reply state today's date?"
+
+- id: greeting-brief
+  say: "Hello there, how are you doing today"
+  expect:
+    transcript_includes: [hello]
+    min_audio_s: 0.5
+    max_audio_s: 15
+  judge: "Is the reply a short, natural greeting with no invented facts?"
+
+- id: capital-fact
+  say: "What is the capital of France"
+  expect:
+    transcript_includes: [capital, france]
+    reply_regex: 'paris'
+    max_audio_s: 15
+  judge: "Does the reply correctly say Paris, concisely?"
+
+- id: math-simple
+  say: "What is twelve plus thirteen"
+  expect:
+    reply_regex: '25|twenty.?five'
+    max_audio_s: 15
+  judge: "Does the reply correctly answer 25?"
+
+- id: self-name
+  say: "What is your name"
+  expect:
+    transcript_includes: [name]
+    reply_regex: 'wes'
+    max_audio_s: 15
+  judge: "Does the assistant identify itself as Wesley/Wes?"
+
+- id: escalation-math
+  say: >-
+    A train leaves at three PM going sixty miles per hour, and a second train
+    leaves at four PM going eighty miles per hour. At what time does the second
+    train catch up to the first train
+  expect:
+    transcript_includes: [train]
+    reply_regex: 'seven|7\s*(pm|p\.m\.|o.?clock)'
+    max_total_ms: 60000
+    max_audio_s: 60
+  judge: >-
+    Correct answer is 7pm. Does the reply state it? (Working shown is fine
+    but should be brief.)
+
+- id: robust-silence
+  say: SILENCE
+  expect:
+    reply_regex: "didn't catch|did not catch|sorry"
+    min_audio_s: 0.5
+    max_audio_s: 10
+  judge: "Does the assistant gracefully say it didn't hear anything?"
+
+- id: brevity-open-ended
+  say: "Tell me something interesting about the moon"
+  expect:
+    transcript_includes: [moon]
+    reply_regex: 'moon|lunar'
+    max_audio_s: 25
+  judge: "Is the reply one or two natural spoken sentences about the moon?"
+
+- id: memory-recall
+  turns:
+    - "Please remember that my favorite color is purple"
+    - "What is my favorite color"
+  expect:
+    # 'favo'/'colo': the British piper voice makes whisper spell these
+    # favourite/colour — substrings must survive both spellings
+    transcript_includes: [favo, colo]
+    reply_regex: 'purple'
+    max_audio_s: 15
+  judge: >-
+    Earlier in this conversation the user said their favorite color is purple.
+    Does the reply correctly recall purple?
+
+- id: pi-status
+  say: "How is the Raspberry Pi doing right now"
+  requires_pi: true
+  expect:
+    reply_regex: 'temperature|degrees|celsius|memory|load|fine|good|healthy'
+    max_audio_s: 25
+  judge: >-
+    Does the reply report plausible live Pi status (temperature/memory/load)
+    rather than guessing or refusing?

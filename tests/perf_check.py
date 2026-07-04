@@ -1,30 +1,36 @@
-"""Performance regression check for the WES pipeline.
+"""Performance regression check for the WES pipeline (production streaming path).
 
-Runs a fixed synthesized WAV through /respond a few times, records the median
-stt/llm/tts/total latency to perf_history.csv, and flags a regression if a metric
-is worse than median(recent runs) * FACTOR + SLACK_MS. Exit code 1 on regression.
+Runs a fixed synthesized WAV through /respond_stream a few times, records the
+median stt/ttfa/total latency to perf_history_stream.csv, and flags a regression
+if a metric is worse than median(recent runs) * FACTOR + SLACK_MS. Exit code 1 on
+regression.
 
     cd Z:\\wes\\tests && python perf_check.py [runs]   (default 3, from the wes-pc venv)
 
-Run it after meaningful changes to track latency over time and catch slowdowns.
+ttfa_ms (request start -> first reply audio byte) is the metric users feel —
+it's the perceived latency the streaming design exists to minimize.
+
+Run after meaningful changes to track latency over time and catch slowdowns.
+(perf_history.csv is the retired history of the old blocking /respond path.)
 """
 import csv
 import os
 import statistics
 import subprocess
 import sys
-import urllib.parse
-import urllib.request
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "pc"))
+sys.path.insert(0, HERE)
+
+from stream_client import post_stream  # noqa: E402
 
 URL = os.environ.get("WES_TEST_URL", "http://127.0.0.1:8080")
-HISTORY = os.path.join(HERE, "perf_history.csv")
-METRICS = ("stt_ms", "llm_ms", "tts_ms", "total_ms")
-FIELDS = ["ts", "git"] + list(METRICS) + ["transcript"]
+HISTORY = os.path.join(HERE, "perf_history_stream.csv")
+METRICS = ("stt_ms", "ttfa_ms", "total_ms")
+FIELDS = ["ts", "git"] + list(METRICS) + ["spec", "audio_s", "transcript"]
 FACTOR = 1.5        # allow 50% drift over baseline...
 SLACK_MS = 500      # ...plus this absolute slack, before flagging a regression
 
@@ -44,22 +50,10 @@ def make_speech_wav():
 
 
 def one_run(wav):
-    import time
-    t0 = time.perf_counter()
-    req = urllib.request.Request(
-        URL + "/respond", data=wav,
-        headers={"Content-Type": "audio/wav"}, method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=120) as r:
-        h = r.headers
-        r.read()
-    return {
-        "stt_ms": int(h.get("X-Stt-Ms", 0)),
-        "llm_ms": int(h.get("X-Llm-Ms", 0)),
-        "tts_ms": int(h.get("X-Tts-Ms", 0)),
-        "total_ms": round((time.perf_counter() - t0) * 1000),
-        "transcript": urllib.parse.unquote(h.get("X-Transcript", "")),
-    }
+    res = post_stream(URL, wav)
+    if res["ttfa_ms"] is None:  # empty reply stream — count it as the full time
+        res["ttfa_ms"] = res["total_ms"]
+    return res
 
 
 def git_rev():
@@ -82,6 +76,7 @@ def load_history():
 
 def main():
     runs_n = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    import urllib.request
     try:
         urllib.request.urlopen(URL + "/health", timeout=5).read()
     except Exception as e:  # noqa: BLE001
@@ -92,12 +87,13 @@ def main():
     one_run(wav)  # warm, discarded
     runs = [one_run(wav) for _ in range(runs_n)]
     med = {k: round(statistics.median(r[k] for r in runs)) for k in METRICS}
-    transcript = runs[-1]["transcript"]
+    last = runs[-1]
 
-    print(f"=== this run (median of {runs_n}) ===")
+    print(f"=== this run (median of {runs_n}, /respond_stream) ===")
     for k in METRICS:
         print(f"  {k:9s} {med[k]:6d} ms")
-    print(f"  transcript: {transcript!r}")
+    print(f"  spec={last['spec']} audio_s={last['audio_s']}")
+    print(f"  transcript: {last['transcript']!r}")
 
     status = 0
     hist = load_history()
@@ -122,7 +118,9 @@ def main():
             w.writeheader()
         w.writerow({
             "ts": datetime.now().isoformat(timespec="seconds"),
-            "git": git_rev(), **med, "transcript": transcript,
+            "git": git_rev(), **med,
+            "spec": last["spec"], "audio_s": last["audio_s"],
+            "transcript": last["transcript"],
         })
 
     print("REGRESSION DETECTED" if status else "OK (within thresholds)")

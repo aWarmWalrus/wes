@@ -20,6 +20,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -27,6 +28,15 @@ import urllib.parse
 import urllib.request
 import wave
 from datetime import datetime
+
+# Under the scheduled task stdout is a cp1252 pipe; a reply containing any
+# character outside it (Claude likes '✓', '→') makes print() raise mid-stream
+# and kills the chunked response the Pi is playing. Degrade to '?' instead.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(errors="replace")
+    except (AttributeError, ValueError):  # non-reconfigurable stream (pytest)
+        pass
 
 import anthropic
 
@@ -72,14 +82,23 @@ LOCAL_LLM_MODEL = os.environ.get("WES_LLM_LOCAL_MODEL", "gemma4:e4b")
 # Smart routing: give the local model an escalate_to_claude function so IT
 # decides when a query is beyond it (needs a Claude key; WES_ESCALATE=0 disables).
 ESCALATE = os.environ.get("WES_ESCALATE", "1") == "1"
+# Spoken by the SERVER (not the model) the moment an escalation fires, so the
+# ~2-3s Claude spin-up isn't dead air. Must end with a sentence terminator +
+# space so the TTS splitter flushes it immediately. Empty string disables.
+ESCALATE_ACK = os.environ.get(
+    "WES_ESCALATE_ACK", "Good question — let me think about that. ")
 ANTHROPIC_MODEL = os.environ.get("WES_LLM_MODEL", "claude-haiku-4-5")
 SYSTEM_PROMPT = os.environ.get(
     "WES_SYSTEM_PROMPT",
-    "You are Wesley, a voice assistant running on a Raspberry Pi. Keep replies "
-    "short and conversational — one or two sentences — since they are spoken "
-    "aloud. You have tools to check the Pi's live status (temperature, memory, "
+    "You are Wesley, a voice assistant running on a Raspberry Pi. Your replies "
+    "are read aloud by a text-to-speech engine, so keep them short and "
+    "conversational — one or two sentences — in plain spoken English: no "
+    "markdown, bullet points, headings, asterisks, emoji, or other symbols, and "
+    "say numbers, times, and units the way a person would say them out loud. "
+    "You have tools to check the Pi's live status (temperature, memory, "
     "etc.), the date/time, and recent logs — use them when the question calls for "
-    "current information rather than guessing.",
+    "current information rather than guessing. You are also a general assistant: "
+    "answer everyday knowledge questions confidently from what you know.",
 )
 
 # --- Tools (Pi introspection) ----------------------------------------------
@@ -374,7 +393,10 @@ def run_tool(name, tool_input):
         if name == "describe_scene":
             return json.dumps(describe_scene())
         if name == "get_datetime":
-            return datetime.now().astimezone().strftime("%A, %Y-%m-%d %H:%M:%S %Z")
+            # spoken-friendly: no ISO dates, 24h clocks, or seconds — the
+            # model repeats this string near-verbatim into TTS
+            now = datetime.now().astimezone()
+            return now.strftime("%A, %B %d, %Y, %I:%M %p").replace(" 0", " ")
         if name == "look":
             return json.dumps(_pi_get("/look"))
         if name == "read_pi_log":
@@ -484,6 +506,48 @@ def _ollama_chat(messages, tools=None, stream=False, max_tokens=512, timeout=120
     return urllib.request.urlopen(req, timeout=timeout)
 
 
+# --- Conversation memory ----------------------------------------------------
+# LiveKit ChatContext-style sliding window: one global conversation (one house,
+# one mic), the last CONV_TURNS exchanges are replayed to whichever backend
+# answers — including across the escalation handoff, so Claude sees what gemma
+# said. Goes idle-empty after CONV_TTL seconds of silence.
+CONV_TURNS = int(os.environ.get("WES_CONV_TURNS", "6"))
+CONV_TTL = float(os.environ.get("WES_CONV_TTL", "300"))
+_conv_lock = threading.Lock()
+_conv = []       # [{"role": "user"|"assistant", "content": str}], newest last
+_conv_last = 0.0
+
+
+def conversation_context():
+    """Recent exchanges for the LLM, or [] once the conversation went idle."""
+    with _conv_lock:
+        if time.time() - _conv_last > CONV_TTL:
+            _conv.clear()
+        return list(_conv)
+
+
+def record_turn(transcript, reply):
+    """Append one spoken exchange, keeping the last CONV_TURNS exchanges.
+    Empty transcripts (silence) and empty replies are not memory."""
+    global _conv_last
+    if not (transcript and transcript.strip() and reply and reply.strip()):
+        return
+    with _conv_lock:
+        if time.time() - _conv_last > CONV_TTL:
+            _conv.clear()
+        _conv.append({"role": "user", "content": transcript})
+        _conv.append({"role": "assistant", "content": reply})
+        del _conv[:-2 * CONV_TURNS]
+        _conv_last = time.time()
+
+
+def reset_conversation():
+    with _conv_lock:
+        n = len(_conv) // 2
+        _conv.clear()
+        return n
+
+
 def _think_local(transcript):
     """One-shot local reply — same tool loop as streaming, joined. Without tools
     gemma4 hallucinates tool output (fake times, literal '{tool_output}')."""
@@ -493,10 +557,11 @@ def _think_local(transcript):
 def _stream_local(transcript):
     """Stream a local reply with the same tool loop the Claude path runs.
     Yields text deltas; runs requested tools between rounds."""
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT + _scene_context()},
-        {"role": "user", "content": transcript},
-    ]
+    messages = (
+        [{"role": "system", "content": SYSTEM_PROMPT + _scene_context()}]
+        + conversation_context()
+        + [{"role": "user", "content": transcript}]
+    )
     tools = _local_toolset()
     yielded = False
     for _ in range(MAX_TOOL_ROUNDS):
@@ -526,6 +591,8 @@ def _stream_local(transcript):
                 if not yielded:
                     print(f"[route] escalating to Claude: "
                           f"{args.get('reason', '?')}", flush=True)
+                    if ESCALATE_ACK:
+                        yield ESCALATE_ACK  # masks Claude's spin-up latency
                     yield from _stream_claude(transcript)
                     return
                 # Already mid-reply — a handoff now would double-speak.
@@ -564,7 +631,8 @@ def _think_claude(transcript):
             model=ANTHROPIC_MODEL,
             max_tokens=256,
             system=SYSTEM_PROMPT + _scene_context(),
-            messages=[{"role": "user", "content": transcript}],
+            messages=conversation_context()
+            + [{"role": "user", "content": transcript}],
         )
         return "".join(b.text for b in resp.content if b.type == "text").strip()
     except anthropic.RateLimitError:
@@ -577,7 +645,7 @@ def _think_claude(transcript):
 def synthesize(text, out_path):
     subprocess.run(
         [PIPER_BIN, "-m", VOICE_MODEL, "-f", out_path],
-        input=text.encode("utf-8"),
+        input=tts_clean(text).encode("utf-8"),
         check=True,
     )
 
@@ -627,7 +695,8 @@ def _stream_claude(transcript):
         yield f"I heard: {transcript}"
         return
 
-    messages = [{"role": "user", "content": transcript}]
+    # History rides along on escalation, so Claude sees what gemma already said
+    messages = conversation_context() + [{"role": "user", "content": transcript}]
     tools = TOOLS if TOOLS_ENABLED else []
     system = SYSTEM_PROMPT + _scene_context()  # who's in frame right now
 
@@ -679,6 +748,28 @@ def next_sentence(buf):
     if m:
         return buf[: m.start() + 1], buf[m.end():]
     return None, buf
+
+
+# The prompt asks for plain spoken English, but models still slip markdown in
+# (escalated Claude replies especially). Strip it before piper reads "asterisk
+# asterisk" aloud. Applied to every sentence at both TTS entry points.
+_TTS_STRIP = [
+    (re.compile(r"```[a-zA-Z]*"), " "),                 # code fences
+    (re.compile(r"^\s{0,3}#{1,6}\s+", re.M), ""),       # headings
+    (re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+", re.M), ""),  # list markers
+    (re.compile(r"\[([^\]]+)\]\([^)]*\)"), r"\1"),      # [text](url) -> text
+    (re.compile(r"[*_`~#|]+"), ""),                     # emphasis/code/table
+    (re.compile(r"[→⇒]"), " to "),
+    (re.compile(r"[✓✔]"), ""),
+    (re.compile(r"[ \t]{2,}"), " "),
+]
+
+
+def tts_clean(text):
+    """Reduce model output to plain speakable English for piper."""
+    for pat, repl in _TTS_STRIP:
+        text = pat.sub(repl, text)
+    return text.strip()
 
 
 # --- Speculative prefetch ---------------------------------------------------
@@ -867,6 +958,7 @@ def respond():
     reply = think(transcript)
     t_llm = time.perf_counter()
     print(f"[respond] reply: {reply!r}", flush=True)
+    record_turn(transcript, reply)
 
     stt_ms = round((t_stt - t0) * 1000)
     llm_ms = round((t_llm - t_stt) * 1000)
@@ -957,20 +1049,22 @@ def respond_stream():
                     if sent is None:
                         break
                     buf = rest
-                    s = sent.strip()
+                    s = tts_clean(sent)
                     if not s:
                         continue
                     for ac in voice.synthesize(s):
                         if t_first is None:
                             t_first = time.perf_counter()
                         yield ac.audio_int16_bytes
-            if buf.strip():
-                for ac in voice.synthesize(buf.strip()):
+            if tts_clean(buf):
+                for ac in voice.synthesize(tts_clean(buf)):
                     if t_first is None:
                         t_first = time.perf_counter()
                     yield ac.audio_int16_bytes
         finally:
             reply = "".join(full)
+            record_turn(transcript, reply)  # partial reply on abort is still
+            # what the user heard — record it (barge-in will tag these later)
             ttfa = round((t_first - t_stt) * 1000) if t_first else None
             total = round((time.perf_counter() - t0) * 1000)
             print(f"[stream] reply: {reply!r}", flush=True)
@@ -988,6 +1082,13 @@ def respond_stream():
     resp.headers["X-Spec"] = spec
     resp.headers["X-Sample-Rate"] = "22050"
     return resp
+
+
+@app.route("/reset_conversation", methods=["POST"])
+def reset_conversation_route():
+    """Clear the conversation memory. Used by the eval harness so golden cases
+    stay independent, and available for an explicit 'new conversation'."""
+    return jsonify(cleared_turns=reset_conversation())
 
 
 @app.route("/prefetch_scene", methods=["POST"])
