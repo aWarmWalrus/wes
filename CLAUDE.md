@@ -70,4 +70,7 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
 - `docs/vision.md` — on-device vision: Hailo `look` (YOLOv8s), Gemma `describe_scene`,
   face recognition + clothing-color disambiguation, wake-word vision prefetch.
 - `docs/setup.md` — PC venv + dependency pins + auto-start task; Pi client + mic setup.
+- `docs/hardware.md` — Pi/Hailo/camera specs (PERIPHERALS.md and PROJECT.md, both
+  stale early-stage docs, were folded into this + the rest of `docs/` and removed).
 - `docs/roadmap.md` — hybrid local inference, future Hailo use, storage, history.
+- `docs/keyresults.md` — current-cycle key results, refreshed periodically.

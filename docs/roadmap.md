@@ -38,8 +38,11 @@ errors and via `WES_LLM=claude`. Measured: llm ~706ms vs Haiku's ~1305ms; total 
 
 ## History (for context)
 
-- `wesley_cam.py` — the original self-contained Pi prototype (wake word → Whisper-tiny →
-  email a photo). Superseded by the networked `pi/wes_client.py` + `pc/wes_server.py`.
+- `archive/wesley_cam.py` — the original self-contained Pi prototype (wake word →
+  Whisper-tiny → email a photo). Superseded by the networked `pi/wes_client.py` +
+  `pc/wes_server.py`. `archive/hand_filter.py` / `archive/finger_count.py` are earlier
+  gesture-detection prototypes, also superseded (see `docs/vision.md` for the current
+  Hailo vision stack).
 - Wake word is "hey_jarvis" (openwakeword's only bundled model); a custom "hey_wesley"
   would need training — deferred.
 - The Anthropic API key was once pasted in chat and should be treated as compromised;
