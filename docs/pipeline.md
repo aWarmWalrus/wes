@@ -1,0 +1,108 @@
+# Turn lifecycle & pipeline
+
+How one wake-word-to-reply turn flows through `pi/wes_client.py` + `pc/wes_server.py`.
+
+```
+Pi: wake word ("hey_jarvis") → VAD-endpointed capture → POST /respond_stream (WAV, stream=True)
+PC: faster-whisper STT → LLM (STREAMING, + tools) → per-sentence piper TTS
+    → stream raw s16le PCM (22050 Hz mono) back as it's generated
+Pi: pipe the PCM into a single `paplay --raw` on the JBL — the first sentence plays
+    before the full reply exists
+```
+
+## LLM backend (`WES_LLM`)
+
+`WES_LLM=local` (the launcher default since the 5060 Ti 16GB) runs **gemma4:e4b via
+Ollama** — streaming + the same tool loop (`_stream_local`), `think: false` so no
+thinking tokens are spoken, `keep_alive: -1` so the one model stays VRAM-resident and
+also serves `describe_scene` (`WES_VLM_MODEL=gemma4:e4b`). Local errors before any
+output fall back to Claude automatically; `WES_LLM=claude` switches back entirely
+(`WES_LLM_LOCAL_MODEL` overrides the local model). Local ≈ halves LLM latency vs
+Haiku (~700ms vs ~1300ms) and has no API rate limit (speculation budget is unlimited).
+
+**Smart routing** (`WES_ESCALATE=1`, default): the local toolset additionally carries
+an `escalate_to_claude` function (never shown to Claude itself), so gemma decides
+per-turn when a query is beyond it — deep reasoning, hard math/code, specialized
+knowledge — and the server streams Claude's reply instead (`[route] escalating…` in
+the log). If gemma has already started speaking, the handoff is suppressed (a tool
+result tells it to finish itself) so the user never hears two answers. Requires a
+Claude key; verified: "what time is it" stays local (~3.1s), a multi-step train word
+problem escalates and comes back correct (~5.5s).
+
+## Streaming reply (`/respond_stream`, the default path)
+
+The PC streams the LLM's tokens, splits them into sentences (`next_sentence`,
+terminator + whitespace), synthesizes each with an **in-process** piper voice
+(`PiperVoice.load` once — no per-sentence reload), and writes raw PCM to a chunked
+HTTP response. Time-to-first-audio ≈ `STT + Claude-first-sentence + one-sentence-TTS`
+(~1.2s warm) and stays flat regardless of reply length. Transcript/timing come back in
+`X-Transcript` / `X-Stt-Ms` / `X-Spec` headers. The old `/respond` (blocking, returns
+a full WAV; used by the perf/e2e tests) is kept as a fallback.
+
+## End-of-speech: Silero VAD (not energy)
+
+`record_sentence` uses openwakeword's bundled `silero_vad.onnx`
+(`VAD.predict(chunk, frame_size=640)` — **640 divides the 1280 chunk; 480 does NOT**,
+which silently corrupted scores when we first tried it) to get a speech probability per
+chunk. It **waits for speech to start** (up to `SPEECH_START_TIMEOUT_S=5`, so the pause
+after the wake word doesn't end the turn), then stops after `SILENCE_SECONDS=0.8` of
+prob < `WES_VAD_THRESHOLD` (0.5). Robust to background noise where the old RMS energy
+threshold failed (noise energy ≈ speech energy). `[rec]` logs `speech_prob`/`max_prob`;
+`no-speech-timeout` if speech never starts.
+
+## Single-stream playback (`play_turn`)
+
+The streamed reply plays through **one** `paplay --raw` (22050 mono s16le), with
+silence written during the STT gap to keep the sink fed. A **stall watchdog** kills
+the player only after 30s with *no new reply data* — the deadline resets on every
+received chunk, so long replies streaming fine are never cut off; error labeled
+`server stalled >30s (watchdog)` vs a genuine `sink drop`. At startup the client
+blocks in `wait_for_server()` (polls PC `/health` every 3s) before entering the
+ready state, so it never listens while the server is down or still warm-loading.
+No filler/"thinking word" — it was removed as clunky.
+**Why one stream:** the Bluetooth A2DP transport wedges if acquired/released
+repeatedly — see the persistent-silence fix in `docs/audio.md`.
+
+## Speculative prefetch (`/speculate`)
+
+While recording, the Pi POSTs the audio-so-far every 2s (`SPECULATE_INTERVAL_S`). The
+PC transcribes each partial and fires a **background Claude call**, caching the reply
+keyed by normalized transcript (`speculate_async`, 60s TTL). On finalize,
+`/respond_stream` calls `lookup_speculation` — a match (exact, or a cached partial
+covering ≥85% of the final) **skips Claude entirely** and streams TTS of the cached
+reply (`X-Spec: HIT`). Worst case is a wasted Claude call; we never play speculatively.
+**Speculation is disabled when tools are on** (`spec=tools`) — a tool-less speculative
+reply could be wrong for a state query.
+
+## Pi-introspection tools (streaming tool loop)
+
+Claude can query live Pi state mid-answer. `stream_reply` runs a streaming tool loop
+(`WES_TOOLS=1`, `MAX_TOOL_ROUNDS=4`): each Claude turn streams to TTS; on
+`stop_reason == tool_use` it runs the tool (`run_tool` → HTTP to the Pi's `:8090`),
+feeds the result back, and continues. Tools are **read-only**.
+
+- `get_system_status` → Pi `/state` (temp, throttle, load, mem, disk, uptime, BT).
+- `get_datetime` → local time (no network).
+- `read_pi_log` → Pi `/logs?service=&n=` (whitelisted: bluetooth, wireplumber,
+  pipewire, kernel).
+- `look` / `describe_scene` — vision tools, see `docs/vision.md`.
+
+Adding a tool = a schema entry in `TOOLS` + a branch in `run_tool` (+ a unit test).
+Tool round-trips add ~2s (extra Claude call + Pi fetch).
+
+## Status LED (Pi client)
+
+The C920's front LED is a status light (the camera never streams for this):
+**On** on wake word / **Off** when the reply finishes / **Blink** while the JBL is
+disconnected. Controlled via `uvcdynctrl -d /dev/video0 -s "LED1 Mode"
+<0=Off|1=On|2=Blink|3=Auto>`. `state["bt"]` gates the turn's LED calls so they don't
+stomp the disconnect blink.
+
+## Telemetry
+
+Every turn is timed → appended to `~/wes/logs/timing.csv` and printed as a `[timing]`
+line. The PC returns per-stage timings in headers (`X-Stt-Ms`, `X-Llm-Ms`, `X-Tts-Ms`).
+Key CSV columns (ms): `record_ms`, `stt_ms`/`llm_ms`/`tts_ms`, `ttfa_ms`,
+`gap_to_reply_ms` (end-of-speech → first reply audio), `reply_play_ms`, `spec` (HIT/
+miss/tools). Quick look: `column -s, -t ~/wes/logs/timing.csv | less -S`. Track latency
+over time with `tests/perf_check.py`.

@@ -1,0 +1,9 @@
+.venv/
+.venv-pc/
+__pycache__/
+*.pyc
+photos/
+hailort.log
+*.un~
+*~
+tests/.pytest_cache/
