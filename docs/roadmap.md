@@ -45,5 +45,6 @@ errors and via `WES_LLM=claude`. Measured: llm ~706ms vs Haiku's ~1305ms; total 
   Hailo vision stack).
 - Wake word is "hey_jarvis" (openwakeword's only bundled model); a custom "hey_wesley"
   would need training — deferred.
-- The Anthropic API key was once pasted in chat and should be treated as compromised;
-  it lives only in the PC user env now.
+- An earlier Anthropic API key was pasted in chat and treated as compromised; it was
+  rotated 2026-07-03 (old key revoked, new key set via PC user env `setx`, verified
+  working via the e2e suite). The key lives only in the PC user env, never the repo.
