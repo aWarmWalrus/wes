@@ -78,6 +78,33 @@ tell me the weather").
 - **Depends on**: nothing hard — this can precede smart home controls, and once HA
   exists, scheduled actions compose with it ("turn off the lights at 11").
 
+## Remote access via Discord — planned (FR 2026-07-05)
+
+Talk to Jarvis by text when away from home. The server already has the right
+seam: `POST /respond` (and `/respond_stream`) is text-in/text-out, so this is a
+new *frontend*, not a pipeline change.
+
+- **Mechanics**: a small PC-side bot process (discord.py) that listens for DMs
+  (or messages in a private server), forwards the text to `/respond` on
+  localhost, and posts the reply back. Bot token in the PC user env like the
+  Anthropic key. No Pi involvement, no audio path — replies are text only, so
+  the house audio rule isn't triggered.
+- **Auth**: hard-allowlist the owner's Discord user ID; ignore everyone else.
+  The bot is an internet-facing door into the tool loop, so until rails exist,
+  scope it to read/answer only — no smart-home *actions* over Discord without
+  an explicit per-action confirm.
+- **Conversation memory**: reuse the server-side sliding window but keyed per
+  channel (Discord vs. voice), so a remote chat doesn't clobber the in-house
+  conversation context.
+- **Vision**: `describe_scene` works unchanged ("what's going on at home?"),
+  which is arguably the killer remote use case. Optionally attach the frame as
+  an image in the reply.
+- **Composes with**: scheduled actions (reminders can DM you instead of
+  speaking when you're away) and later smart home ("turn off the lights" from
+  anywhere — behind the confirm rail above).
+- **Eval**: golden cases can exercise `/respond` directly; the bot layer itself
+  just needs a thin unit test (allowlist filtering, message → HTTP mapping).
+
 ## Ideas noted but not built
 
 - **Barge-in / interruption** (LiveKit-inspired): let the user cut the reply off by
@@ -86,9 +113,11 @@ tell me the weather").
 - Inject the prefetched scene description directly into Claude's context to avoid the
   two-Claude-call tool round-trip for "what do you see".
 - Storage tier on the PC for audio/video/transcripts (not yet built).
-- Long-horizon memory: conversation memory across turns is DONE (see below); still
-  open are persistence across server restarts and summarizing old turns instead of
-  dropping them (LiveKit's background-summary pattern).
+- Long-horizon memory: conversation memory across turns is DONE (see below).
+  The bigger step — durable agentic memory (semantic facts, episodic day logs,
+  nightly consolidation) toward a broader OpenClaw-like Jarvis — is designed in
+  **`docs/memory-design.md`** (2026-07-04, file-based MEMORY.md approach chosen
+  over vector/Letta/Mem0 infra; build order there). Not yet built.
 
 ## Conversation memory — DONE (July 2026)
 
