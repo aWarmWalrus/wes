@@ -92,8 +92,8 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   actions, barge-in; future Hailo use, storage, history. Discord remote access
   and host observability are built.
 - `docs/observability.md` — Prometheus + Grafana utilization dashboard
-  (<http://10.0.0.79:3000>): exporters on both hosts, provisioning, restart
-  commands. App-level `/metrics` in `wes_server.py` is planned, not built.
+  (<http://10.0.0.79:3000>): exporters on both hosts + `wes_server` `/metrics`
+  (token counters), dashboard provisioning, restart commands.
 - `docs/eval-design.md` — design for the automated quality-eval harness (golden
   set + LLM-as-judge + nightly gate); phases 1-2 (`tests/eval_turns.py`,
   deterministic checks + Haiku judge) are built.

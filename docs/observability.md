@@ -18,6 +18,7 @@ two lightweight exporters so gaming headroom is unaffected.
 | node_exporter (Pi CPU/mem/temp/disk/net) | Pi | 9100 | apt `prometheus-node-exporter`, systemd |
 | windows_exporter v0.31.7 (PC CPU/RAM/disk/net) | PC | 9182 | "WES Exporters" scheduled task |
 | nvidia_gpu_exporter v1.9.1 (GPU util/VRAM/temp/power via nvidia-smi) | PC | 9835 | same task |
+| `wes_server` `/metrics` (token/call counters by model/source/channel) | PC | 8080 | "WES Server" task |
 
 - PC binaries: `C:\Users\awarm\wes-pc\bin\`; launcher
   `C:\Users\awarm\wes-pc\run_exporters.ps1` (PC-local, not in the repo — same
@@ -67,9 +68,19 @@ Get-Content C:\Users\awarm\wes-pc\logs\exporters.log -Tail 10          # nvidia 
 Get-Content C:\Users\awarm\wes-pc\logs\windows_exporter.err.log -Tail 10
 ```
 
-## Phase 3 (planned, not built)
+## WES app metrics (phase 3a — built 2026-07-05)
 
-- `/metrics` in `pc/wes_server.py` via `prometheus_client`: turn counters and
-  latency histograms by channel, token counters by model/source (mirroring the
-  usage ledger), escalation counter — then a "WES" row on the dashboard.
+`GET /metrics` on the server (`prometheus_client`, pinned in the wes-pc venv)
+exposes `wes_llm_tokens_total{direction,model,source,channel}` and
+`wes_llm_calls_total{model,source,channel}`, incremented in `record_usage()` —
+the exact same events as the CSV ledger. Counters reset when the server
+restarts; the dashboard uses `rate()`/`increase()` which absorb resets, and
+`GET /usage` (backed by the CSV) remains the all-time source of truth. The
+"WES tokens" dashboard row prices local tokens at Haiku rates ($1/$5 per MTok,
+cached 2026-06-24) — if `wes_server.py`'s pricing constants change, update the
+"Est. $ saved" panel expression too.
+
+## Still planned (phase 3b)
+
+- Turn-latency histograms by channel (stt/ttfa/total) on `/metrics`.
 - Alerting (GPU temp, disk, service down) delivered through the Discord bot.

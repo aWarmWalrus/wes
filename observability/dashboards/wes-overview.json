@@ -69,6 +69,29 @@
       "datasource": { "type": "prometheus", "uid": "prom" },
       "fieldConfig": { "defaults": { "unit": "celsius" } },
       "targets": [ { "refId": "A", "expr": "node_thermal_zone_temp", "legendFormat": "{{zone}} {{type}}" } ]
+    },
+    { "type": "row", "title": "WES tokens (wes_server /metrics — counters reset on server restart; increase() handles it)", "gridPos": { "x": 0, "y": 26, "w": 24, "h": 1 }, "id": 102 },
+    {
+      "type": "timeseries", "title": "Token rate by model / call source", "id": 9,
+      "gridPos": { "x": 0, "y": 27, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 } },
+      "targets": [ { "refId": "A", "expr": "sum by (model, source, direction) (rate(wes_llm_tokens_total[5m]))", "legendFormat": "{{model}} {{source}} {{direction}}" } ]
+    },
+    {
+      "type": "stat", "title": "Tokens in visible range (by model)", "id": 10,
+      "gridPos": { "x": 12, "y": 27, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [ { "refId": "A", "expr": "sum by (model) (increase(wes_llm_tokens_total[$__range]))", "legendFormat": "{{model}}" } ]
+    },
+    {
+      "type": "stat", "title": "Est. $ saved vs Haiku (range)", "id": 11,
+      "description": "Local tokens priced at claude-haiku-4-5 rates ($1/MTok in, $5/MTok out, cached 2026-06-24 — keep in sync with wes_server.py). All-time totals: GET /usage.",
+      "gridPos": { "x": 18, "y": 27, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4 } },
+      "targets": [ { "refId": "A", "expr": "(sum(increase(wes_llm_tokens_total{direction=\"in\",source!=\"claude\"}[$__range])) * 1.0 + sum(increase(wes_llm_tokens_total{direction=\"out\",source!=\"claude\"}[$__range])) * 5.0) / 1e6", "legendFormat": "saved" } ]
     }
   ],
   "schemaVersion": 39

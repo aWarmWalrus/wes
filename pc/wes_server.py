@@ -41,7 +41,9 @@ for _s in (sys.stdout, sys.stderr):
 
 import anthropic
 
-from flask import Flask, request, jsonify
+from flask import Flask, Response, request, jsonify
+from prometheus_client import (Counter, generate_latest,
+                               CONTENT_TYPE_LATEST)
 from faster_whisper import WhisperModel
 
 # --- Config (override via environment) -------------------------------------
@@ -629,12 +631,28 @@ HAIKU_USD_PER_MTOK_IN = 1.00
 HAIKU_USD_PER_MTOK_OUT = 5.00
 _usage_lock = threading.Lock()
 
+# The same ledger data, exposed live for Prometheus (GET /metrics, scraped by
+# the Pi — docs/observability.md). Counters reset on server restart; rate()/
+# increase() in Grafana handle that. The CSV stays the all-time source of
+# truth for GET /usage.
+TOKENS_TOTAL = Counter(
+    "wes_llm_tokens_total", "LLM tokens processed, by call type",
+    ["direction", "model", "source", "channel"])
+CALLS_TOTAL = Counter(
+    "wes_llm_calls_total", "LLM calls made, by call type",
+    ["model", "source", "channel"])
+
 
 def record_usage(model, source, channel, in_tokens, out_tokens):
     """Append one LLM call to the ledger. Zero-token rows are dropped (the
     backend didn't report usage) and failures never break a turn."""
     if not (in_tokens or out_tokens):
         return
+    CALLS_TOTAL.labels(model, source, channel).inc()
+    if in_tokens:
+        TOKENS_TOTAL.labels("in", model, source, channel).inc(int(in_tokens))
+    if out_tokens:
+        TOKENS_TOTAL.labels("out", model, source, channel).inc(int(out_tokens))
     try:
         with _usage_lock:
             os.makedirs(os.path.dirname(USAGE_LOG), exist_ok=True)
@@ -1153,6 +1171,13 @@ def usage_route():
     the local tokens would have cost on Claude Haiku ("saved") and what the
     Claude calls actually cost. ?days=7 limits the window."""
     return jsonify(usage_summary(request.args.get("days", type=float)))
+
+
+@app.route("/metrics")
+def metrics_route():
+    """Prometheus exposition (wes_llm_* counters + python runtime defaults).
+    Scraped by the Pi's Prometheus every 15s — docs/observability.md."""
+    return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
 
 
 @app.route("/respond_text", methods=["POST"])

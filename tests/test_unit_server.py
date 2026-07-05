@@ -737,6 +737,34 @@ class TestUsageLedger:
         assert body["by_call_site"][0]["source"] == "vlm"
         assert "pricing_basis" in body
 
+    def test_record_usage_increments_prometheus_counters(self, tmp_path,
+                                                         monkeypatch):
+        self._log(tmp_path, monkeypatch)
+        labels = dict(direction="in", model="gemma4:e4b",
+                      source="router", channel="voice")
+        before = ws.TOKENS_TOTAL.labels(**labels)._value.get()
+        ws.record_usage("gemma4:e4b", "router", "voice", 120, 8)
+        assert ws.TOKENS_TOTAL.labels(**labels)._value.get() == before + 120
+        out = ws.TOKENS_TOTAL.labels(**{**labels, "direction": "out"})
+        assert out._value.get() >= 8
+        # zero-token calls must not count
+        calls = ws.CALLS_TOTAL.labels("gemma4:e4b", "router", "voice")
+        n = calls._value.get()
+        ws.record_usage("gemma4:e4b", "router", "voice", 0, 0)
+        assert calls._value.get() == n
+
+    def test_metrics_endpoint_exposes_token_counters(self, tmp_path,
+                                                     monkeypatch):
+        self._log(tmp_path, monkeypatch)
+        ws.record_usage("gemma4:12b", "escalate", "discord", 500, 200)
+        with ws.app.test_client() as c:
+            r = c.get("/metrics")
+        assert r.status_code == 200
+        text = r.get_data(as_text=True)
+        assert ('wes_llm_tokens_total{channel="discord",direction="in",'
+                'model="gemma4:12b",source="escalate"}') in text
+        assert "wes_llm_calls_total" in text
+
 
 class TestFaceSummary:
     def test_no_data(self):
