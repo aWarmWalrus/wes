@@ -90,11 +90,14 @@ ESCALATE_ACK = os.environ.get(
 ANTHROPIC_MODEL = os.environ.get("WES_LLM_MODEL", "claude-haiku-4-5")
 SYSTEM_PROMPT = os.environ.get(
     "WES_SYSTEM_PROMPT",
-    "You are Wesley, a voice assistant running on a Raspberry Pi. Your replies "
+    "You are Jarvis, a voice assistant running on a Raspberry Pi. Your replies "
     "are read aloud by a text-to-speech engine, so keep them short and "
     "conversational — one or two sentences — in plain spoken English: no "
     "markdown, bullet points, headings, asterisks, emoji, or other symbols, and "
     "say numbers, times, and units the way a person would say them out loud. "
+    "The user's words reach you through speech recognition, so if a word looks "
+    "slightly wrong, interpret it charitably from context instead of taking it "
+    "literally. "
     "You have tools to check the Pi's live status (temperature, memory, "
     "etc.), the date/time, and recent logs — use them when the question calls for "
     "current information rather than guessing. You are also a general assistant: "
@@ -472,12 +475,35 @@ def _spec_budget_ok():
 # --- Pipeline steps ---------------------------------------------------------
 
 
+# Contextual biasing: whisper's initial_prompt reads to the decoder like the
+# transcript-so-far, so ambiguous audio resolves toward in-context words —
+# proper nouns especially. The lexicon is this house's vocabulary (devices,
+# hardware, household names); launcher-overridable, empty string disables.
+STT_LEXICON = os.environ.get(
+    "WES_STT_LEXICON",
+    "Jarvis is a voice assistant running on a Raspberry Pi with a Hailo "
+    "accelerator. It can control the Hue lights and the ecobee thermostat, "
+    "knows the speakers Matcha, Good gray, Stevie, and the JBL, and knows "
+    "Charlie, Cindy, Kaia, and Ellis.",
+)
+
+
+def stt_bias_prompt():
+    """Whisper initial_prompt: the domain lexicon plus the tail of the live
+    conversation (same idea as Google boosting your on-screen entities).
+    Kept short — an overlong prompt makes whisper hallucinate prompt words
+    into marginal audio (the robust-silence eval case is the tripwire)."""
+    tail = " ".join(m["content"] for m in conversation_context()[-2:])
+    return (STT_LEXICON + " " + tail[:300]).strip()
+
+
 def transcribe(wav_bytes):
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         f.write(wav_bytes)
         path = f.name
     try:
-        segments, _ = get_whisper().transcribe(path, language="en")
+        segments, _ = get_whisper().transcribe(
+            path, language="en", initial_prompt=stt_bias_prompt() or None)
         return " ".join(s.text.strip() for s in segments).strip()
     finally:
         os.remove(path)
@@ -546,6 +572,19 @@ def reset_conversation():
         n = len(_conv) // 2
         _conv.clear()
         return n
+
+
+# LiveKit-style interruption tag: when the client aborts playback (barge-in),
+# the partial reply IS what the user heard — remember it, but tell the model
+# where it was cut off so the follow-up turn can pivot naturally.
+INTERRUPT_TAG = " [reply interrupted by the user]"
+
+
+def record_spoken_turn(transcript, reply, completed):
+    """Record one exchange; tag the reply if the stream was aborted mid-way."""
+    if reply and not completed:
+        reply = reply.rstrip() + INTERRUPT_TAG
+    record_turn(transcript, reply)
 
 
 def _think_local(transcript):
@@ -1040,6 +1079,7 @@ def respond_stream():
         buf = ""
         full = []
         t_first = None
+        completed = False
         try:
             for piece in source:
                 buf += piece
@@ -1061,10 +1101,12 @@ def respond_stream():
                     if t_first is None:
                         t_first = time.perf_counter()
                     yield ac.audio_int16_bytes
+            completed = True
         finally:
+            # A client abort (barge-in) lands here with completed=False: the
+            # partial reply is what the user heard — record it, tagged.
+            record_spoken_turn(transcript, "".join(full), completed)
             reply = "".join(full)
-            record_turn(transcript, reply)  # partial reply on abort is still
-            # what the user heard — record it (barge-in will tag these later)
             ttfa = round((t_first - t_stt) * 1000) if t_first else None
             total = round((time.perf_counter() - t0) * 1000)
             print(f"[stream] reply: {reply!r}", flush=True)

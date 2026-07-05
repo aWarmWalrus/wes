@@ -49,6 +49,21 @@ result tells it to finish itself) so the user never hears two answers. Requires 
 Claude key; verified: "what time is it" stays local (~3.1s), a multi-step train word
 problem escalates and comes back correct (~5.5s).
 
+## STT contextual biasing (added 2026-07-04)
+
+`transcribe()` passes whisper an `initial_prompt` = **domain lexicon**
+(`WES_STT_LEXICON`: Jarvis, Raspberry Pi, Hailo, Hue, ecobee, the speaker
+names, and the household — Charlie, Cindy, Kaia, Ellis) **+ the tail of the
+conversation memory**. The decoder treats it as the transcript-so-far, so
+ambiguous audio resolves toward in-context words — the local equivalent of
+Google Assistant boosting your contacts. Applies to every STT call (turns and
+speculation). Measured A/B on the same audio: "Kaya" → **"Kaia"** fixed;
+"Hailo" still transcribes as "Halo" (true homophone — the system prompt tells
+the router to interpret charitably instead). Cost ≈ +25ms STT. Keep the
+lexicon short: an overlong prompt makes whisper hallucinate prompt words into
+marginal audio (the `robust-silence` eval case is the tripwire). Empty
+`WES_STT_LEXICON` disables. The `lexicon-*` golden cases gate it.
+
 ## Conversation memory (added 2026-07-04)
 
 The server keeps a **sliding-window conversation context** (the LiveKit

@@ -73,7 +73,7 @@ One grading call per case scores what rules can't: `correct`/`concise`/
 identical for every backend (so backends stay comparable) and carries three
 hard-won calibrations — each fixed a real false positive on 2026-07-04:
 the **actual date/time** (judge flagged the correct date as hallucinated),
-**Wesley's identity** ("runs on a Raspberry Pi" was graded as invented), and
+**the assistant's identity** ("runs on a Raspberry Pi" was graded as invented), and
 **note-before-scores ordering** (reason first, then grade — cut arithmetic
 self-contradictions). It also warns that both sides were round-tripped
 through speech recognition, so garbled numbers/years get graded charitably.
@@ -159,7 +159,7 @@ eval 10/10 under the local judge.
 2. ✅ Judge + history gate (2026-07-04). One judge call per case with
    selectable backends — `haiku` (default), `local` (gemma4:12b), `both`
    (agreement check), `off`; see §3. Judge prompt carries the actual
-   date/time and Wesley's identity (without them it flagged the correct date
+   date/time and the assistant's identity (without them it flagged the correct date
    and "runs on a Raspberry Pi" as hallucinations), and asks for the `note`
    reasoning *before* the scores. Gate: exit 1 if the run's `correct` average
    drops >0.3 below the median of the last 5 same-backend runs. Proved out

@@ -108,7 +108,10 @@ and follow-up-listening on the Pi later.
   gesture-detection prototypes, also superseded (see `docs/vision.md` for the current
   Hailo vision stack).
 - Wake word is "hey_jarvis" (openwakeword's only bundled model); a custom "hey_wesley"
-  would need training — deferred.
+  would need training. Resolved the other way 2026-07-04: the assistant's spoken
+  identity was renamed Wesley → **Jarvis** to match the wake word. Bare "Jarvis"
+  (without "hey") scores lower on the phrase-trained model — the client logs near
+  misses and `WES_WAKE_THRESHOLD` tunes it.
 - An earlier Anthropic API key was pasted in chat and treated as compromised; it was
   rotated 2026-07-03 (old key revoked, new key set via PC user env `setx`, verified
   working via the e2e suite). The key lives only in the PC user env, never the repo.

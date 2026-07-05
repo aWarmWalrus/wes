@@ -49,9 +49,13 @@ HAILO_FACES_PY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hailo
 MIC_DEVICE_INDEX = 0       # HD Pro Webcam C920: USB Audio
 SAMPLE_RATE = 16000
 CHUNK = 1280               # ~80ms at 16kHz, openwakeword's frame size
-THRESHOLD = 0.5
-# "hey_jarvis" is the only bundled openwakeword model; a custom "hey_wesley"
-# would need training (see CLAUDE.md).
+# The model is trained on the full phrase "hey jarvis"; a bare "Jarvis" scores
+# lower but nonzero. Near misses (below threshold, above the floor) are logged
+# so the threshold can be tuned empirically via WES_WAKE_THRESHOLD.
+THRESHOLD = float(os.environ.get("WES_WAKE_THRESHOLD", "0.5"))
+WAKE_NEAR_MISS = 0.2
+# "hey_jarvis" is the only bundled openwakeword model — which is why the
+# assistant's spoken identity is Jarvis (server SYSTEM_PROMPT matches).
 WAKE_WORD = "hey_jarvis"
 
 SILENCE_SECONDS = 0.8      # no-speech duration before we stop recording
@@ -248,15 +252,21 @@ def send_speculation(samples):
         pass
 
 
-def play_turn(wav, result):
+def play_turn(wav, result, interrupt=None):
     """Play one whole turn through a SINGLE paplay --raw stream: the streamed reply,
     with silence bridging the STT gap. One A2DP transport acquisition per turn —
-    avoids the PipeWire 'NotAuthorized' churn/stalls from opening several players."""
+    avoids the PipeWire 'NotAuthorized' churn/stalls from opening several players.
+
+    If `interrupt` (a threading.Event) is set mid-reply — barge-in: the caller
+    heard the wake word while we were speaking — the player is killed and the
+    server stream aborted immediately (the server tags the partial reply in its
+    conversation memory), and result["interrupted"] is set."""
     import queue
 
     q = queue.Queue()
     done = object()
     t_req0 = time.perf_counter()
+    resp = {}
 
     def fetch():
         try:
@@ -264,6 +274,7 @@ def play_turn(wav, result):
                 STREAM_URL, data=wav,
                 headers={"Content-Type": "audio/wav"}, timeout=60, stream=True,
             )
+            resp["r"] = r
             r.raise_for_status()
             result["headers_ms"] = (time.perf_counter() - t_req0) * 1000
             result["stt_ms"] = int(r.headers.get("X-Stt-Ms", 0) or 0)
@@ -272,8 +283,9 @@ def play_turn(wav, result):
             for chunk in r.iter_content(chunk_size=4096):
                 if chunk:
                     q.put(chunk)
-        except requests.RequestException as e:
-            result["err"] = e
+        except Exception as e:  # noqa: BLE001 — r.close() on barge-in lands here
+            if not (interrupt is not None and interrupt.is_set()):
+                result["err"] = e
         finally:
             q.put(done)
 
@@ -307,6 +319,16 @@ def play_turn(wav, result):
     first_reply = True
     try:
         while True:
+            if interrupt is not None and interrupt.is_set():
+                result["interrupted"] = True
+                player.kill()  # stop the speaker NOW — don't drain the buffer
+                r = resp.get("r")
+                if r is not None:
+                    try:
+                        r.close()  # abort the server stream mid-reply
+                    except Exception:  # noqa: BLE001
+                        pass
+                break
             try:
                 item = q.get(timeout=0.05)
             except queue.Empty:
@@ -449,70 +471,114 @@ def main():
 
     print(f'Listening for "Hey Jarvis"... (Ctrl+C to quit) -> {PC_URL}')
     cooldown = 0
+    pending_wake = False  # True right after a barge-in: the wake word was
+    # already spoken over the reply, so go straight to recording
     try:
         while True:
-            audio = np.frombuffer(
-                stream.read(CHUNK, exception_on_overflow=False), dtype=np.int16
-            )
-            score = oww.predict(audio).get(WAKE_WORD, 0)
-
-            if cooldown > 0:
-                cooldown -= 1
-            elif score >= THRESHOLD:
-                log(f"[wake] detected (score={score:.2f})")
-                if not state["bt"]:
-                    # No speaker — don't play to a dead sink. LED is already
-                    # blinking (bt_monitor); just skip this turn.
-                    log("[wake] speaker disconnected — skipping (LED blinking)")
-                    cooldown = 20
+            if pending_wake:
+                pending_wake = False
+                log("[barge-in] follow-up turn (wake word already heard)")
+            else:
+                audio = np.frombuffer(
+                    stream.read(CHUNK, exception_on_overflow=False), dtype=np.int16
+                )
+                score = oww.predict(audio).get(WAKE_WORD, 0)
+                if cooldown > 0:
+                    cooldown -= 1
                     continue
-                set_led(1)  # light the indicator: "Wes heard you"
-                # Snap a frame and start describing it now, so if this turn asks
-                # "what do you see" the description is already cached.
-                threading.Thread(target=prefetch_scene, daemon=True).start()
-                try:
-                    t_rec0 = time.perf_counter()
-                    samples = record_sentence(stream, vad)
-                    t_rec1 = time.perf_counter()  # end of speech
-                    wav = to_wav_bytes(samples)
-
-                    # One paplay stream for the whole turn (streamed reply,
-                    # silence-bridged) — single A2DP acquisition, no sink thrashing.
-                    result = {}
-                    play_turn(wav, result)
-
-                    if "err" in result:
-                        log(f"[turn] request failed: {result['err']}")
-                    else:
-                        transcript = result.get("transcript", "")
-                        ttfa = result.get("ttfa_ms", 0.0)
-                        done = result.get("done_ms", ttfa)
-                        log(f"[turn] transcript: {transcript!r}")
-                        if result.get("play_error"):
-                            log(f"[turn] playback interrupted: {result['play_error']}")
-                        row = {
-                            "ts": datetime.now().isoformat(timespec="seconds"),
-                            "spec": result.get("spec", "?"),
-                            "record_ms": round((t_rec1 - t_rec0) * 1000),
-                            "stt_ms": result.get("stt_ms", 0),
-                            "headers_ms": round(result.get("headers_ms", 0.0)),
-                            "ttfa_ms": round(ttfa),
-                            "done_ms": round(done),
-                            "filler_ms": 0,  # filler is part of the single stream now
-                            "gap_to_reply_ms": round(ttfa),  # ~ end-of-speech -> first audio
-                            "reply_play_ms": round(done - ttfa),
-                            "transcript": transcript,
-                        }
-                        log_timing(row)
-                        log("[timing] " + " ".join(
-                            f"{k}={row[k]}" for k in (
-                                "spec", "record_ms", "stt_ms", "headers_ms",
-                                "ttfa_ms", "done_ms", "gap_to_reply_ms", "reply_play_ms",
-                            )
-                        ))
-                finally:
-                    set_led(0 if state["bt"] else 2)
+                if score < THRESHOLD:
+                    if score >= WAKE_NEAR_MISS:
+                        log(f"[wake] near miss (score={score:.2f}) — if that "
+                            f"was you, lower WES_WAKE_THRESHOLD")
+                    continue
+                log(f"[wake] detected (score={score:.2f})")
+            if not state["bt"]:
+                # No speaker — don't play to a dead sink. LED is already
+                # blinking (bt_monitor); just skip this turn.
+                log("[wake] speaker disconnected — skipping (LED blinking)")
                 cooldown = 20
+                continue
+            set_led(1)  # light the indicator: "Wes heard you"
+            # Snap a frame and start describing it now, so if this turn asks
+            # "what do you see" the description is already cached.
+            threading.Thread(target=prefetch_scene, daemon=True).start()
+            try:
+                t_rec0 = time.perf_counter()
+                samples = record_sentence(stream, vad)
+                t_rec1 = time.perf_counter()  # end of speech
+                wav = to_wav_bytes(samples)
+
+                # One paplay stream for the whole turn (streamed reply,
+                # silence-bridged) — single A2DP acquisition, no sink
+                # thrashing. Runs in a thread so THIS thread can keep the
+                # wake word hot while the reply plays (barge-in). Only the
+                # wake PHRASE interrupts — plain VAD would trip on Wes's
+                # own voice through the mic (no echo cancellation).
+                result = {}
+                interrupt = threading.Event()
+                turn = threading.Thread(
+                    target=play_turn, args=(wav, result, interrupt),
+                    daemon=True,
+                )
+                turn.start()
+                try:
+                    oww.reset()  # don't let pre-turn audio linger in oww
+                except Exception:  # noqa: BLE001
+                    pass
+                settle = int(0.5 * SAMPLE_RATE / CHUNK)
+                heard = 0
+                while turn.is_alive():
+                    audio = np.frombuffer(
+                        stream.read(CHUNK, exception_on_overflow=False),
+                        dtype=np.int16,
+                    )
+                    heard += 1
+                    if heard <= settle or interrupt.is_set():
+                        continue
+                    score = oww.predict(audio).get(WAKE_WORD, 0)
+                    if score >= THRESHOLD:
+                        log(f"[barge-in] wake word during reply "
+                            f"(score={score:.2f}) — interrupting")
+                        interrupt.set()
+                    elif score >= WAKE_NEAR_MISS:
+                        log(f"[barge-in] near miss (score={score:.2f})")
+                turn.join()
+                if result.get("interrupted"):
+                    pending_wake = True
+
+                if "err" in result:
+                    log(f"[turn] request failed: {result['err']}")
+                else:
+                    transcript = result.get("transcript", "")
+                    ttfa = result.get("ttfa_ms", 0.0)
+                    done = result.get("done_ms", ttfa)
+                    log(f"[turn] transcript: {transcript!r}"
+                        + (" (interrupted)" if result.get("interrupted") else ""))
+                    if result.get("play_error"):
+                        log(f"[turn] playback interrupted: {result['play_error']}")
+                    row = {
+                        "ts": datetime.now().isoformat(timespec="seconds"),
+                        "spec": result.get("spec", "?"),
+                        "record_ms": round((t_rec1 - t_rec0) * 1000),
+                        "stt_ms": result.get("stt_ms", 0),
+                        "headers_ms": round(result.get("headers_ms", 0.0)),
+                        "ttfa_ms": round(ttfa),
+                        "done_ms": round(done),
+                        "filler_ms": 0,  # filler is part of the single stream now
+                        "gap_to_reply_ms": round(ttfa),  # ~ end-of-speech -> first audio
+                        "reply_play_ms": round(done - ttfa),
+                        "transcript": transcript,
+                    }
+                    log_timing(row)
+                    log("[timing] " + " ".join(
+                        f"{k}={row[k]}" for k in (
+                            "spec", "record_ms", "stt_ms", "headers_ms",
+                            "ttfa_ms", "done_ms", "gap_to_reply_ms", "reply_play_ms",
+                        )
+                    ))
+            finally:
+                set_led(0 if state["bt"] else 2)
+            cooldown = 20
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:

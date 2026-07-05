@@ -62,9 +62,9 @@
   say: "What is your name"
   expect:
     transcript_includes: [name]
-    reply_regex: 'wes'
+    reply_regex: 'jarvis'
     max_audio_s: 15
-  judge: "Does the assistant identify itself as Wesley/Wes?"
+  judge: "Does the assistant identify itself as Jarvis?"
 
 - id: escalation-math
   say: >-
@@ -95,6 +95,25 @@
     reply_regex: 'moon|lunar'
     max_audio_s: 25
   judge: "Is the reply one or two natural spoken sentences about the moon?"
+
+- id: lexicon-hailo
+  say: "Is the Hailo accelerator busy right now"
+  expect:
+    # 'Hailo' is a homophone of 'Halo' — whisper may spell either even with
+    # biasing (measured 2026-07-04); the router must understand regardless
+    transcript_includes: [accelerator]
+    max_audio_s: 20
+  judge: >-
+    Does the reply address the Hailo accelerator's status reasonably (a tool
+    answer or honest uncertainty — not a mishearing of 'Hailo')?
+
+- id: lexicon-names
+  say: "Can you say hello to Kaia and Ellis for me"
+  expect:
+    transcript_includes: [kaia, ellis]
+    reply_regex: 'kaia|ellis'
+    max_audio_s: 15
+  judge: "Does the reply greet Kaia and Ellis by name?"
 
 - id: memory-recall
   turns:

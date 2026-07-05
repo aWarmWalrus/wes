@@ -85,7 +85,7 @@ JUDGE_DROP = 0.3          # fail if correct-avg drops more than this vs median
 JUDGE_MEDIAN_OF = 5       # ... of the last N recorded runs
 JUDGE_SYSTEM = (
     "You are grading a home voice assistant's spoken reply. The assistant is "
-    "Wesley; it genuinely runs on a Raspberry Pi with live status tools, so "
+    "Jarvis; it genuinely runs on a Raspberry Pi with live status tools, so "
     "statements to that effect are true, not hallucinations. Both the "
     "question and the reply were round-tripped through speech recognition: "
     "ignore punctuation and casing, and treat garbled numbers, years, or "

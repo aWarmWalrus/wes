@@ -205,6 +205,19 @@ class TestConversationMemory:
         assert ws.reset_conversation() == 2
         assert ws.conversation_context() == []
 
+    def test_interrupted_reply_is_tagged(self):
+        ws.record_spoken_turn("tell me a story", "Once upon a time", False)
+        ctx = ws.conversation_context()
+        assert ctx[1]["content"] == "Once upon a time" + ws.INTERRUPT_TAG
+
+    def test_completed_reply_is_not_tagged(self):
+        ws.record_spoken_turn("hi", "Hello there.", True)
+        assert ws.conversation_context()[1]["content"] == "Hello there."
+
+    def test_interrupted_before_any_audio_records_nothing(self):
+        ws.record_spoken_turn("tell me a story", "", False)
+        assert ws.conversation_context() == []
+
     def test_roles_always_alternate_user_first(self):
         # the Anthropic API rejects non-alternating roles; the window cap is
         # in whole exchanges so this must hold for any history state
@@ -213,6 +226,36 @@ class TestConversationMemory:
         ctx = ws.conversation_context()
         assert [m["role"] for m in ctx[0::2]] == ["user"] * (len(ctx) // 2)
         assert [m["role"] for m in ctx[1::2]] == ["assistant"] * (len(ctx) // 2)
+
+
+class TestSttBias:
+    """Contextual-biasing prompt for whisper (lexicon + conversation tail)."""
+
+    def setup_method(self):
+        ws.reset_conversation()
+
+    def teardown_method(self):
+        ws.reset_conversation()
+
+    def test_lexicon_names_present(self):
+        p = ws.stt_bias_prompt()
+        for word in ("Jarvis", "Hailo", "Hue", "ecobee", "Matcha",
+                     "Charlie", "Cindy", "Kaia", "Ellis"):
+            assert word in p
+
+    def test_recent_conversation_is_appended(self):
+        ws.record_turn("tell me about the moon", "The moon has no atmosphere.")
+        p = ws.stt_bias_prompt()
+        assert "moon" in p
+        assert p.index("Jarvis") < p.index("moon")  # lexicon first
+
+    def test_prompt_bounded_even_with_long_turns(self):
+        # overlong prompts make whisper hallucinate; the conversation tail
+        # must be truncated, never the lexicon
+        ws.record_turn("x " * 500, "y " * 500)
+        p = ws.stt_bias_prompt()
+        assert len(p) <= len(ws.STT_LEXICON) + 301
+        assert "Ellis" in p
 
 
 class TestOllamaBackend:
