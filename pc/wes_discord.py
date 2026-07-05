@@ -84,9 +84,10 @@ def reset_server():
 def make_client(discord):
     """Build the discord.Client with handlers attached (factory keeps the
     module importable — and unit-testable — without the discord package)."""
-    intents = discord.Intents.default()
-    intents.message_content = True
-    client = discord.Client(intents=intents)
+    # Default intents only — the privileged message-content intent is NOT
+    # requested (no dev-portal toggle needed): Discord always delivers content
+    # for DMs and for messages that @mention the bot, our only two paths.
+    client = discord.Client(intents=discord.Intents.default())
 
     @client.event
     async def on_ready():

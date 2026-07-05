@@ -85,8 +85,8 @@ pipeline change: the server gained `POST /respond_text` (JSON text-in/text-out,
 no STT/TTS — `/respond` turned out to be WAV-in) and per-channel conversation
 memory; `pc/wes_discord.py` bridges Discord to it. Verified e2e against a live
 server (fact recall across turns on the "discord" channel, scoped reset).
-*Remaining setup*: create the Discord app (dev portal → bot → enable Message
-Content intent), then `setx WES_DISCORD_TOKEN ...` / `setx
+*Remaining setup*: create the Discord app (dev portal → bot → copy token; no
+privileged intents needed), then `setx WES_DISCORD_TOKEN ...` / `setx
 WES_DISCORD_OWNER_ID ...` and run the bot — see `docs/setup.md`.
 
 - **Mechanics**: a small PC-side bot process (discord.py, in the wes-pc venv)

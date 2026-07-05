@@ -47,8 +47,9 @@ Remote text access to Jarvis (roadmap "Remote access via Discord"). One-time
 setup:
 
 1. [discord.com/developers/applications](https://discord.com/developers/applications)
-   → New Application → **Bot** tab: copy the token, and enable the **Message
-   Content Intent** (required to read DMs).
+   → New Application → **Bot** tab: copy the token. No privileged intents
+   needed — Discord always delivers message content for DMs and @mentions,
+   the bot's only two paths.
 2. Invite it: OAuth2 → URL Generator → scope `bot`, permissions Send Messages →
    open the URL (or just DM the bot — DMs need no server).
 3. Your user ID: Discord Settings → Advanced → Developer Mode, then
