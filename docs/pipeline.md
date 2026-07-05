@@ -37,17 +37,30 @@ routing overhead: the route decision and the reply share one forward pass), and
 delegates when needed: rich vision to the resident **gemma4:12b** VLM (via the
 `describe_scene` tool, usually a prefetch-cache hit), deep reasoning to Claude.
 The local toolset additionally carries
-an `escalate_to_claude` function (never shown to Claude itself), so gemma decides
-per-turn when a query is beyond it — deep reasoning, hard math/code, specialized
-knowledge — and the server streams Claude's reply instead (`[route] escalating…` in
-the log). The moment an escalation fires the **server itself speaks an
-acknowledgment** (`WES_ESCALATE_ACK`, default "Good question — let me think about
-that.", empty disables) so Claude's spin-up isn't dead air — first audio ~1.3s
-instead of ~4s of silence. It's server-injected, not model-spoken, because if gemma
-has already started speaking, the handoff is suppressed (a tool
-result tells it to finish itself) so the user never hears two answers. Requires a
-Claude key; verified: "what time is it" stays local (~3.1s), a multi-step train word
-problem escalates and comes back correct (~5.5s).
+an `escalate_to_claude` function (never shown to the deep tier itself), so gemma
+decides per-turn when a query is beyond it — deep reasoning, hard math/code,
+specialized knowledge — and the server streams the deep tier's reply instead
+(`[route] escalating…` in the log). The moment an escalation fires the **server
+itself speaks an acknowledgment** (`WES_ESCALATE_ACK`, default "Good question —
+let me think about that.", empty disables) so the deep tier's spin-up isn't dead
+air — first audio ~1.3s instead of ~4s of silence. It's server-injected, not
+model-spoken, because if gemma has already started speaking, the handoff is
+suppressed (a tool result tells it to finish itself) so the user never hears two
+answers.
+
+**The deep tier is configurable** (`WES_ESCALATE_MODEL`, 2026-07-05): set it to
+an Ollama model — the launcher sets **`gemma4:12b` with thinking enabled** —
+and escalations are answered fully locally: same tool loop, the shared tools
+(minus the escalate function — no recursion), a 2048-token budget to cover the
+thinking, and thinking deltas arriving in `message.thinking` which the server
+never reads, so they're never spoken. Unset, escalations go to Claude Haiku
+(needs the API key), which also remains the automatic fallback on local
+*errors* either way. The tool keeps its prompt-tuned `escalate_to_claude`
+name — its semantics ("hand off to the much smarter model") don't change with
+the target. Note this is different from 12b-as-router (rejected above): the
+12b only pays its latency on the hard tier, where the ack masks it. Verified:
+"what time is it" stays local, the multi-step train word problem logs
+`escalating to gemma4:12b` and comes back correct (~11.5s of hidden thinking).
 
 ## STT contextual biasing (added 2026-07-04)
 

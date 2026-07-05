@@ -80,8 +80,13 @@ CAST_VOLUME = float(os.environ.get("WES_CAST_VOLUME", "0.5"))  # 5/10
 LLM_BACKEND = os.environ.get("WES_LLM", "claude")
 LOCAL_LLM_MODEL = os.environ.get("WES_LLM_LOCAL_MODEL", "gemma4:e4b")
 # Smart routing: give the local model an escalate_to_claude function so IT
-# decides when a query is beyond it (needs a Claude key; WES_ESCALATE=0 disables).
+# decides when a query is beyond it (WES_ESCALATE=0 disables).
 ESCALATE = os.environ.get("WES_ESCALATE", "1") == "1"
+# Where escalations go: an Ollama model name (e.g. "gemma4:12b" — answered
+# locally with thinking enabled) or empty for Claude (needs the API key).
+# The tool the router sees keeps its prompt-tuned name/description either
+# way — its semantics ("hand off to the much smarter model") don't change.
+ESCALATE_MODEL = os.environ.get("WES_ESCALATE_MODEL", "")
 # Spoken by the SERVER (not the model) the moment an escalation fires, so the
 # ~2-3s Claude spin-up isn't dead air. Must end with a sentence terminator +
 # space so the TTS splitter flushes it immediately. Empty string disables.
@@ -240,10 +245,11 @@ ESCALATE_TOOL = {
 
 
 def _local_toolset():
-    """Tools for the local backend: the shared TOOLS plus, when Claude is
-    reachable, the escalation function for smart routing."""
+    """Tools for the router: the shared TOOLS plus, when an escalation target
+    exists (a local deep model, or Claude with a key), the escalation function
+    for smart routing."""
     tools = _ollama_tools() if TOOLS_ENABLED else []
-    if ESCALATE and os.environ.get("ANTHROPIC_API_KEY"):
+    if ESCALATE and (ESCALATE_MODEL or os.environ.get("ANTHROPIC_API_KEY")):
         tools = tools + [ESCALATE_TOOL]
     return tools
 
@@ -529,14 +535,17 @@ def transcribe(wav_bytes):
 RATE_LIMIT_REPLY = "Sorry, I'm being rate limited right now. Try again in a moment."
 
 
-def _ollama_chat(messages, tools=None, stream=False, max_tokens=512, timeout=120):
+def _ollama_chat(messages, tools=None, stream=False, max_tokens=512, timeout=120,
+                 model=None, think=False):
     """POST to Ollama /api/chat. Returns the response object (caller iterates
-    lines when stream=True, or json-decodes .read() when stream=False)."""
+    lines when stream=True, or json-decodes .read() when stream=False).
+    Thinking deltas arrive in message.thinking, separate from content, so
+    they are never spoken — callers only read message.content."""
     body = {
-        "model": LOCAL_LLM_MODEL,
+        "model": model or LOCAL_LLM_MODEL,
         "messages": messages,
         "stream": stream,
-        "think": False,  # spoken replies — never emit thinking tokens
+        "think": think,
         "keep_alive": -1,
         "options": {"num_predict": max_tokens},
     }
@@ -616,19 +625,35 @@ def _think_local(transcript, channel="voice"):
     return "".join(_stream_local(transcript, channel=channel)).strip()
 
 
-def _stream_local(transcript, channel="voice"):
+def _stream_escalation(transcript, channel="voice"):
+    """Route an escalated (hard) query to the configured deep backend:
+    the local ESCALATE_MODEL with thinking, or Claude."""
+    if ESCALATE_MODEL:
+        yield from _stream_local(transcript, channel=channel, deep=True)
+    else:
+        yield from _stream_claude(transcript, channel=channel)
+
+
+def _stream_local(transcript, channel="voice", deep=False):
     """Stream a local reply with the same tool loop the Claude path runs.
-    Yields text deltas; runs requested tools between rounds."""
+    Yields text deltas; runs requested tools between rounds. deep=True is the
+    escalation tier: ESCALATE_MODEL with thinking enabled (thinking streams in
+    message.thinking, which we never read, so it is never spoken), the shared
+    tools but no escalate function, and a larger token budget to cover the
+    thinking."""
     messages = (
         [{"role": "system", "content": system_prompt(channel)}]
         + conversation_context(channel)
         + [{"role": "user", "content": transcript}]
     )
-    tools = _local_toolset()
+    tools = (_ollama_tools() if TOOLS_ENABLED else []) if deep else _local_toolset()
+    model = ESCALATE_MODEL if deep else None
+    max_tokens = 2048 if deep else 512
     yielded = False
     for _ in range(MAX_TOOL_ROUNDS):
         content_parts, tool_calls = [], []
-        with _ollama_chat(messages, tools=tools, stream=True) as r:
+        with _ollama_chat(messages, tools=tools, stream=True,
+                          model=model, think=deep, max_tokens=max_tokens) as r:
             for line in r:
                 chunk = json.loads(line)
                 msg = chunk.get("message") or {}
@@ -650,12 +675,13 @@ def _stream_local(transcript, channel="voice"):
             fn = tc.get("function") or {}
             name, args = fn.get("name", ""), fn.get("arguments") or {}
             if name == "escalate_to_claude":
-                if not yielded:
-                    print(f"[route] escalating to Claude: "
+                if not yielded and not deep:
+                    target = ESCALATE_MODEL or "Claude"
+                    print(f"[route] escalating to {target}: "
                           f"{args.get('reason', '?')}", flush=True)
                     if ESCALATE_ACK:
-                        yield ESCALATE_ACK  # masks Claude's spin-up latency
-                    yield from _stream_claude(transcript, channel=channel)
+                        yield ESCALATE_ACK  # masks the deep tier's spin-up
+                    yield from _stream_escalation(transcript, channel=channel)
                     return
                 # Already mid-reply — a handoff now would double-speak.
                 messages.append({
@@ -987,7 +1013,9 @@ def health():
         ok=True,
         llm=(
             f"local ({LOCAL_LLM_MODEL})"
-            + (" + claude escalation"
+            + (f" + {ESCALATE_MODEL} escalation (thinking)"
+               if ESCALATE and ESCALATE_MODEL
+               else " + claude escalation"
                if ESCALATE and os.environ.get("ANTHROPIC_API_KEY") else "")
             if LLM_BACKEND == "local"
             else "claude" if os.environ.get("ANTHROPIC_API_KEY")

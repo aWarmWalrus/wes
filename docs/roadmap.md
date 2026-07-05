@@ -7,8 +7,10 @@ local LLM streaming with tools → piper TTS → JBL), speculative prefetch, on-
 Hailo object detection + face recognition, and a two-host test suite including the
 quality-eval harness (`docs/eval-design.md`, phases 1-2). The LLM tier is a **router**:
 gemma4:e4b answers the easy tier itself and delegates — rich vision to the resident
-gemma4:12b VLM, deep reasoning to Claude Haiku (with a server-injected escalation
-acknowledgment masking Claude's spin-up). Keeping e4b as the router is evidence-backed
+gemma4:12b VLM, deep reasoning to the same 12b **with thinking enabled**
+(`WES_ESCALATE_MODEL`, fully local since 2026-07-05; a server-injected escalation
+acknowledgment masks the thinking latency; Claude Haiku is now error-fallback only).
+Keeping e4b as the router is evidence-backed
 (A/B in `docs/pipeline.md`: 12b-as-router = +44-63% latency, no quality gain).
 
 ## Hybrid local inference — DONE (July 2026)
@@ -18,8 +20,10 @@ The GPU upgrade landed (RTX 5060 Ti 16GB; 64GB RAM coming). `WES_LLM=local` now 
 model for both chat and `describe_scene`), with Claude as automatic fallback on local
 errors and via `WES_LLM=claude`. Measured: llm ~706ms vs Haiku's ~1305ms; total turn
 ~2.6s vs ~4.0s. Smart routing is in too (`WES_ESCALATE`): gemma carries an
-`escalate_to_claude` function and hands hard queries to Claude itself — see
-`docs/pipeline.md`.
+`escalate_to_claude` function and hands hard queries off itself — since
+2026-07-05 to the resident **gemma4:12b with thinking** (`WES_ESCALATE_MODEL`
+in the launcher) rather than Claude, making normal operation fully local;
+Claude remains the fallback on local errors — see `docs/pipeline.md`.
 
 ## Future Hailo use
 

@@ -3,9 +3,10 @@
 A 3-tier local voice assistant: **Pi 5 + Hailo-8** (edge: wake word, audio, on-device
 vision) ↔ **PC / RTX 5060 Ti 16GB** (STT, LLM, TTS) ↔ **Claude API** (fallback).
 Built and working today: wake word → VAD-endpointed capture → PC Whisper STT → local
-**gemma4:e4b** via Ollama (`WES_LLM=local`; streaming + tools; Claude Haiku is the
-fallback/optional backend) with **gemma4:12b** as the resident VLM for scene
-description (both fit the 16GB card) → piper TTS streamed sentence-by-sentence to a
+**gemma4:e4b** via Ollama as router (`WES_LLM=local`; streaming + tools), escalating
+hard queries to the resident **gemma4:12b** with thinking (`WES_ESCALATE_MODEL`;
+also the VLM for scene description — both fit the 16GB card; Claude Haiku is the
+error-fallback/optional backend) → piper TTS streamed sentence-by-sentence to a
 Bluetooth JBL. Turns share a sliding-window conversation memory (`docs/pipeline.md`).
 
 > This root file is loaded every session — keep it lean. Put subsystem detail in

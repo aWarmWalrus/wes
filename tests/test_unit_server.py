@@ -428,6 +428,7 @@ class TestEscalation:
                               "arguments": {"reason": "hard math"}}}]},
               "done": True}],
         ])
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "")  # Claude target
         monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
         monkeypatch.setattr(
             ws, "_stream_claude", lambda t, channel="voice": iter(["Claude answer."]))
@@ -453,6 +454,60 @@ class TestEscalation:
         monkeypatch.setattr(
             ws, "_stream_claude", lambda t, channel="voice": iter(["Claude answer."]))
         assert list(ws._stream_local("q")) == ["Claude answer."]
+
+    def test_toolset_includes_escalation_with_local_target_no_key(self, monkeypatch):
+        # A local deep model is a valid escalation target without any API key.
+        monkeypatch.setattr(ws, "ESCALATE", True)
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        names = [t["function"]["name"] for t in ws._local_toolset()]
+        assert "escalate_to_claude" in names
+
+    def test_escalation_hands_off_to_local_deep_model(self, monkeypatch):
+        fake, calls = TestOllamaBackend._fake_urlopen([
+            [{"message": {"content": "", "tool_calls": [
+                {"function": {"name": "escalate_to_claude",
+                              "arguments": {"reason": "hard math"}}}]},
+              "done": True}],
+            [{"message": {"thinking": "let me reason...", "content": ""},
+              "done": False},
+             {"message": {"content": "Deep answer."}, "done": True}],
+        ])
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        monkeypatch.setattr(
+            ws, "_stream_claude",
+            lambda t, channel="voice": (_ for _ in ()).throw(
+                AssertionError("must stay local")))
+        out = list(ws._stream_local("prove this theorem"))
+        # Ack, then the deep reply — and the thinking delta is never yielded.
+        assert out == [ws.ESCALATE_ACK, "Deep answer."]
+        deep = calls[1]
+        assert deep["model"] == "gemma4:12b"
+        assert deep["think"] is True
+        assert deep["options"]["num_predict"] > 512  # room for thinking
+        # The deep tier must not see the escalate tool (no recursion).
+        names = [t["function"]["name"] for t in deep.get("tools") or []]
+        assert "escalate_to_claude" not in names and "describe_scene" in names
+        # Router call is unchanged: default model, no thinking.
+        assert calls[0]["model"] == ws.LOCAL_LLM_MODEL
+        assert calls[0]["think"] is False
+
+    def test_deep_tier_carries_conversation_and_channel(self, monkeypatch):
+        ws.reset_conversation()
+        ws.record_turn("hi", "hello", channel="discord")
+        fake, calls = TestOllamaBackend._fake_urlopen([
+            [{"message": {"content": "Deep answer."}, "done": True}]])
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        try:
+            out = "".join(ws._stream_local("q", channel="discord", deep=True))
+        finally:
+            ws.reset_conversation()
+        assert out == "Deep answer."
+        msgs = calls[0]["messages"]
+        assert {"role": "user", "content": "hi"} in msgs
+        assert ws.TEXT_CHANNEL_NOTE in msgs[0]["content"]
 
     def test_no_handoff_after_speech_started(self, monkeypatch):
         fake, calls = TestOllamaBackend._fake_urlopen([
