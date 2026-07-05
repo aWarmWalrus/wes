@@ -56,6 +56,10 @@ Get-Content C:\Users\awarm\wes-pc\logs\server.log -Tail 20   # server log
 - `C:\Users\awarm\wes-pc\run_server.ps1` (PC-local, NOT in the repo) — the launcher
   the "WES Server" task runs; sets voice/model env. `tests/` — the test suite.
 
+Project skills in `.claude/skills/`: **wes-test** (running the suites
+correctly) and **wes-reload** (restarting the live services + reading logs) —
+prefer them over re-deriving commands.
+
 ## Testing (do this every change)
 
 Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\.venv\Scripts\python.exe`.

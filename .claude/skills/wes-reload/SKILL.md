@@ -1,0 +1,63 @@
+---
+name: wes-reload
+description: Reload, restart, or debug the live WES services (server, Discord bot) and read their logs. Use after editing pc/wes_server.py, pc/wes_discord.py, or the PC-local launchers.
+---
+
+# Reloading and debugging the live WES services
+
+Both services run as user scheduled tasks on the PC (hidden at logon,
+auto-restart 3x on failure). Launchers are PC-local, NOT in the repo:
+`C:\Users\awarm\wes-pc\run_server.ps1` / `run_discord.ps1` (they set env and
+pull secrets from the user environment).
+
+## Reload after a code change
+
+```powershell
+Stop-ScheduledTask -TaskName "WES Server"; Start-Sleep 2
+Start-ScheduledTask -TaskName "WES Server"
+```
+
+(Same pattern with `"WES Discord"` for the bot.)
+
+- The server warms up Whisper + piper + Gemma BEFORE serving — allow **60-120s**
+  before `/health` answers. Poll with a generous deadline; do not conclude
+  failure at 45s.
+- Verify: `Invoke-RestMethod http://127.0.0.1:8080/health` — the `llm` field
+  shows the router + escalation target (e.g.
+  `local (gemma4:e4b) + gemma4:12b escalation (thinking)`).
+
+## Reading the logs
+
+`C:\Users\awarm\wes-pc\logs\server.log`, `discord.log`, `eval.log`. Task
+redirection writes them UTF-16-ish; `Select-String` and `-match` miss
+content unless nulls are stripped first:
+
+```powershell
+$log = Get-Content C:\Users\awarm\wes-pc\logs\server.log -Raw
+($log -replace "`0","") -split "`n" | Where-Object { $_ -match 'escalat' }
+```
+
+Useful log markers: `[route] escalating to ...`, `[tool] name(args)`,
+`[respond_text] (channel)`, `[timing] stt=..`, `[discord] logged in as`.
+
+## Testing server changes without touching the live service
+
+Run a second instance on another port (models load twice — fine briefly):
+
+```powershell
+$env:WES_PORT = "8081"
+C:\Users\awarm\wes-pc\.venv\Scripts\python.exe Z:\wes\pc\wes_server.py
+# ...exercise http://127.0.0.1:8081 ... then stop it:
+$c = Get-NetTCPConnection -LocalPort 8081 -State Listen
+Stop-Process -Id $c[0].OwningProcess -Force -Confirm:$false
+```
+
+## Cautions
+
+- Restarting "WES Server" briefly takes the house assistant down — routine
+  after edits, but don't restart on a hunch mid-conversation with the user.
+- The audio house rule still applies: never trigger speaker playback (cast or
+  JBL) as part of debugging without explicit confirmation. `/respond_text` is
+  the safe silent probe.
+- The Pi client is separate (`ssh walrus-pi`, runs `pi/wes_client.py` from
+  `~/wes/.venv`); server reloads don't require touching it.
