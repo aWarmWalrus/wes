@@ -70,6 +70,19 @@ ssh walrus-pi "journalctl --user -u wes-client -n 30 --no-pager -o cat"
   `le-connection-abort-by-local` means the speaker is off or out of battery —
   not a software problem.
 
+## Observability stack (docs/observability.md)
+
+- PC metrics exporters run under the `"WES Exporters"` scheduled task
+  (launcher `run_exporters.ps1`, binaries in `wes-pc\bin\`); same
+  Stop/Start-ScheduledTask reload pattern. Logs: `logs\exporters.log`,
+  `logs\windows_exporter.err.log`.
+- Pi side: `ssh walrus-pi "sudo systemctl restart prometheus"` (or
+  `grafana-server`, `prometheus-node-exporter`). Target health:
+  <http://10.0.0.79:9090/targets>; dashboard <http://10.0.0.79:3000>.
+- The dashboard JSON is provisioned from the repo
+  (`observability/dashboards/wes-overview.json`) — edit there, copy to
+  `/var/lib/grafana/dashboards/`, restart grafana-server.
+
 ## Cautions
 
 - Restarting "WES Server" briefly takes the house assistant down — routine

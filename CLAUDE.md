@@ -18,7 +18,7 @@ Bluetooth JBL. Turns share a sliding-window conversation memory (`docs/pipeline.
 | Tier | Host | LAN IP | Role |
 |------|------|--------|------|
 | 1 | `raspberrypi` (alias `walrus-pi`) | 10.0.0.79 | Pi 5 + Hailo-8 — wake word, audio, vision |
-| 2 | `DESKTOP-R2PFF9T` | 10.0.0.168 | PC (GTX 1660 SUPER) — STT, LLM, TTS |
+| 2 | `DESKTOP-R2PFF9T` | 10.0.0.168 | PC (RTX 5060 Ti 16GB) — STT, LLM, TTS |
 
 - **`Z:\` on the PC is a Samba mount of the Pi**: `Z:\wes` = the Pi's
   `/home/walrus/claude/wes` (this repo). Editing `Z:\wes\*` edits the Pi's files. A
@@ -52,8 +52,8 @@ Get-Content C:\Users\awarm\wes-pc\logs\server.log -Tail 20   # server log
 - `pi/pi_state.py` — read-only Pi state/vision endpoint on `:8090`.
 - `pc/wes_server.py` — Flask `:8080`: Whisper STT, Claude (tools + vision), piper TTS.
 - `pc/wes_discord.py` — Discord frontend: owner-allowlisted DMs → `POST /respond_text`
-  (text-only, own conversation channel). Needs `WES_DISCORD_TOKEN` + `_OWNER_ID`
-  (PC user env); run it manually or add a scheduled task (see `docs/setup.md`).
+  (text-only, own conversation channel). Runs as scheduled task "WES Discord"
+  (`WES_DISCORD_TOKEN` + `_OWNER_ID` from PC user env; see `docs/setup.md`).
 - `C:\Users\awarm\wes-pc\run_server.ps1` (PC-local, NOT in the repo) — the launcher
   the "WES Server" task runs; sets voice/model env. `tests/` — the test suite.
 
@@ -90,7 +90,10 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   stale early-stage docs, were folded into this + the rest of `docs/` and removed).
 - `docs/roadmap.md` — planned: smart home controls (Home Assistant), scheduled
   actions, barge-in; future Hailo use, storage, history. Discord remote access
-  is built (pending bot credentials).
+  and host observability are built.
+- `docs/observability.md` — Prometheus + Grafana utilization dashboard
+  (<http://10.0.0.79:3000>): exporters on both hosts, provisioning, restart
+  commands. App-level `/metrics` in `wes_server.py` is planned, not built.
 - `docs/eval-design.md` — design for the automated quality-eval harness (golden
   set + LLM-as-judge + nightly gate); phases 1-2 (`tests/eval_turns.py`,
   deterministic checks + Haiku judge) are built.

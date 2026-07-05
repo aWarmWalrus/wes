@@ -13,6 +13,12 @@ acknowledgment masks the thinking latency; Claude Haiku is now error-fallback on
 Keeping e4b as the router is evidence-backed
 (A/B in `docs/pipeline.md`: 12b-as-router = +44-63% latency, no quality gain).
 
+Host observability is BUILT (2026-07-05, `docs/observability.md`): Prometheus +
+Grafana on the Pi scraping node_exporter (Pi) and windows_exporter +
+nvidia_gpu_exporter (PC); dashboard at <http://10.0.0.79:3000>. Phase 3 —
+app-level `/metrics` in `wes_server.py` (tokens/latency/escalations) and
+Discord-delivered alerts — is planned.
+
 ## Hybrid local inference — DONE (July 2026)
 
 The GPU upgrade landed (RTX 5060 Ti 16GB; 64GB RAM coming). `WES_LLM=local` now runs

@@ -1,0 +1,75 @@
+{
+  "__comment": "WES host overview — provisioned into Grafana on the Pi from /var/lib/grafana/dashboards/ (see docs/observability.md). Edit here in the repo, then copy to the Pi; provisioned dashboards are read-only in the UI.",
+  "uid": "wes-overview",
+  "title": "WES Overview",
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    { "type": "row", "title": "PC (10.0.0.168) — inference host", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }, "id": 100 },
+    {
+      "type": "timeseries", "title": "PC CPU utilization", "id": 1,
+      "gridPos": { "x": 0, "y": 1, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
+      "targets": [ { "refId": "A", "expr": "100 * (1 - avg(rate(windows_cpu_time_total{mode=\"idle\"}[1m])))", "legendFormat": "cpu" } ]
+    },
+    {
+      "type": "timeseries", "title": "PC RAM used", "id": 2,
+      "gridPos": { "x": 8, "y": 1, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
+      "targets": [ { "refId": "A", "expr": "100 * (1 - windows_memory_physical_free_bytes / windows_memory_physical_total_bytes)", "legendFormat": "ram" } ]
+    },
+    {
+      "type": "timeseries", "title": "GPU utilization (5060 Ti)", "id": 3,
+      "gridPos": { "x": 16, "y": 1, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
+      "targets": [ { "refId": "A", "expr": "100 * nvidia_smi_utilization_gpu_ratio", "legendFormat": "gpu" } ]
+    },
+    {
+      "type": "timeseries", "title": "VRAM (models resident)", "id": 4,
+      "gridPos": { "x": 0, "y": 9, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 } },
+      "targets": [
+        { "refId": "A", "expr": "nvidia_smi_memory_used_bytes", "legendFormat": "used" },
+        { "refId": "B", "expr": "nvidia_smi_memory_total_bytes", "legendFormat": "total" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "GPU temperature / power", "id": 5,
+      "gridPos": { "x": 12, "y": 9, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "fieldConfig": { "defaults": { "unit": "celsius" } },
+      "targets": [
+        { "refId": "A", "expr": "nvidia_smi_temperature_gpu", "legendFormat": "temp °C" },
+        { "refId": "B", "expr": "nvidia_smi_power_draw_watts", "legendFormat": "power W" }
+      ]
+    },
+    { "type": "row", "title": "Raspberry Pi 5 (10.0.0.79) — voice client", "gridPos": { "x": 0, "y": 17, "w": 24, "h": 1 }, "id": 101 },
+    {
+      "type": "timeseries", "title": "Pi CPU utilization", "id": 6,
+      "gridPos": { "x": 0, "y": 18, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
+      "targets": [ { "refId": "A", "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])))", "legendFormat": "cpu" } ]
+    },
+    {
+      "type": "timeseries", "title": "Pi RAM used", "id": 7,
+      "gridPos": { "x": 8, "y": 18, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
+      "targets": [ { "refId": "A", "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "ram" } ]
+    },
+    {
+      "type": "timeseries", "title": "Pi temperature", "id": 8,
+      "gridPos": { "x": 16, "y": 18, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "fieldConfig": { "defaults": { "unit": "celsius" } },
+      "targets": [ { "refId": "A", "expr": "node_thermal_zone_temp", "legendFormat": "{{zone}} {{type}}" } ]
+    }
+  ],
+  "schemaVersion": 39
+}
