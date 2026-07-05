@@ -15,6 +15,7 @@ Run (from the PC's local venv):
 """
 
 import base64
+import csv
 import io
 import json
 import os
@@ -303,6 +304,8 @@ def _gemma_describe(jpeg, prompt=None):
     )
     with urllib.request.urlopen(req, timeout=120) as r:
         data = json.loads(r.read().decode())
+    record_usage(VLM_MODEL, "vlm", "scene",
+                 data.get("prompt_eval_count"), data.get("eval_count"))
     return data.get("response", "").strip() or "(no description)"
 
 
@@ -606,6 +609,89 @@ def reset_conversation(channel=None):
         return n
 
 
+# --- Token usage ledger -------------------------------------------------------
+# Every LLM call (local and Claude) appends one CSV row so we can track local
+# token volume and estimate what it "saved" vs sending the same traffic to the
+# Claude API. GET /usage aggregates it.
+USAGE_LOG = os.environ.get(
+    "WES_USAGE_LOG",
+    os.path.join(os.path.expanduser("~"), "wes-pc", "logs", "usage.csv"))
+USAGE_FIELDS = ["ts", "model", "source", "channel", "in_tokens", "out_tokens"]
+# The counterfactual price: claude-haiku-4-5 (the model WES otherwise calls),
+# USD per million tokens — cached from Anthropic's pricing table 2026-06-24;
+# update if Anthropic reprices. Local (gemma) token counts come from a
+# different tokenizer than Claude's, so the estimate is rough by nature.
+HAIKU_USD_PER_MTOK_IN = 1.00
+HAIKU_USD_PER_MTOK_OUT = 5.00
+_usage_lock = threading.Lock()
+
+
+def record_usage(model, source, channel, in_tokens, out_tokens):
+    """Append one LLM call to the ledger. Zero-token rows are dropped (the
+    backend didn't report usage) and failures never break a turn."""
+    if not (in_tokens or out_tokens):
+        return
+    try:
+        with _usage_lock:
+            os.makedirs(os.path.dirname(USAGE_LOG), exist_ok=True)
+            new = not os.path.exists(USAGE_LOG)
+            with open(USAGE_LOG, "a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(USAGE_FIELDS)
+                w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), model, source,
+                            channel, int(in_tokens or 0), int(out_tokens or 0)])
+    except OSError as e:  # noqa: BLE001
+        print(f"[usage] ledger write failed: {e}", flush=True)
+
+
+def usage_summary(days=None):
+    """Aggregate the ledger by (model, source): calls, tokens, and USD at
+    Haiku rates — for local models that's the estimated *saving* vs having
+    sent the same call to the Claude API; for claude rows it's actual spend."""
+    cutoff = time.time() - days * 86400 if days else None
+    groups = {}
+    try:
+        with open(USAGE_LOG, newline="", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if cutoff:
+                    try:
+                        ts = time.mktime(time.strptime(r["ts"], "%Y-%m-%d %H:%M:%S"))
+                        if ts < cutoff:
+                            continue
+                    except (ValueError, KeyError):
+                        pass
+                key = (r.get("model", "?"), r.get("source", "?"))
+                g = groups.setdefault(key, {"calls": 0, "in_tokens": 0, "out_tokens": 0})
+                g["calls"] += 1
+                g["in_tokens"] += int(r.get("in_tokens") or 0)
+                g["out_tokens"] += int(r.get("out_tokens") or 0)
+    except FileNotFoundError:
+        pass
+
+    rows, saved, spent = [], 0.0, 0.0
+    for (model, source), g in sorted(groups.items()):
+        usd = (g["in_tokens"] * HAIKU_USD_PER_MTOK_IN
+               + g["out_tokens"] * HAIKU_USD_PER_MTOK_OUT) / 1e6
+        local = not model.startswith("claude")
+        rows.append({"model": model, "source": source, "local": local,
+                     "usd_at_haiku_rates": round(usd, 4), **g})
+        if local:
+            saved += usd
+        else:
+            spent += usd
+    return {
+        "days": days,
+        "by_call_site": rows,
+        "local_saved_usd_estimate": round(saved, 4),
+        "claude_spent_usd": round(spent, 4),
+        "pricing_basis": "claude-haiku-4-5: $1.00/MTok in, $5.00/MTok out "
+                         "(cached 2026-06-24)",
+        "note": "'saved' prices local tokens at Haiku rates; gemma and Claude "
+                "tokenize differently, so treat it as a rough estimate",
+    }
+
+
 # LiveKit-style interruption tag: when the client aborts playback (barge-in),
 # the partial reply IS what the user heard — remember it, but tell the model
 # where it was cut off so the follow-up turn can pivot naturally.
@@ -663,6 +749,11 @@ def _stream_local(transcript, channel="voice", deep=False):
                     yield msg["content"]
                 tool_calls.extend(msg.get("tool_calls") or [])
                 if chunk.get("done"):
+                    # Ollama reports token usage on the final chunk.
+                    record_usage(model or LOCAL_LLM_MODEL,
+                                 "escalate" if deep else "router", channel,
+                                 chunk.get("prompt_eval_count"),
+                                 chunk.get("eval_count"))
                     break
         if not tool_calls:
             return  # final answer delivered
@@ -722,6 +813,8 @@ def _think_claude(transcript, channel="voice"):
             messages=conversation_context(channel)
             + [{"role": "user", "content": transcript}],
         )
+        record_usage(ANTHROPIC_MODEL, "claude", channel,
+                     resp.usage.input_tokens, resp.usage.output_tokens)
         return "".join(b.text for b in resp.content if b.type == "text").strip()
     except anthropic.RateLimitError:
         return RATE_LIMIT_REPLY
@@ -801,6 +894,8 @@ def _stream_claude(transcript, channel="voice"):
                 for text in stream.text_stream:
                     yield text
                 final = stream.get_final_message()
+            record_usage(ANTHROPIC_MODEL, "claude", channel,
+                         final.usage.input_tokens, final.usage.output_tokens)
         except anthropic.RateLimitError:
             yield RATE_LIMIT_REPLY
             return
@@ -1024,6 +1119,14 @@ def health():
         output=OUTPUT_MODE,
         cast_device=CAST_DEVICE if OUTPUT_MODE == "cast" else None,
     )
+
+
+@app.route("/usage")
+def usage_route():
+    """Token usage rollup by model + call source, with a USD estimate of what
+    the local tokens would have cost on Claude Haiku ("saved") and what the
+    Claude calls actually cost. ?days=7 limits the window."""
+    return jsonify(usage_summary(request.args.get("days", type=float)))
 
 
 @app.route("/respond_text", methods=["POST"])

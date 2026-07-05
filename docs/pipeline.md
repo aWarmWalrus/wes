@@ -114,6 +114,19 @@ Not yet built (see roadmap): persistence across server restarts, and long-horizo
 memory (summarizing old turns instead of dropping them — LiveKit's
 background-summary pattern) if the window ever feels short.
 
+## Token usage ledger (added 2026-07-05)
+
+Every LLM call appends one row to `C:\Users\awarm\wes-pc\logs\usage.csv`
+(`WES_USAGE_LOG` overrides): timestamp, model, call source (`router` /
+`escalate` / `vlm` / `claude`), conversation channel, and tokens in/out —
+Ollama reports counts on its final chunk, Claude in `response.usage`.
+**`GET /usage`** (optional `?days=N`) rolls it up by model + source and prices
+the tokens at claude-haiku-4-5 rates ($1/MTok in, $5/MTok out, cached
+2026-06-24): for local models that's the estimated **saving** vs having sent
+the call to the Claude API; for `claude` rows it's actual spend. Caveats: gemma
+and Claude tokenize differently (rough estimate by design), zero-token rows
+are dropped, and a ledger write failure never breaks a turn.
+
 ## Streaming reply (`/respond_stream`, the default path)
 
 The PC streams the LLM's tokens, splits them into sentences (`next_sentence`,

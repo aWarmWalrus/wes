@@ -632,6 +632,79 @@ class TestRespondText:
         assert ws.conversation_context("discord") == []
 
 
+class TestUsageLedger:
+    """Token usage tracking: per-call CSV ledger + /usage rollup with the
+    saved-vs-Claude estimate."""
+
+    def _log(self, tmp_path, monkeypatch):
+        path = str(tmp_path / "usage.csv")
+        monkeypatch.setattr(ws, "USAGE_LOG", path)
+        return path
+
+    def test_record_and_summarize(self, tmp_path, monkeypatch):
+        self._log(tmp_path, monkeypatch)
+        ws.record_usage("gemma4:e4b", "router", "voice", 1_000_000, 0)
+        ws.record_usage("gemma4:e4b", "router", "voice", 0, 1_000_000)
+        ws.record_usage("gemma4:12b", "escalate", "discord", 500, 200)
+        ws.record_usage("claude-haiku-4-5", "claude", "voice", 2_000_000, 0)
+        s = ws.usage_summary()
+        by = {(r["model"], r["source"]): r for r in s["by_call_site"]}
+        router = by[("gemma4:e4b", "router")]
+        assert router["calls"] == 2
+        assert router["in_tokens"] == 1_000_000
+        assert router["out_tokens"] == 1_000_000
+        assert router["usd_at_haiku_rates"] == 6.0   # $1 in + $5 out
+        assert router["local"] is True
+        assert by[("claude-haiku-4-5", "claude")]["local"] is False
+        assert s["local_saved_usd_estimate"] == round(6.0 + 0.0015, 4)
+        assert s["claude_spent_usd"] == 2.0
+
+    def test_zero_token_rows_are_dropped(self, tmp_path, monkeypatch):
+        path = self._log(tmp_path, monkeypatch)
+        ws.record_usage("gemma4:e4b", "router", "voice", 0, 0)
+        ws.record_usage("gemma4:e4b", "router", "voice", None, None)
+        assert not ws.usage_summary()["by_call_site"]
+        import os
+        assert not os.path.exists(path)  # nothing worth writing
+
+    def test_days_window_filters_old_rows(self, tmp_path, monkeypatch):
+        import csv as _csv
+        path = self._log(tmp_path, monkeypatch)
+        with open(path, "w", newline="") as f:
+            w = _csv.writer(f)
+            w.writerow(ws.USAGE_FIELDS)
+            w.writerow(["2020-01-01 00:00:00", "gemma4:e4b", "router", "voice", 10, 10])
+        ws.record_usage("gemma4:e4b", "router", "voice", 5, 5)
+        assert ws.usage_summary()["by_call_site"][0]["calls"] == 2
+        assert ws.usage_summary(days=1)["by_call_site"][0]["calls"] == 1
+
+    def test_missing_ledger_is_empty_summary(self, tmp_path, monkeypatch):
+        self._log(tmp_path, monkeypatch)
+        s = ws.usage_summary()
+        assert s["by_call_site"] == [] and s["claude_spent_usd"] == 0.0
+
+    def test_stream_local_records_router_usage(self, tmp_path, monkeypatch):
+        self._log(tmp_path, monkeypatch)
+        fake, _ = TestOllamaBackend._fake_urlopen([[
+            {"message": {"content": "Hi."}, "done": True,
+             "prompt_eval_count": 120, "eval_count": 8}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        "".join(ws._stream_local("hi", channel="discord"))
+        row = ws.usage_summary()["by_call_site"][0]
+        assert row["model"] == ws.LOCAL_LLM_MODEL and row["source"] == "router"
+        assert row["in_tokens"] == 120 and row["out_tokens"] == 8
+
+    def test_usage_endpoint(self, tmp_path, monkeypatch):
+        self._log(tmp_path, monkeypatch)
+        ws.record_usage("gemma4:12b", "vlm", "scene", 900, 60)
+        with ws.app.test_client() as c:
+            r = c.get("/usage")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["by_call_site"][0]["source"] == "vlm"
+        assert "pricing_basis" in body
+
+
 class TestFaceSummary:
     def test_no_data(self):
         out = ws._face_summary(None)
