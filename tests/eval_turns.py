@@ -245,10 +245,13 @@ def _judge_raw_haiku(user_content):
 def _judge_raw_local(user_content):
     # gemma4:12b is already resident on the card as the VLM; a text-only chat
     # call costs no extra VRAM and runs in a couple of seconds. format=json +
-    # temperature 0 keep the small judge parseable and repeatable.
+    # temperature 0 + think off keep the small judge parseable and repeatable —
+    # with thinking left on (the model default) it intermittently mangles the
+    # score keys (e.g. "concise_score" for "natural") and the case goes
+    # unscored.
     body = json.dumps({
         "model": JUDGE_LOCAL_MODEL, "stream": False, "format": "json",
-        "options": {"temperature": 0},
+        "think": False, "options": {"temperature": 0},
         "messages": [{"role": "system", "content": JUDGE_SYSTEM},
                      {"role": "user", "content": user_content}],
     }).encode()
@@ -264,9 +267,12 @@ def judge_case(case, transcript, reply, backend):
     failure — the judge must never break a run."""
     raw = {"haiku": _judge_raw_haiku, "local": _judge_raw_local}[backend]
     try:
-        scores = parse_judge(raw(judge_prompt(case, transcript, reply)))
+        text = raw(judge_prompt(case, transcript, reply))
+        scores = parse_judge(text)
         if scores is None:
-            print(f"     ! {backend} judge output unparseable — case unscored")
+            # Show the raw reply so a bad judge run is diagnosable from the log.
+            print(f"     ! {backend} judge output unparseable — case unscored: "
+                  f"{text[:150]!r}")
         return scores
     except Exception as e:  # noqa: BLE001
         print(f"     ! {backend} judge error: {e}")

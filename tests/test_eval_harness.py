@@ -147,6 +147,9 @@ class TestHistorySchema:
         assert body["model"] == ev.JUDGE_LOCAL_MODEL
         assert body["format"] == "json"            # parseable output
         assert body["options"]["temperature"] == 0  # repeatable grades
+        # Thinking left on (the model default) intermittently mangles the
+        # score keys and the case goes unscored — must be pinned off.
+        assert body["think"] is False
         assert body["messages"][0]["content"] == ev.JUDGE_SYSTEM
         assert "Is it Paris?" in body["messages"][1]["content"]
 
