@@ -70,8 +70,11 @@ The server keeps a **sliding-window conversation context** (the LiveKit
 ChatContext pattern), keyed by channel: `"voice"` is the house conversation —
 one house, one mic — and remote text frontends get their own channel (the
 Discord bot uses `"discord"`), so a chat from away never clobbers the in-house
-context. Each channel replays its last `WES_CONV_TURNS` exchanges (default 6)
-to whichever backend answers the next turn. Key behaviors:
+context. Non-voice channels also get `TEXT_CHANNEL_NOTE` appended to the system
+prompt (`system_prompt(channel)`), overriding the voice framing — without it the
+model tells Discord users it hears them "by voice command". Each channel replays
+its last `WES_CONV_TURNS` exchanges (default 6) to whichever backend answers the
+next turn. Key behaviors:
 
 - **Shared across the handoff**: escalated turns give Claude the same history
   gemma saw (and gemma later sees what Claude said) — without this, "explain that

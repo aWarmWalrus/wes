@@ -503,6 +503,29 @@ class TestTtsClean:
         assert ws.tts_clean(ws.ESCALATE_ACK) == ws.ESCALATE_ACK.strip()
 
 
+class TestChannelSystemPrompt:
+    """Text channels override the voice framing so the model never says
+    'voice command' to someone typing on Discord."""
+
+    def test_voice_channel_is_pure_voice_prompt(self):
+        p = ws.system_prompt("voice")
+        assert p.startswith(ws.SYSTEM_PROMPT)
+        assert ws.TEXT_CHANNEL_NOTE not in p
+
+    def test_text_channels_get_the_note(self):
+        for ch in ("discord", "text"):
+            p = ws.system_prompt(ch)
+            assert ws.TEXT_CHANNEL_NOTE in p
+            assert p.startswith(ws.SYSTEM_PROMPT)  # base rules still apply
+
+    def test_stream_local_uses_channel_prompt(self, monkeypatch):
+        fake, calls = TestOllamaBackend._fake_urlopen([[
+            {"message": {"content": "ok"}, "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        "".join(ws._stream_local("hi", channel="discord"))
+        assert ws.TEXT_CHANNEL_NOTE in calls[0]["messages"][0]["content"]
+
+
 class TestRespondText:
     """Text-in/text-out endpoint for remote frontends (the Discord bot)."""
 

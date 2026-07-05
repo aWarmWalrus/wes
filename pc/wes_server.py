@@ -104,6 +104,23 @@ SYSTEM_PROMPT = os.environ.get(
     "answer everyday knowledge questions confidently from what you know.",
 )
 
+# The base prompt is written for the voice loop; text frontends (Discord)
+# override its speech assumptions so the model doesn't talk about "voice
+# commands" to someone typing on their phone.
+TEXT_CHANNEL_NOTE = (
+    " Correction for this conversation: the user is TYPING to you over a text "
+    "chat (Discord), probably away from home — no microphone, speech "
+    "recognition, or text-to-speech is involved, so never mention voice or "
+    "speaking. Their words arrive exactly as typed. Keep replies short and "
+    "conversational; digits and simple formatting are fine in text."
+)
+
+
+def system_prompt(channel="voice"):
+    """The system prompt for a turn: base + channel framing + live scene."""
+    note = "" if channel == "voice" else TEXT_CHANNEL_NOTE
+    return SYSTEM_PROMPT + note + _scene_context()
+
 # --- Tools (Pi introspection) ----------------------------------------------
 TOOLS_ENABLED = os.environ.get("WES_TOOLS", "1") == "1"
 PI_STATE_URL = os.environ.get("WES_PI_STATE_URL", "http://10.0.0.79:8090")
@@ -603,7 +620,7 @@ def _stream_local(transcript, channel="voice"):
     """Stream a local reply with the same tool loop the Claude path runs.
     Yields text deltas; runs requested tools between rounds."""
     messages = (
-        [{"role": "system", "content": SYSTEM_PROMPT + _scene_context()}]
+        [{"role": "system", "content": system_prompt(channel)}]
         + conversation_context(channel)
         + [{"role": "user", "content": transcript}]
     )
@@ -675,7 +692,7 @@ def _think_claude(transcript, channel="voice"):
         resp = client.messages.create(
             model=ANTHROPIC_MODEL,
             max_tokens=256,
-            system=SYSTEM_PROMPT + _scene_context(),
+            system=system_prompt(channel),
             messages=conversation_context(channel)
             + [{"role": "user", "content": transcript}],
         )
@@ -743,7 +760,7 @@ def _stream_claude(transcript, channel="voice"):
     # History rides along on escalation, so Claude sees what gemma already said
     messages = conversation_context(channel) + [{"role": "user", "content": transcript}]
     tools = TOOLS if TOOLS_ENABLED else []
-    system = SYSTEM_PROMPT + _scene_context()  # who's in frame right now
+    system = system_prompt(channel)  # channel framing + who's in frame right now
 
     for _ in range(MAX_TOOL_ROUNDS):
         _record_llm_call()
