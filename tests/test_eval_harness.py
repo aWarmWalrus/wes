@@ -13,6 +13,33 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eval_turns as ev  # noqa: E402
 
 
+class TestCheckCase:
+    """Deterministic per-case checks — especially the negative-match assertion
+    that gates the invisible-escalation rule (escalation-silent)."""
+
+    def _res(self, transcript="q"):
+        return {"transcript": transcript, "audio_s": 2.0, "total_ms": 1000}
+
+    def test_reply_not_regex_fails_on_match(self):
+        case = {"expect": {"reply_not_regex": "claude|hand(ing)? off"}}
+        fails = ev.check_case(case, self._res(),
+                              "I think you should ask Claude to prove that.")
+        assert fails and "reply_not_regex" in fails[0]
+
+    def test_reply_not_regex_passes_on_clean_reply(self):
+        case = {"expect": {"reply_not_regex": "claude|hand(ing)? off"}}
+        assert ev.check_case(case, self._res(),
+                             "Suppose root two were rational...") == []
+
+    def test_reply_regex_and_not_regex_compose(self):
+        case = {"expect": {"reply_regex": "irrational",
+                           "reply_not_regex": "claude"}}
+        assert ev.check_case(case, self._res(),
+                             "Hence root two is irrational.") == []
+        assert len(ev.check_case(case, self._res(),
+                                 "Ask Claude about that.")) == 2
+
+
 class TestParseJudge:
     def test_clean_json(self):
         s = ev.parse_judge(

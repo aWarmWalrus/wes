@@ -184,6 +184,9 @@ def check_case(case, res, reply_text):
     rx = exp.get("reply_regex")
     if rx and not re.search(rx, reply_text, re.IGNORECASE):
         fails.append(f"reply_regex {rx!r} unmatched: {reply_text!r}")
+    nrx = exp.get("reply_not_regex")
+    if nrx and re.search(nrx, reply_text, re.IGNORECASE):
+        fails.append(f"reply_not_regex {nrx!r} matched: {reply_text!r}")
     if res["audio_s"] < exp.get("min_audio_s", 0):
         fails.append(f"reply too short: {res['audio_s']}s")
     if res["audio_s"] > exp.get("max_audio_s", 10 ** 6):

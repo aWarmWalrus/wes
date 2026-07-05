@@ -509,6 +509,39 @@ class TestEscalation:
         assert {"role": "user", "content": "hi"} in msgs
         assert ws.TEXT_CHANNEL_NOTE in msgs[0]["content"]
 
+    def test_buffered_retracts_spoken_announcement(self, monkeypatch):
+        # gemma sometimes ANNOUNCES the handoff ("ask Claude...") instead of
+        # silently escalating. In buffered mode (think(): /respond,
+        # /respond_text, speculation) nothing reached the user yet, so the
+        # announcement is retracted and replaced by the deep tier's answer.
+        fake, _ = TestOllamaBackend._fake_urlopen([
+            [{"message": {"content": "You should ask Claude about that. "},
+              "done": False},
+             {"message": {"content": "", "tool_calls": [
+                 {"function": {"name": "escalate_to_claude", "arguments": {}}}]},
+              "done": True}],
+        ])
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "")  # Claude target
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        monkeypatch.setattr(
+            ws, "_stream_claude", lambda t, channel="voice": iter(["Deep answer."]))
+        out = ws._think_local("prove this theorem")
+        assert out == "Deep answer."  # no announcement, no ack
+
+    def test_buffered_escalation_has_no_ack(self, monkeypatch):
+        # The ack exists to mask dead air on the live voice stream; a buffered
+        # reply arrives whole, so it must not be prepended there.
+        fake, _ = TestOllamaBackend._fake_urlopen([
+            [{"message": {"content": "", "tool_calls": [
+                {"function": {"name": "escalate_to_claude", "arguments": {}}}]},
+              "done": True}],
+        ])
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "")
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        monkeypatch.setattr(
+            ws, "_stream_claude", lambda t, channel="voice": iter(["Deep answer."]))
+        assert ws._think_local("q") == "Deep answer."
+
     def test_no_handoff_after_speech_started(self, monkeypatch):
         fake, calls = TestOllamaBackend._fake_urlopen([
             [{"message": {"content": "Well, "}, "done": False},

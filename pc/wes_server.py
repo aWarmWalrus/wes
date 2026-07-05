@@ -231,7 +231,11 @@ ESCALATE_TOOL = {
             "detailed knowledge, or careful nuanced judgment — anything a small "
             "local model is likely to get wrong. Do NOT use for everyday "
             "conversation, simple facts, or anything your other tools already "
-            "cover (time, camera, faces, Pi status, logs)."
+            "cover (time, camera, faces, Pi status, logs). "
+            "Call it IMMEDIATELY as your only output — no reply text before or "
+            "alongside it. The handoff is invisible to the user: never announce "
+            "it, never mention Claude or asking for help, never tell the user to "
+            "ask someone else."
         ),
         "parameters": {
             "type": "object",
@@ -705,10 +709,24 @@ def record_spoken_turn(transcript, reply, completed):
     record_turn(transcript, reply)
 
 
+# Buffered-mode marker: nothing yielded so far reached the user — discard it.
+# Lets a buffered caller retract a spoken escalation announcement ("I think
+# you should ask Claude...") and replace it with the deep tier's real answer.
+RESET = object()
+
+
 def _think_local(transcript, channel="voice"):
     """One-shot local reply — same tool loop as streaming, joined. Without tools
-    gemma4 hallucinates tool output (fake times, literal '{tool_output}')."""
-    return "".join(_stream_local(transcript, channel=channel)).strip()
+    gemma4 hallucinates tool output (fake times, literal '{tool_output}').
+    Runs buffered: no text reaches the user until the reply is complete, so a
+    late escalation can still cleanly replace everything said before it."""
+    parts = []
+    for delta in _stream_local(transcript, channel=channel, buffered=True):
+        if delta is RESET:
+            parts.clear()
+        else:
+            parts.append(delta)
+    return "".join(parts).strip()
 
 
 def _stream_escalation(transcript, channel="voice"):
@@ -720,13 +738,15 @@ def _stream_escalation(transcript, channel="voice"):
         yield from _stream_claude(transcript, channel=channel)
 
 
-def _stream_local(transcript, channel="voice", deep=False):
+def _stream_local(transcript, channel="voice", deep=False, buffered=False):
     """Stream a local reply with the same tool loop the Claude path runs.
     Yields text deltas; runs requested tools between rounds. deep=True is the
     escalation tier: ESCALATE_MODEL with thinking enabled (thinking streams in
     message.thinking, which we never read, so it is never spoken), the shared
     tools but no escalate function, and a larger token budget to cover the
-    thinking."""
+    thinking. buffered=True means the caller holds the reply until complete
+    (nothing has been spoken), so a mid-reply escalation can yield RESET to
+    retract the announcement instead of being suppressed."""
     messages = (
         [{"role": "system", "content": system_prompt(channel)}]
         + conversation_context(channel)
@@ -766,11 +786,17 @@ def _stream_local(transcript, channel="voice", deep=False):
             fn = tc.get("function") or {}
             name, args = fn.get("name", ""), fn.get("arguments") or {}
             if name == "escalate_to_claude":
-                if not yielded and not deep:
+                if not deep and (not yielded or buffered):
                     target = ESCALATE_MODEL or "Claude"
                     print(f"[route] escalating to {target}: "
                           f"{args.get('reason', '?')}", flush=True)
-                    if ESCALATE_ACK:
+                    if buffered:
+                        # Nothing reached the user — retract any announcement
+                        # ("ask Claude..."); no ack needed, there's no dead
+                        # air to mask when the reply arrives whole.
+                        if yielded:
+                            yield RESET
+                    elif ESCALATE_ACK:
                         yield ESCALATE_ACK  # masks the deep tier's spin-up
                     yield from _stream_escalation(transcript, channel=channel)
                     return

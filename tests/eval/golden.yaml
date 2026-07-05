@@ -80,6 +80,23 @@
     Correct answer is 7pm. Does the reply state it? (Working shown is fine
     but should be brief.)
 
+# The escalation handoff must be INVISIBLE: the router must never announce it
+# ("you should ask Claude...") or defer the question back to the user. Caught
+# live 2026-07-05 — gemma spoke an announcement instead of calling the tool.
+# Answering locally OR silently escalating both pass; naming Claude/the
+# handoff, or telling the user to ask elsewhere, fails.
+- id: escalation-silent
+  say: "Prove that the square root of two is irrational"
+  expect:
+    transcript_includes: [square root]
+    reply_not_regex: "claude|hand(ing)? (this |it )?off|ask (someone|somebody|them|him|her)|i can'?t answer|beyond (me|my)"
+    max_total_ms: 60000
+    max_audio_s: 90
+  judge: >-
+    Does the reply itself present a mathematical argument that the square root
+    of two is irrational (any standard proof sketch counts), rather than
+    deferring, refusing, or telling the user to ask something or someone else?
+
 - id: robust-silence
   say: SILENCE
   expect:
