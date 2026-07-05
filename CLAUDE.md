@@ -33,8 +33,9 @@ Bluetooth JBL. Turns share a sliding-window conversation memory (`docs/pipeline.
 
 ```bash
 ssh walrus-pi        # alias → walrus@10.0.0.79, key ~/.ssh/walrus_pi
-# Pi client (deps venv interpreter + repo script path):
-~/wes/.venv/bin/python ~/claude/wes/pi/wes_client.py
+# Pi client runs as a systemd USER unit (pi/wes-client.service, boot-persistent):
+systemctl --user restart wes-client   # reload after editing pi/wes_client.py
+journalctl --user -u wes-client -n 30 # logs
 ```
 ```powershell
 # PC server runs as scheduled task "WES Server" (auto-starts at logon).

@@ -1,0 +1,25 @@
+# WES Pi client — systemd USER unit (audio needs the user session's pipewire;
+# linger is enabled so it starts at boot without a login).
+#
+# Install (on the Pi):
+#   mkdir -p ~/.config/systemd/user
+#   cp ~/claude/wes/pi/wes-client.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now wes-client
+# Reload after editing pi/wes_client.py:
+#   systemctl --user restart wes-client
+# Logs:
+#   journalctl --user -u wes-client -n 50
+
+[Unit]
+Description=WES voice assistant client (wake word, audio loop, :8090 state endpoint)
+After=pipewire.service
+
+[Service]
+WorkingDirectory=/home/walrus/claude/wes/pi
+ExecStart=/home/walrus/wes/.venv/bin/python /home/walrus/claude/wes/pi/wes_client.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

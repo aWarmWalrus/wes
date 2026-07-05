@@ -52,6 +52,24 @@ $c = Get-NetTCPConnection -LocalPort 8081 -State Listen
 Stop-Process -Id $c[0].OwningProcess -Force -Confirm:$false
 ```
 
+## Pi client
+
+Runs as a systemd **user** unit (`wes-client`, from `pi/wes-client.service`;
+linger enabled so it survives reboots). After editing `pi/wes_client.py`,
+`pi/pi_state.py`, or `pi/hailo_*.py`:
+
+```bash
+ssh walrus-pi "systemctl --user restart wes-client"
+ssh walrus-pi "journalctl --user -u wes-client -n 30 --no-pager -o cat"
+```
+
+- Startup takes ~10s (wake-word model load); verify with the `[state] endpoint
+  on :8090` log line or `curl http://10.0.0.79:8090/state`.
+- A restart drops the JBL's A2DP connection; `bt_monitor` reclaims it within
+  ~5-10s automatically. Repeated `[bt] connect rc=1` /
+  `le-connection-abort-by-local` means the speaker is off or out of battery —
+  not a software problem.
+
 ## Cautions
 
 - Restarting "WES Server" briefly takes the house assistant down — routine

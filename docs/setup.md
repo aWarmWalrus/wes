@@ -85,8 +85,16 @@ Register-ScheduledTask -TaskName "WES Nightly Eval" -Action $action `
 ## Tier 1 (Pi) client
 
 Deps in `~/wes/.venv` (openwakeword, pyaudio, requests, numpy); the "hey_jarvis" model
-is downloaded. Run:
+is downloaded.
+
+Runs as a **systemd user unit** since 2026-07-05 (`pi/wes-client.service`,
+installed to `~/.config/systemd/user/`; linger is enabled so it starts at boot
+— a user unit, not system, because audio needs the session's pipewire):
 ```bash
+systemctl --user restart wes-client     # reload after editing pi/wes_client.py
+systemctl --user status wes-client
+journalctl --user -u wes-client -n 50   # logs
+# manual run (service stopped) for debugging:
 ~/wes/.venv/bin/python ~/claude/wes/pi/wes_client.py
 ```
 - Mic: `MIC_DEVICE_INDEX = 0` → PulseAudio default source (the Pi exposes `pulse`/
