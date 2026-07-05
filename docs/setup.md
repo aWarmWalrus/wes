@@ -5,7 +5,8 @@
 - venv: `C:\Users\awarm\wes-pc\.venv` (Windows; `Z:\` is the Pi's Linux share).
 - voice model: `C:\Users\awarm\wes-pc\voices\en_GB-alan-medium.onnx` (British male,
   22050 Hz — matches the Pi player). `en_US-amy-medium` also present but unused.
-- deps: `flask anthropic faster-whisper piper-tts pychromecast pytest` **plus two pins**:
+- deps: `flask anthropic faster-whisper piper-tts pychromecast pytest discord.py`
+  **plus two pins**:
   - **`ctranslate2==4.4.0`** — 4.8.0 segfaults (`0xC0000005`) on model load on this PC.
   - **`onnxruntime==1.20.1`** — 1.27.0's DLL init fails (piper needs onnxruntime).
 - STT runs on **CPU int8** by default (`WES_WHISPER_MODEL=tiny.en` in the launcher).
@@ -39,6 +40,31 @@ Get-ScheduledTaskInfo -TaskName "WES Server"   # status
 ```
 
 Still Flask's dev server — fine for home use; swap for waitress/NSSM to harden later.
+
+### Discord bot (`pc/wes_discord.py`)
+
+Remote text access to Jarvis (roadmap "Remote access via Discord"). One-time
+setup:
+
+1. [discord.com/developers/applications](https://discord.com/developers/applications)
+   → New Application → **Bot** tab: copy the token, and enable the **Message
+   Content Intent** (required to read DMs).
+2. Invite it: OAuth2 → URL Generator → scope `bot`, permissions Send Messages →
+   open the URL (or just DM the bot — DMs need no server).
+3. Your user ID: Discord Settings → Advanced → Developer Mode, then
+   right-click your name → Copy User ID.
+
+```powershell
+setx WES_DISCORD_TOKEN "<bot token>"        # user env, like ANTHROPIC_API_KEY
+setx WES_DISCORD_OWNER_ID "<your user ID>"  # the ONLY user the bot answers
+# run (new shell so setx is visible); same venv as the server, discord.py installed
+C:\Users\awarm\wes-pc\.venv\Scripts\python.exe Z:\wes\pc\wes_discord.py
+```
+
+DM the bot (or @mention it in a server you share). `!reset` starts a new
+conversation. Replies come from `POST /respond_text` on the local server —
+text only, no audio path. Register a "WES Discord" scheduled task mirroring
+"WES Server" once it proves itself.
 
 ### Nightly eval task
 

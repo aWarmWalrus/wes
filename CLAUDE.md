@@ -49,6 +49,9 @@ Get-Content C:\Users\awarm\wes-pc\logs\server.log -Tail 20   # server log
 - `pi/hailo_detect.py` — YOLOv8s object detection on the Hailo (**system python3**).
 - `pi/pi_state.py` — read-only Pi state/vision endpoint on `:8090`.
 - `pc/wes_server.py` — Flask `:8080`: Whisper STT, Claude (tools + vision), piper TTS.
+- `pc/wes_discord.py` — Discord frontend: owner-allowlisted DMs → `POST /respond_text`
+  (text-only, own conversation channel). Needs `WES_DISCORD_TOKEN` + `_OWNER_ID`
+  (PC user env); run it manually or add a scheduled task (see `docs/setup.md`).
 - `C:\Users\awarm\wes-pc\run_server.ps1` (PC-local, NOT in the repo) — the launcher
   the "WES Server" task runs; sets voice/model env. `tests/` — the test suite.
 
@@ -80,8 +83,12 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
 - `docs/hardware.md` — Pi/Hailo/camera specs (PERIPHERALS.md and PROJECT.md, both
   stale early-stage docs, were folded into this + the rest of `docs/` and removed).
 - `docs/roadmap.md` — planned: smart home controls (Home Assistant), scheduled
-  actions, barge-in; future Hailo use, storage, history.
+  actions, barge-in; future Hailo use, storage, history. Discord remote access
+  is built (pending bot credentials).
 - `docs/eval-design.md` — design for the automated quality-eval harness (golden
   set + LLM-as-judge + nightly gate); phases 1-2 (`tests/eval_turns.py`,
   deterministic checks + Haiku judge) are built.
+- `docs/memory-design.md` — long-term memory design (OpenClaw-style file-based
+  MEMORY.md + remember/forget tools + nightly consolidation); exploration only,
+  not yet built.
 - `docs/keyresults.md` — current-cycle key results, refreshed periodically.

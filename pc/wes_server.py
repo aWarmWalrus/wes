@@ -533,44 +533,50 @@ def _ollama_chat(messages, tools=None, stream=False, max_tokens=512, timeout=120
 
 
 # --- Conversation memory ----------------------------------------------------
-# LiveKit ChatContext-style sliding window: one global conversation (one house,
-# one mic), the last CONV_TURNS exchanges are replayed to whichever backend
-# answers — including across the escalation handoff, so Claude sees what gemma
-# said. Goes idle-empty after CONV_TTL seconds of silence.
+# LiveKit ChatContext-style sliding window, keyed by channel: "voice" is the
+# house conversation (one house, one mic); remote text frontends (Discord) get
+# their own channel so a chat from away doesn't clobber the in-house context.
+# The last CONV_TURNS exchanges are replayed to whichever backend answers —
+# including across the escalation handoff, so Claude sees what gemma said.
+# Each channel goes idle-empty after CONV_TTL seconds of silence.
 CONV_TURNS = int(os.environ.get("WES_CONV_TURNS", "6"))
 CONV_TTL = float(os.environ.get("WES_CONV_TTL", "300"))
 _conv_lock = threading.Lock()
-_conv = []       # [{"role": "user"|"assistant", "content": str}], newest last
-_conv_last = 0.0
+_convs = {}      # channel -> [{"role": "user"|"assistant", "content": str}]
+_conv_last = {}  # channel -> last activity time
 
 
-def conversation_context():
+def conversation_context(channel="voice"):
     """Recent exchanges for the LLM, or [] once the conversation went idle."""
     with _conv_lock:
-        if time.time() - _conv_last > CONV_TTL:
-            _conv.clear()
-        return list(_conv)
+        conv = _convs.setdefault(channel, [])
+        if time.time() - _conv_last.get(channel, 0.0) > CONV_TTL:
+            conv.clear()
+        return list(conv)
 
 
-def record_turn(transcript, reply):
-    """Append one spoken exchange, keeping the last CONV_TURNS exchanges.
+def record_turn(transcript, reply, channel="voice"):
+    """Append one exchange, keeping the last CONV_TURNS exchanges.
     Empty transcripts (silence) and empty replies are not memory."""
-    global _conv_last
     if not (transcript and transcript.strip() and reply and reply.strip()):
         return
     with _conv_lock:
-        if time.time() - _conv_last > CONV_TTL:
-            _conv.clear()
-        _conv.append({"role": "user", "content": transcript})
-        _conv.append({"role": "assistant", "content": reply})
-        del _conv[:-2 * CONV_TURNS]
-        _conv_last = time.time()
+        conv = _convs.setdefault(channel, [])
+        if time.time() - _conv_last.get(channel, 0.0) > CONV_TTL:
+            conv.clear()
+        conv.append({"role": "user", "content": transcript})
+        conv.append({"role": "assistant", "content": reply})
+        del conv[:-2 * CONV_TURNS]
+        _conv_last[channel] = time.time()
 
 
-def reset_conversation():
+def reset_conversation(channel=None):
+    """Clear one channel's memory, or every channel's when channel is None."""
     with _conv_lock:
-        n = len(_conv) // 2
-        _conv.clear()
+        convs = [_convs.get(channel, [])] if channel else list(_convs.values())
+        n = sum(len(c) // 2 for c in convs)
+        for c in convs:
+            c.clear()
         return n
 
 
@@ -587,18 +593,18 @@ def record_spoken_turn(transcript, reply, completed):
     record_turn(transcript, reply)
 
 
-def _think_local(transcript):
+def _think_local(transcript, channel="voice"):
     """One-shot local reply — same tool loop as streaming, joined. Without tools
     gemma4 hallucinates tool output (fake times, literal '{tool_output}')."""
-    return "".join(_stream_local(transcript)).strip()
+    return "".join(_stream_local(transcript, channel=channel)).strip()
 
 
-def _stream_local(transcript):
+def _stream_local(transcript, channel="voice"):
     """Stream a local reply with the same tool loop the Claude path runs.
     Yields text deltas; runs requested tools between rounds."""
     messages = (
         [{"role": "system", "content": SYSTEM_PROMPT + _scene_context()}]
-        + conversation_context()
+        + conversation_context(channel)
         + [{"role": "user", "content": transcript}]
     )
     tools = _local_toolset()
@@ -632,7 +638,7 @@ def _stream_local(transcript):
                           f"{args.get('reason', '?')}", flush=True)
                     if ESCALATE_ACK:
                         yield ESCALATE_ACK  # masks Claude's spin-up latency
-                    yield from _stream_claude(transcript)
+                    yield from _stream_claude(transcript, channel=channel)
                     return
                 # Already mid-reply — a handoff now would double-speak.
                 messages.append({
@@ -649,17 +655,17 @@ def _stream_local(transcript):
             })
 
 
-def think(transcript):
+def think(transcript, channel="voice"):
     """Get a reply from the configured LLM backend."""
     if LLM_BACKEND == "local":
         try:
-            return _think_local(transcript)
+            return _think_local(transcript, channel=channel)
         except Exception as e:  # noqa: BLE001
             print(f"[llm] local error: {e!r} -> falling back to Claude", flush=True)
-    return _think_claude(transcript)
+    return _think_claude(transcript, channel=channel)
 
 
-def _think_claude(transcript):
+def _think_claude(transcript, channel="voice"):
     """Get a reply from Claude, or echo the transcript if no API key."""
     client = get_anthropic()
     if client is None:
@@ -670,7 +676,7 @@ def _think_claude(transcript):
             model=ANTHROPIC_MODEL,
             max_tokens=256,
             system=SYSTEM_PROMPT + _scene_context(),
-            messages=conversation_context()
+            messages=conversation_context(channel)
             + [{"role": "user", "content": transcript}],
         )
         return "".join(b.text for b in resp.content if b.type == "text").strip()
@@ -727,7 +733,7 @@ def stream_reply(transcript):
     yield from _stream_claude(transcript)
 
 
-def _stream_claude(transcript):
+def _stream_claude(transcript, channel="voice"):
     """Yield the reply text in deltas as Claude streams it."""
     client = get_anthropic()
     if client is None:
@@ -735,7 +741,7 @@ def _stream_claude(transcript):
         return
 
     # History rides along on escalation, so Claude sees what gemma already said
-    messages = conversation_context() + [{"role": "user", "content": transcript}]
+    messages = conversation_context(channel) + [{"role": "user", "content": transcript}]
     tools = TOOLS if TOOLS_ENABLED else []
     system = SYSTEM_PROMPT + _scene_context()  # who's in frame right now
 
@@ -975,6 +981,27 @@ def health():
     )
 
 
+@app.route("/respond_text", methods=["POST"])
+def respond_text():
+    """Body: JSON {"text": str, "channel"?: str}. Returns {reply, timing}.
+    Text-in/text-out — no STT, no TTS, no speaker. The entry point for remote
+    text frontends (the Discord bot); each frontend names its own channel so
+    its conversation memory stays separate from the in-house voice one."""
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    channel = (data.get("channel") or "text").strip() or "text"
+    if not text:
+        return jsonify(error='empty text; POST JSON {"text": ...}'), 400
+
+    print(f"[respond_text] ({channel}) {text!r}", flush=True)
+    t0 = time.perf_counter()
+    reply = think(text, channel=channel)
+    llm_ms = round((time.perf_counter() - t0) * 1000)
+    print(f"[respond_text] reply: {reply!r} ({llm_ms}ms)", flush=True)
+    record_turn(text, reply, channel=channel)
+    return jsonify(reply=reply, timing={"llm_ms": llm_ms})
+
+
 @app.route("/respond", methods=["POST"])
 def respond():
     """Body: raw WAV bytes (16kHz mono int16). Returns {transcript, reply}."""
@@ -1128,9 +1155,11 @@ def respond_stream():
 
 @app.route("/reset_conversation", methods=["POST"])
 def reset_conversation_route():
-    """Clear the conversation memory. Used by the eval harness so golden cases
-    stay independent, and available for an explicit 'new conversation'."""
-    return jsonify(cleared_turns=reset_conversation())
+    """Clear conversation memory — one channel via JSON {"channel": ...}, or
+    every channel when the body is empty. Used by the eval harness so golden
+    cases stay independent, and available for an explicit 'new conversation'."""
+    data = request.get_json(silent=True) or {}
+    return jsonify(cleared_turns=reset_conversation(data.get("channel")))
 
 
 @app.route("/prefetch_scene", methods=["POST"])

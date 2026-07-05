@@ -67,9 +67,11 @@ marginal audio (the `robust-silence` eval case is the tripwire). Empty
 ## Conversation memory (added 2026-07-04)
 
 The server keeps a **sliding-window conversation context** (the LiveKit
-ChatContext pattern): one global conversation — one house, one mic — whose last
-`WES_CONV_TURNS` exchanges (default 6) are replayed to whichever backend answers
-the next turn. Key behaviors:
+ChatContext pattern), keyed by channel: `"voice"` is the house conversation —
+one house, one mic — and remote text frontends get their own channel (the
+Discord bot uses `"discord"`), so a chat from away never clobbers the in-house
+context. Each channel replays its last `WES_CONV_TURNS` exchanges (default 6)
+to whichever backend answers the next turn. Key behaviors:
 
 - **Shared across the handoff**: escalated turns give Claude the same history
   gemma saw (and gemma later sees what Claude said) — without this, "explain that
@@ -79,9 +81,11 @@ the next turn. Key behaviors:
 - **Silence isn't memory**: empty transcripts and empty replies are never
   recorded; a partial reply on a client abort is (it *is* what the user heard —
   barge-in will tag these `[interrupted]` later, per LiveKit practice).
-- **`POST /reset_conversation`** clears it explicitly — the eval harness calls it
-  before every case so golden cases stay order-independent, and it's the hook for
-  a future "new conversation" voice command.
+- **`POST /reset_conversation`** clears it explicitly — one channel via JSON
+  `{"channel": ...}`, or every channel on an empty body. The eval harness calls
+  it (empty body) before every case so golden cases stay order-independent, and
+  it's the hook for a future "new conversation" voice command; the Discord bot's
+  `!reset` clears only its own channel.
 
 Measured cost: none — perf_check ttfa after the change (1277ms) is within noise of
 the pre-memory baseline (~1800ms median, well inside limits), since a few short

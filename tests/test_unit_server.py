@@ -196,8 +196,30 @@ class TestConversationMemory:
 
     def test_idle_ttl_clears_context(self):
         ws.record_turn("hi", "hello")
-        ws._conv_last = time.time() - ws.CONV_TTL - 1
+        ws._conv_last["voice"] = time.time() - ws.CONV_TTL - 1
         assert ws.conversation_context() == []
+
+    def test_channels_are_isolated(self):
+        ws.record_turn("voice question", "voice answer")
+        ws.record_turn("remote question", "remote answer", channel="discord")
+        assert [m["content"] for m in ws.conversation_context()] == \
+            ["voice question", "voice answer"]
+        assert [m["content"] for m in ws.conversation_context("discord")] == \
+            ["remote question", "remote answer"]
+
+    def test_reset_one_channel_leaves_others(self):
+        ws.record_turn("a", "b")
+        ws.record_turn("c", "d", channel="discord")
+        assert ws.reset_conversation("discord") == 1
+        assert ws.conversation_context("discord") == []
+        assert len(ws.conversation_context()) == 2
+
+    def test_reset_default_clears_all_channels(self):
+        ws.record_turn("a", "b")
+        ws.record_turn("c", "d", channel="discord")
+        assert ws.reset_conversation() == 2
+        assert ws.conversation_context() == []
+        assert ws.conversation_context("discord") == []
 
     def test_reset_returns_turn_count(self):
         ws.record_turn("a", "b")
@@ -407,7 +429,8 @@ class TestEscalation:
               "done": True}],
         ])
         monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
-        monkeypatch.setattr(ws, "_stream_claude", lambda t: iter(["Claude answer."]))
+        monkeypatch.setattr(
+            ws, "_stream_claude", lambda t, channel="voice": iter(["Claude answer."]))
         out = list(ws._stream_local("prove this theorem"))
         # Server-injected ack first (masks Claude spin-up), then Claude's reply.
         assert out == [ws.ESCALATE_ACK, "Claude answer."]
@@ -427,7 +450,8 @@ class TestEscalation:
         ])
         monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
         monkeypatch.setattr(ws, "ESCALATE_ACK", "")
-        monkeypatch.setattr(ws, "_stream_claude", lambda t: iter(["Claude answer."]))
+        monkeypatch.setattr(
+            ws, "_stream_claude", lambda t, channel="voice": iter(["Claude answer."]))
         assert list(ws._stream_local("q")) == ["Claude answer."]
 
     def test_no_handoff_after_speech_started(self, monkeypatch):
@@ -441,7 +465,8 @@ class TestEscalation:
         monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
         monkeypatch.setattr(
             ws, "_stream_claude",
-            lambda t: (_ for _ in ()).throw(AssertionError("must not hand off")))
+            lambda t, channel="voice": (_ for _ in ()).throw(
+                AssertionError("must not hand off")))
         assert "".join(ws._stream_local("q")) == "Well, here is my answer."
         # The suppressed escalation went back as a tool result.
         roles = [m["role"] for m in calls[1]["messages"]]
@@ -476,6 +501,57 @@ class TestTtsClean:
     def test_ack_survives_cleaning(self):
         # The escalation ack goes through the same path; it must not vanish.
         assert ws.tts_clean(ws.ESCALATE_ACK) == ws.ESCALATE_ACK.strip()
+
+
+class TestRespondText:
+    """Text-in/text-out endpoint for remote frontends (the Discord bot)."""
+
+    def setup_method(self):
+        ws.reset_conversation()
+
+    def teardown_method(self):
+        ws.reset_conversation()
+
+    def test_reply_and_channel_memory(self, monkeypatch):
+        monkeypatch.setattr(
+            ws, "think", lambda text, channel="voice": f"[{channel}] {text}")
+        with ws.app.test_client() as c:
+            r = c.post("/respond_text",
+                       json={"text": "hello", "channel": "discord"})
+        assert r.status_code == 200
+        assert r.get_json()["reply"] == "[discord] hello"
+        # Recorded in the discord channel, not the voice one.
+        assert ws.conversation_context() == []
+        assert ws.conversation_context("discord")[-1]["content"] == \
+            "[discord] hello"
+
+    def test_default_channel_is_text(self, monkeypatch):
+        monkeypatch.setattr(
+            ws, "think", lambda text, channel="voice": "ok")
+        with ws.app.test_client() as c:
+            assert c.post("/respond_text", json={"text": "hi"}).status_code == 200
+        assert ws.conversation_context("text") != []
+
+    def test_empty_text_is_400(self):
+        with ws.app.test_client() as c:
+            assert c.post("/respond_text", json={"text": "  "}).status_code == 400
+            assert c.post("/respond_text", data=b"").status_code == 400
+
+    def test_reset_route_scopes_to_channel(self):
+        ws.record_turn("a", "b")
+        ws.record_turn("c", "d", channel="discord")
+        with ws.app.test_client() as c:
+            r = c.post("/reset_conversation", json={"channel": "discord"})
+        assert r.get_json()["cleared_turns"] == 1
+        assert len(ws.conversation_context()) == 2  # voice untouched
+
+    def test_reset_route_empty_body_clears_all(self):
+        ws.record_turn("a", "b")
+        ws.record_turn("c", "d", channel="discord")
+        with ws.app.test_client() as c:
+            r = c.post("/reset_conversation")
+        assert r.get_json()["cleared_turns"] == 2
+        assert ws.conversation_context("discord") == []
 
 
 class TestFaceSummary:

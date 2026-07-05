@@ -78,32 +78,41 @@ tell me the weather").
 - **Depends on**: nothing hard — this can precede smart home controls, and once HA
   exists, scheduled actions compose with it ("turn off the lights at 11").
 
-## Remote access via Discord — planned (FR 2026-07-05)
+## Remote access via Discord — BUILT 2026-07-05 (pending bot credentials)
 
-Talk to Jarvis by text when away from home. The server already has the right
-seam: `POST /respond` (and `/respond_stream`) is text-in/text-out, so this is a
-new *frontend*, not a pipeline change.
+Talk to Jarvis by text when away from home. Built as a new *frontend*, not a
+pipeline change: the server gained `POST /respond_text` (JSON text-in/text-out,
+no STT/TTS — `/respond` turned out to be WAV-in) and per-channel conversation
+memory; `pc/wes_discord.py` bridges Discord to it. Verified e2e against a live
+server (fact recall across turns on the "discord" channel, scoped reset).
+*Remaining setup*: create the Discord app (dev portal → bot → enable Message
+Content intent), then `setx WES_DISCORD_TOKEN ...` / `setx
+WES_DISCORD_OWNER_ID ...` and run the bot — see `docs/setup.md`.
 
-- **Mechanics**: a small PC-side bot process (discord.py) that listens for DMs
-  (or messages in a private server), forwards the text to `/respond` on
-  localhost, and posts the reply back. Bot token in the PC user env like the
-  Anthropic key. No Pi involvement, no audio path — replies are text only, so
-  the house audio rule isn't triggered.
-- **Auth**: hard-allowlist the owner's Discord user ID; ignore everyone else.
-  The bot is an internet-facing door into the tool loop, so until rails exist,
-  scope it to read/answer only — no smart-home *actions* over Discord without
-  an explicit per-action confirm.
-- **Conversation memory**: reuse the server-side sliding window but keyed per
-  channel (Discord vs. voice), so a remote chat doesn't clobber the in-house
-  conversation context.
+- **Mechanics**: a small PC-side bot process (discord.py, in the wes-pc venv)
+  that answers the owner's DMs (and @mentions in servers), forwards the text
+  to `/respond_text` on localhost, and posts the reply back (chunked to
+  Discord's 2000-char limit; `!reset` starts a new conversation). Bot token in
+  the PC user env like the Anthropic key. No Pi involvement, no audio path —
+  replies are text only, so the house audio rule isn't triggered.
+- **Auth**: hard allowlist of the owner's Discord user ID (fails closed when
+  unset); everyone else is ignored silently. The bot is an internet-facing
+  door into the tool loop, so until rails exist it stays read/answer-only —
+  revisit before smart-home *actions* land (no actions over Discord without
+  an explicit per-action confirm).
+- **Conversation memory**: the server-side sliding window is now keyed per
+  channel (voice / discord), so a remote chat doesn't clobber the in-house
+  conversation context. `/reset_conversation` takes an optional channel.
 - **Vision**: `describe_scene` works unchanged ("what's going on at home?"),
   which is arguably the killer remote use case. Optionally attach the frame as
   an image in the reply.
 - **Composes with**: scheduled actions (reminders can DM you instead of
   speaking when you're away) and later smart home ("turn off the lights" from
   anywhere — behind the confirm rail above).
-- **Eval**: golden cases can exercise `/respond` directly; the bot layer itself
-  just needs a thin unit test (allowlist filtering, message → HTTP mapping).
+- **Tests**: `tests/test_unit_discord.py` (allowlist, routing, chunking, HTTP
+  mapping) + `/respond_text` and per-channel-memory cases in
+  `tests/test_unit_server.py`. Golden eval cases could exercise `/respond_text`
+  directly later.
 
 ## Ideas noted but not built
 
