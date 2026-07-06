@@ -8,3 +8,4 @@ hailort.log
 *~
 tests/.pytest_cache/
 tests/eval/fixtures/
+pi/hailort*.log
