@@ -97,9 +97,10 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
 - `docs/setup.md` — PC venv + dependency pins + auto-start task; Pi client + mic setup.
 - `docs/hardware.md` — Pi/Hailo/camera specs (PERIPHERALS.md and PROJECT.md, both
   stale early-stage docs, were folded into this + the rest of `docs/` and removed).
-- `docs/roadmap.md` — planned: smart home controls (Home Assistant), scheduled
-  actions, barge-in; future Hailo use, storage, history. Discord remote access
-  and host observability are built.
+- `docs/tickets/` — the task tracker (one file per ticket). **`INDEX.md` lists
+  open work by priority — read it for the current queue; don't load `done/`
+  unless you need a shipped feature's history.** `docs/roadmap.md` is now just a
+  short overview + project history that points here.
 - `docs/observability.md` — Prometheus + Grafana utilization dashboard
   (<http://10.0.0.79:3000>): exporters on both hosts + `wes_server` `/metrics`
   (token counters) + `/turns` (recent-exchange log, size-capped `turns.jsonl`),
