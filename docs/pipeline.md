@@ -35,7 +35,9 @@ actually serve; 12b stays vision-only, where the prefetch hides its cost.
 **router** — every turn lands on it first, it answers the easy tier itself (zero
 routing overhead: the route decision and the reply share one forward pass), and
 delegates when needed: rich vision to the resident **gemma4:12b** VLM (via the
-`describe_scene` tool, usually a prefetch-cache hit), deep reasoning to Claude.
+`describe_scene` tool, usually a prefetch-cache hit), deep reasoning to the deep
+tier — the resident **gemma4:12b with thinking** by default (`WES_ESCALATE_MODEL`),
+Claude Haiku when that's unset.
 The local toolset additionally carries
 an `escalate_to_claude` function (never shown to the deep tier itself), so gemma
 decides per-turn when a query is beyond it — deep reasoning, hard math/code,
@@ -126,6 +128,10 @@ the tokens at claude-haiku-4-5 rates ($1/MTok in, $5/MTok out, cached
 the call to the Claude API; for `claude` rows it's actual spend. Caveats: gemma
 and Claude tokenize differently (rough estimate by design), zero-token rows
 are dropped, and a ledger write failure never breaks a turn.
+
+The sibling **turn log** (`turns.jsonl`, `GET /turns`) records the *content* of
+each exchange — query, reply, tools run, escalated y/n — as a size-capped
+rolling window; see `docs/observability.md`.
 
 ## Streaming reply (`/respond_stream`, the default path)
 

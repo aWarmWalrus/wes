@@ -43,8 +43,9 @@ $py = "C:\Users\awarm\wes-pc\.venv\Scripts\python.exe"
   a `/reset_conversation` before every case) through the live `/respond_stream`,
   **re-transcribes the reply PCM** with a local tiny.en whisper (so garbled
   TTS fails too), and applies the case's deterministic checks
-  (`transcript_includes`, `reply_regex`, audio-length brevity bounds,
-  wall-clock bound). Each case's `judge:` question is then scored by one
+  (`transcript_includes`, `reply_regex`, `reply_not_regex` — negative match,
+  e.g. escalation-silent fails any reply naming Claude — audio-length brevity
+  bounds, wall-clock bound). Each case's `judge:` question is then scored by one
   LLM-judge call (correct/concise/natural 0-2 + hallucination flag) with a
   selectable backend — `--judge haiku` (default; sharper, needs
   `ANTHROPIC_API_KEY`, pennies), `--judge local` (gemma4:12b via Ollama —

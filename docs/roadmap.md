@@ -65,6 +65,13 @@ shipping, and each fix should add a golden case.
    (c) longer term, scheduled/deferred actions (see roadmap section below)
    would make "I'll get back to you" actually possible.
 
+Minor known eval flakes (not regressions — don't panic on a nightly FAIL that
+is only these): **lexicon-names** — whisper hears "Kaia and Ellis" as
+"Kaya and Alice" (lexicon biasing gap; the 2026-07-05 03:30 nightly FAIL was
+exactly this); **math-simple** — e4b occasionally flubs 12+13 (deterministic
+check passes, local judge scores it 0). Fix ideas: bias/expand the STT lexicon;
+tighten math-simple's `reply_regex`.
+
 Host observability is BUILT (2026-07-05, `docs/observability.md`): Prometheus +
 Grafana on the Pi scraping node_exporter (Pi) and windows_exporter +
 nvidia_gpu_exporter (PC); dashboard at <http://10.0.0.79:3000>. Phase 3 —

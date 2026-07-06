@@ -1,6 +1,10 @@
 # On-device vision
 
-Three vision capabilities, all fed to Claude as tools or as prefetched context:
+(Written when Claude was the LLM tier — read "Claude" below as "the router
+LLM"; since 2026-07-04 that's local gemma4:e4b, and the mechanics are
+backend-agnostic.)
+
+Three vision capabilities, all fed to the LLM as tools or as prefetched context:
 **object detection** (Hailo YOLOv8s), **rich scene description** (local Gemma VLM), and
 **face recognition** (Hailo SCRFD + ArcFace). The Hailo code runs under the Pi's
 **system python3** (has `hailo_platform` + `cv2`, which the venv does not).
