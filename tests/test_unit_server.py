@@ -132,6 +132,14 @@ class TestRunTool:
     def test_unknown_tool(self):
         assert "unknown tool" in ws.run_tool("does_not_exist", {})
 
+    def test_lookup_hosts_returns_registry(self):
+        out = ws.run_tool("lookup_hosts", {})
+        assert "10.0.0.168" in out and "10.0.0.79" in out  # from hosts.yaml
+
+    def test_lookup_hosts_is_registered(self):
+        names = [t["name"] for t in ws.TOOLS]
+        assert "lookup_hosts" in names
+
 
 class TestDescribeSceneCache:
     def _prime(self, desc, faces, age=0.0):

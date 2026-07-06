@@ -6,7 +6,7 @@
 - voice model: `C:\Users\awarm\wes-pc\voices\en_GB-alan-medium.onnx` (British male,
   22050 Hz — matches the Pi player). `en_US-amy-medium` also present but unused.
 - deps: `flask anthropic faster-whisper piper-tts pychromecast pytest discord.py
-  prometheus-client`
+  prometheus-client pyyaml`
   **plus two pins**:
   - **`ctranslate2==4.4.0`** — 4.8.0 segfaults (`0xC0000005`) on model load on this PC.
   - **`onnxruntime==1.20.1`** — 1.27.0's DLL init fails (piper needs onnxruntime).
@@ -85,8 +85,9 @@ Register-ScheduledTask -TaskName "WES Nightly Eval" -Action $action `
 
 ## Tier 1 (Pi) client
 
-Deps in `~/wes/.venv` (openwakeword, pyaudio, requests, numpy); the "hey_jarvis" model
-is downloaded.
+Deps in `~/wes/.venv` (openwakeword, pyaudio, requests, numpy, **pyyaml** — for
+the `hosts.yaml` registry; the client falls back to the hard-coded PC address if
+it's missing); the "hey_jarvis" model is downloaded.
 
 Runs as a **systemd user unit** since 2026-07-05 (`pi/wes-client.service`,
 installed to `~/.config/systemd/user/`; linger is enabled so it starts at boot

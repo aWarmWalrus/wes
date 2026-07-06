@@ -20,6 +20,12 @@ Bluetooth JBL. Turns share a sliding-window conversation memory (`docs/pipeline.
 | 1 | `raspberrypi` (alias `walrus-pi`) | 10.0.0.79 | Pi 5 + Hailo-8 — wake word, audio, vision |
 | 2 | `DESKTOP-R2PFF9T` | 10.0.0.168 | PC (RTX 5060 Ti 16GB) — STT, LLM, TTS |
 
+> **`hosts.yaml` (repo root) is the single source of truth** for IPs and service
+> ports — read at runtime via `wes_hosts.py` by the server, bot, and Pi client
+> (env vars still override). Jarvis reads it through the `lookup_hosts` tool.
+> Edit there when the network changes; this table and the ports below are a
+> convenience mirror, not the authority.
+
 - **`Z:\` on the PC is a Samba mount of the Pi**: `Z:\wes` = the Pi's
   `/home/walrus/claude/wes` (this repo). Editing `Z:\wes\*` edits the Pi's files. A
   Windows venv **cannot** live on `Z:\` — PC Python envs go on `C:`.
@@ -54,6 +60,9 @@ Get-Content C:\Users\awarm\wes-pc\logs\server.log -Tail 20   # server log
 - `pc/wes_discord.py` — Discord frontend: owner-allowlisted DMs → `POST /respond_text`
   (text-only, own conversation channel). Runs as scheduled task "WES Discord"
   (`WES_DISCORD_TOKEN` + `_OWNER_ID` from PC user env; see `docs/setup.md`).
+- `hosts.yaml` + `wes_hosts.py` (repo root) — the host registry (IPs/ports) and
+  its loader; imported by server, bot, and Pi client. Jarvis reaches it via the
+  `lookup_hosts` tool.
 - `C:\Users\awarm\wes-pc\run_server.ps1` (PC-local, NOT in the repo) — the launcher
   the "WES Server" task runs; sets voice/model env. `tests/` — the test suite.
 

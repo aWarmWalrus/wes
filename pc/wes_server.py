@@ -41,6 +41,9 @@ for _s in (sys.stdout, sys.stderr):
 
 import anthropic
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import wes_hosts  # noqa: E402 — host registry (hosts.yaml); repo root on path
+
 from flask import Flask, Response, request, jsonify
 from prometheus_client import (Counter, generate_latest,
                                CONTENT_TYPE_LATEST)
@@ -146,11 +149,16 @@ ANNOUNCE_FRAMING = (
 
 # --- Tools (Pi introspection) ----------------------------------------------
 TOOLS_ENABLED = os.environ.get("WES_TOOLS", "1") == "1"
-PI_STATE_URL = os.environ.get("WES_PI_STATE_URL", "http://10.0.0.79:8090")
+PI_STATE_URL = os.environ.get(
+    "WES_PI_STATE_URL", wes_hosts.url("pi", "pi_state", default="http://10.0.0.79:8090"))
 MAX_TOOL_ROUNDS = 4
 
 # Local vision-language model (Gemma via Ollama) for rich scene descriptions.
-OLLAMA_URL = os.environ.get("WES_OLLAMA_URL", "http://127.0.0.1:11434")
+# Ollama runs on the PC alongside the server, so it's reached over loopback;
+# the registry supplies only the port (its identity), not the host.
+OLLAMA_URL = os.environ.get(
+    "WES_OLLAMA_URL",
+    f"http://127.0.0.1:{wes_hosts.port('pc', 'ollama', default=11434)}")
 VLM_MODEL = os.environ.get("WES_VLM_MODEL", "gemma3:4b")
 VLM_PROMPT = ("Describe what you see in this image in one or two natural, "
               "conversational sentences, as an assistant describing the view.")
@@ -196,6 +204,17 @@ TOOLS = [
             "and clothing) and what they're doing. Use whenever asked what you see, "
             "or anything about a specific person (how they look, what they're doing, "
             "whether they're present). For a quick object list only, use 'look'."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "lookup_hosts",
+        "description": (
+            "Look up the WES network layout: the IP addresses, hostnames, roles, "
+            "and service ports of the machines in the system (the PC / desktop "
+            "server and the Raspberry Pi). Call this whenever you need a "
+            "machine's address, which host runs a given service, or a port "
+            "number — do not guess these, they can change."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
@@ -449,6 +468,8 @@ def run_tool(name, tool_input):
             return now.strftime("%A, %B %d, %Y, %I:%M %p").replace(" 0", " ")
         if name == "look":
             return json.dumps(_pi_get("/look"))
+        if name == "lookup_hosts":
+            return wes_hosts.summary()
         if name == "read_pi_log":
             data = _pi_get(
                 "/logs",

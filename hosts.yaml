@@ -1,0 +1,28 @@
+# WES host registry — the single source of truth for machine identities, LAN
+# IPs, and service ports. Read at runtime via wes_hosts.py by the PC server,
+# the Discord bot, and the Pi client (env vars still override per process); the
+# server also exposes it to Jarvis through the `lookup_hosts` tool so he can
+# answer "what's the Pi's IP?" without anything hard-coded into his prompt.
+#
+# When the network changes, edit HERE — don't duplicate IPs/ports in code or
+# docs. CLAUDE.md's machines table and docs/observability.md point back to this.
+hosts:
+  pc:
+    ip: 10.0.0.168
+    hostname: DESKTOP-R2PFF9T
+    role: PC (RTX 5060 Ti 16GB) — Whisper STT, Gemma LLM/VLM via Ollama, piper TTS
+    ports:
+      server: 8080          # wes_server Flask (respond/stream/announce/metrics/turns)
+      windows_exporter: 9182
+      gpu_exporter: 9835
+      ollama: 11434         # local, reached over loopback from the server
+  pi:
+    ip: 10.0.0.79
+    hostname: raspberrypi
+    aliases: [walrus-pi]
+    role: Raspberry Pi 5 + Hailo-8 — wake word, audio out, on-device vision
+    ports:
+      pi_state: 8090        # read-only Pi state/vision endpoint the server calls
+      prometheus: 9090
+      grafana: 3000
+      node_exporter: 9100

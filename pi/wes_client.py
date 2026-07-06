@@ -21,6 +21,7 @@ import io
 import json
 import os
 import random
+import sys
 import subprocess
 import tempfile
 import threading
@@ -34,15 +35,22 @@ from openwakeword.vad import VAD  # Silero VAD — speech-vs-noise for end-of-sp
 
 import pi_state  # read-only Pi state endpoint for Claude tools
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import wes_hosts  # host registry (hosts.yaml); repo root on path
+
 # --- Config ----------------------------------------------------------------
 
-PC_URL = "http://10.0.0.168:8080/respond"  # non-streaming (returns full WAV)
-HEALTH_URL = "http://10.0.0.168:8080/health"  # server readiness probe
-STREAM_URL = "http://10.0.0.168:8080/respond_stream"  # streams raw PCM as generated
-SPECULATE_URL = "http://10.0.0.168:8080/speculate"  # partial-audio prefetch
+# The PC server's base URL comes from the host registry (single source of
+# truth); if the registry can't be read (no PyYAML / missing file) we fall back
+# to the known LAN address so the voice loop is never bricked by a config issue.
+_PC = wes_hosts.url("pc", "server", default="http://10.0.0.168:8080")
+PC_URL = f"{_PC}/respond"              # non-streaming (returns full WAV)
+HEALTH_URL = f"{_PC}/health"           # server readiness probe
+STREAM_URL = f"{_PC}/respond_stream"   # streams raw PCM as generated
+SPECULATE_URL = f"{_PC}/speculate"     # partial-audio prefetch
 SPECULATE_START_S = 5.0     # don't speculate until the utterance is this long
 SPECULATE_INTERVAL_S = 3.0  # then send a partial snapshot this often
-PREFETCH_SCENE_URL = "http://10.0.0.168:8080/prefetch_scene"  # wake-word vision prefetch
+PREFETCH_SCENE_URL = f"{_PC}/prefetch_scene"  # wake-word vision prefetch
 CAPTURE_FRAME_PY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "capture_frame.py")
 HAILO_FACES_PY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hailo_faces.py")
 

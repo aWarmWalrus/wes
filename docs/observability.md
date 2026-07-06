@@ -6,6 +6,12 @@ browser. Built 2026-07-05 (phases 1–2; phase 3 — WES app metrics — is plan
 **Dashboard: <http://10.0.0.79:3000> → WES → "WES Overview"** (login `admin` /
 `admin` until the owner changes it at first login; LAN-only, no port forwarding).
 
+> IPs and ports below are mirrored from **`hosts.yaml`** (the repo-root host
+> registry, read via `wes_hosts.py`) — the single source of truth. If the
+> network changes, edit there; the Prometheus scrape targets and this doc are
+> the two places that still restate addresses (Grafana/Prometheus configs can't
+> read the yaml). Jarvis can recite the layout via the `lookup_hosts` tool.
+
 ## Architecture
 
 Everything long-running lives on the Pi (16GB RAM, ~2GB used); the PC only runs

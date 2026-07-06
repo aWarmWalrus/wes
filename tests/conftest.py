@@ -13,6 +13,7 @@ import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "pc"))  # so `import wes_server` works
+sys.path.insert(0, REPO)  # so `import wes_hosts` (repo-root registry) works
 
 SERVER_URL = os.environ.get("WES_TEST_URL", "http://127.0.0.1:8080")
 

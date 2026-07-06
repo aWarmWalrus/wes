@@ -25,17 +25,25 @@ Env:
 import asyncio
 import json
 import os
+import sys
 import urllib.parse
 import urllib.request
 
-SERVER_URL = os.environ.get("WES_SERVER_URL", "http://127.0.0.1:8080")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import wes_hosts  # noqa: E402 — host registry (hosts.yaml); repo root on path
+
+# The server runs on the same PC (loopback); Prometheus is on the Pi.
+SERVER_URL = os.environ.get(
+    "WES_SERVER_URL",
+    f"http://127.0.0.1:{wes_hosts.port('pc', 'server', default=8080)}")
 OWNER_ID = int(os.environ.get("WES_DISCORD_OWNER_ID", "0"))
 CONV_CHANNEL = "discord"
 
 # Alerting: Prometheus (on the Pi) evaluates the rules in
 # observability/prometheus/wes-alerts.yml; this bot only polls the firing set
 # and DMs the owner on changes — Prometheus owns thresholds and durations.
-PROM_URL = os.environ.get("WES_PROM_URL", "http://10.0.0.79:9090")
+PROM_URL = os.environ.get(
+    "WES_PROM_URL", wes_hosts.url("pi", "prometheus", default="http://10.0.0.79:9090"))
 ALERT_POLL_S = float(os.environ.get("WES_ALERT_POLL_S", "60"))
 # DM once if Prometheus itself is unreachable this many polls in a row.
 PROM_FAIL_POLLS = 5
