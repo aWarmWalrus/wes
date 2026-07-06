@@ -22,6 +22,7 @@ channel axis.**
 
 | Layer | Kind | Channel scope | WES today |
 |-------|------|---------------|-----------|
+| Identity ("soul") | *who Jarvis is*: persona, voice, values | **unified** (presentation adapts per channel) | static `SYSTEM_PROMPT` in code |
 | Conversation window | working | **per-channel** (must NOT bleed) | RAM window, 6 turns, 5-min TTL, lost on restart |
 | Semantic memory | facts: people, prefs, house | **unified** (shared everywhere) | ❌ |
 | Episodic memory | what happened when | **unified** (shared everywhere) | `turns.jsonl` = raw feed, no distillation |
@@ -80,6 +81,9 @@ demands it (Phase 4).
 
 ```
 Pi ~/wes/memory/                     (personal data — on the Pi, NOT the git repo)
+  SOUL.md              unified IDENTITY: persona, voice, values, relationships;
+                       always in prompt. Soft/evolvable — hard SAFETY rules
+                       stay in code (see "Identity layer" below), NOT here.
   MEMORY.md            unified SEMANTIC memory: one dated fact/line, [[links]];
                        ALWAYS in the system prompt (size-capped ~2-3 KB)
   people/<name>.md     per-entity notes (kaia, charlie, …) — Obsidian-style,
@@ -89,6 +93,32 @@ Pi ~/wes/memory/                     (personal data — on the Pi, NOT the git r
 
 PC turns.jsonl (built) raw cross-channel episodic feed -> nightly distillation
 ```
+
+### Identity layer — `SOUL.md` (the OpenClaw pattern)
+OpenClaw agents read a `SOUL.md` first every wake — persona, values, tone,
+behavioral philosophy — kept separate from `MEMORY.md` (facts). WES's
+`SYSTEM_PROMPT` is a static, in-code proto-soul; externalizing it to a
+`SOUL.md` makes Jarvis's identity human-editable and *evolvable* (it can grow
+as the household relationship does) without code changes, consistent with the
+file-based philosophy.
+
+Two design rules make this safe for a home assistant with physical side effects:
+
+1. **Soul is unified; presentation is per-channel.** OpenClaw splits "soul"
+   (what the model embodies) from "identity" (what users see). That maps exactly
+   onto WES: one `SOUL.md` across all channels, while the existing per-channel
+   notes (`TEXT_CHANNEL_NOTE` for Discord, spoken framing for voice) stay as the
+   *presentation* adjustment. Jarvis is the same person on voice and Discord; he
+   just types vs. speaks.
+2. **Personality is soft and evolvable; safety is hard and stays in code.** The
+   house audio rule (never play audio without confirmation), owner-only Discord,
+   invisible escalation, and the never-recite-secrets rules are **invariants, not
+   personality** — they must NOT live in a mutable, possibly self-edited
+   `SOUL.md` (memory/soul files are a prompt-injection + drift surface, and
+   they're always in context). Keep them in code/immutable config; `SOUL.md`
+   holds only voice, values, humour, and relationship stance. If `SOUL.md` ever
+   becomes agent-editable, gate writes like `MEMORY.md` and keep it tight —
+   bloated persona files measurably degrade behavior.
 
 ### Channel model (the crux)
 - **Working memory = per-channel, persisted, sized per channel.** Replace the
@@ -148,7 +178,9 @@ the layers gate separately.
   and the no-bleed guarantee. → ticket #023.
 - **Phase 1 — unified semantic memory.** `MEMORY.md` injection +
   `remember`/`forget`/`recall` tools + golden cases (incl. cross-channel +
-  no-bleed). → ticket #012.
+  no-bleed). → ticket #012. Good moment to also externalize `SOUL.md` (identity
+  layer) since it's the same injection plumbing — but keep hard safety rules in
+  code. → ticket #024.
 - **Phase 2 — episodic + nightly "dream".** Distill `turns.jsonl` into day-logs
   + confidence-scored candidate facts. → ticket #012.
 - **Phase 3 — temporal facts + per-entity `people/` notes** (Obsidian-style

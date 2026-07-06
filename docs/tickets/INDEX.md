@@ -2,7 +2,7 @@
 
 The current WES work queue — **open tickets only** (closed ones live in
 `done/`, out of context). One line each; open the file for full context.
-Conventions + workflow: `README.md`. Next free id: **024** (open here,
+Conventions + workflow: `README.md`. Next free id: **025** (open here,
 014-022 shipped in `done/2026-07/`).
 
 ## High priority
@@ -17,6 +17,7 @@ Conventions + workflow: `README.md`. Next free id: **024** (open here,
 - [004](open/med/004-smart-home-controls.md) — Smart home tools: Hue-direct first, Home Assistant later (feasibility confirmed)
 - [005](open/med/005-scheduled-actions.md) — Scheduled actions: timers, reminders, recurring routines
 - [012](open/med/012-durable-agentic-memory.md) — Unified durable memory: semantic/episodic facts shared across channels (people/events), per memory-design.md v2
+- [024](open/med/024-soul-md-identity-layer.md) — SOUL.md: externalize Jarvis's persona/identity (OpenClaw pattern); safety rules stay in code
 
 ## Low priority / someday
 
