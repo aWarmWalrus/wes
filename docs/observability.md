@@ -58,6 +58,12 @@ over the visible time range.
 
 ## Restart / debug
 
+Gotcha (bitten 2026-07-05): scheduled-task PowerShell actions **must include
+`-WindowStyle Hidden`** — without it the task runs in a visible console, and
+closing that window kills the service with exit 0xC000013A, which does NOT
+trigger the task's auto-restart (it's a normal termination, not a failure).
+All four WES tasks now run hidden; keep it that way for new ones.
+
 ```bash
 ssh walrus-pi "systemctl status prometheus prometheus-node-exporter grafana-server"
 ssh walrus-pi "sudo systemctl restart grafana-server"   # or prometheus
