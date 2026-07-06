@@ -595,6 +595,7 @@ def record_turn(transcript, reply, channel="voice"):
     Empty transcripts (silence) and empty replies are not memory."""
     if not (transcript and transcript.strip() and reply and reply.strip()):
         return
+    log_turn(transcript, reply, channel)
     with _conv_lock:
         conv = _convs.setdefault(channel, [])
         if time.time() - _conv_last.get(channel, 0.0) > CONV_TTL:
@@ -714,6 +715,88 @@ def usage_summary(days=None):
     }
 
 
+# --- Turn log -----------------------------------------------------------------
+# One JSONL record per completed exchange, any channel: what was said, the
+# reply, which tools ran, and whether it escalated. Served by GET /turns and
+# rendered as a "Recent turns" table in Grafana (docs/observability.md).
+# Unlike the usage ledger this stores CONTENT — transcripts of the house — so
+# it is a size-capped rolling window, not an append-forever file.
+TURNS_LOG = os.environ.get(
+    "WES_TURNS_LOG",
+    os.path.join(os.path.expanduser("~"), "wes-pc", "logs", "turns.jsonl"))
+TURNS_MAX = int(os.environ.get("WES_TURNS_MAX", "2000"))
+_TURNS_TRIM_BYTES = 4_000_000  # trim to the last TURNS_MAX lines past this
+_turns_lock = threading.Lock()
+# Tool calls happen deep in the backend loops while the turn is recorded at the
+# route level; a thread-local notepad connects them (one turn's LLM work runs
+# entirely on one thread — speculation caching only applies with tools off).
+_turn_notes = threading.local()
+
+
+def _turn_begin():
+    """Reset this thread's tool/escalation notes at the start of a turn."""
+    _turn_notes.tools = []
+    _turn_notes.escalated = False
+
+
+def _note_tool(name):
+    tools = getattr(_turn_notes, "tools", None)
+    if tools is not None:
+        tools.append(name)
+
+
+def _note_escalation():
+    if getattr(_turn_notes, "tools", None) is not None:
+        _turn_notes.escalated = True
+
+
+def log_turn(transcript, reply, channel="voice"):
+    """Append one exchange (+ this thread's notes) to the turn log. Consumes
+    the notes; trims the file to TURNS_MAX lines; never breaks a turn."""
+    rec = {
+        "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "channel": channel,
+        "transcript": transcript,
+        "reply": reply,
+        "tools": list(getattr(_turn_notes, "tools", None) or []),
+        "escalated": bool(getattr(_turn_notes, "escalated", False)),
+    }
+    _turn_begin()  # notes are per-turn — never leak into this thread's next one
+    try:
+        with _turns_lock:
+            os.makedirs(os.path.dirname(TURNS_LOG), exist_ok=True)
+            with open(TURNS_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            if os.path.getsize(TURNS_LOG) > _TURNS_TRIM_BYTES:
+                with open(TURNS_LOG, encoding="utf-8") as f:
+                    tail = f.readlines()[-TURNS_MAX:]
+                with open(TURNS_LOG, "w", encoding="utf-8") as f:
+                    f.writelines(tail)
+    except OSError as e:
+        print(f"[turns] log write failed: {e}", flush=True)
+
+
+def recent_turns(n=20, channel=None):
+    """The last n logged exchanges, newest first, optionally one channel's."""
+    try:
+        with _turns_lock, open(TURNS_LOG, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+    out = []
+    for line in reversed(lines):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if channel and rec.get("channel") != channel:
+            continue
+        out.append(rec)
+        if len(out) >= n:
+            break
+    return out
+
+
 # LiveKit-style interruption tag: when the client aborts playback (barge-in),
 # the partial reply IS what the user heard — remember it, but tell the model
 # where it was cut off so the follow-up turn can pivot naturally.
@@ -808,6 +891,7 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False):
                     target = ESCALATE_MODEL or "Claude"
                     print(f"[route] escalating to {target}: "
                           f"{args.get('reason', '?')}", flush=True)
+                    _note_escalation()
                     if buffered:
                         # Nothing reached the user — retract any announcement
                         # ("ask Claude..."); no ack needed, there's no dead
@@ -826,6 +910,7 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False):
                 })
                 continue
             print(f"[tool] {name}({args})", flush=True)
+            _note_tool(name)
             messages.append({
                 "role": "tool",
                 "tool_name": name,
@@ -835,6 +920,7 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False):
 
 def think(transcript, channel="voice"):
     """Get a reply from the configured LLM backend."""
+    _turn_begin()
     if LLM_BACKEND == "local":
         try:
             return _think_local(transcript, channel=channel)
@@ -893,6 +979,7 @@ def get_voice():
 
 def stream_reply(transcript):
     """Yield the reply text in deltas from the configured LLM backend."""
+    _turn_begin()
     if not transcript:
         yield "Sorry, I didn't catch that."
         return
@@ -957,6 +1044,7 @@ def _stream_claude(transcript, channel="voice"):
         for block in final.content:
             if block.type == "tool_use":
                 print(f"[tool] {block.name}({block.input})", flush=True)
+                _note_tool(block.name)
                 result = run_tool(block.name, block.input)
                 tool_results.append({
                     "type": "tool_result",
@@ -1171,6 +1259,15 @@ def usage_route():
     the local tokens would have cost on Claude Haiku ("saved") and what the
     Claude calls actually cost. ?days=7 limits the window."""
     return jsonify(usage_summary(request.args.get("days", type=float)))
+
+
+@app.route("/turns")
+def turns_route():
+    """Last n exchanges, newest first: what was asked, the reply, tools run,
+    escalated y/n. ?n=20 sets the count, ?channel=voice filters. Feeds the
+    Grafana "Recent turns" table; also handy from curl or the Discord bot."""
+    n = max(1, min(request.args.get("n", default=20, type=int), TURNS_MAX))
+    return jsonify(turns=recent_turns(n, request.args.get("channel")))
 
 
 @app.route("/metrics")

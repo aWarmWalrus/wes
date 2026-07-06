@@ -92,6 +92,33 @@
       "datasource": { "type": "prometheus", "uid": "prom" },
       "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4 } },
       "targets": [ { "refId": "A", "expr": "(sum(increase(wes_llm_tokens_total{direction=\"in\",source!=\"claude\"}[$__range])) * 1.0 + sum(increase(wes_llm_tokens_total{direction=\"out\",source!=\"claude\"}[$__range])) * 5.0) / 1e6", "legendFormat": "saved" } ]
+    },
+    { "type": "row", "title": "Recent turns (GET /turns — rolling window of the last 2000 exchanges)", "gridPos": { "x": 0, "y": 35, "w": 24, "h": 1 }, "id": 103 },
+    {
+      "type": "table", "title": "Last 15 turns (newest first)", "id": 12,
+      "gridPos": { "x": 0, "y": 36, "w": 24, "h": 11 },
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
+      "fieldConfig": { "defaults": { "custom": { "filterable": true } }, "overrides": [
+        { "matcher": { "id": "byName", "options": "reply" }, "properties": [ { "id": "custom.width", "value": 560 } ] },
+        { "matcher": { "id": "byName", "options": "query" }, "properties": [ { "id": "custom.width", "value": 320 } ] }
+      ] },
+      "options": { "cellHeight": "sm" },
+      "targets": [ {
+        "refId": "A",
+        "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
+        "type": "json", "source": "url", "format": "table", "parser": "backend",
+        "url": "http://10.0.0.168:8080/turns?n=15",
+        "url_options": { "method": "GET", "data": "" },
+        "root_selector": "turns",
+        "columns": [
+          { "selector": "ts", "text": "time", "type": "string" },
+          { "selector": "channel", "text": "channel", "type": "string" },
+          { "selector": "transcript", "text": "query", "type": "string" },
+          { "selector": "reply", "text": "reply", "type": "string" },
+          { "selector": "tools", "text": "tools", "type": "string" },
+          { "selector": "escalated", "text": "escalated", "type": "boolean" }
+        ]
+      } ]
     }
   ],
   "schemaVersion": 39

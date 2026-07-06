@@ -80,6 +80,28 @@ restarts; the dashboard uses `rate()`/`increase()` which absorb resets, and
 cached 2026-06-24) — if `wes_server.py`'s pricing constants change, update the
 "Est. $ saved" panel expression too.
 
+## Turn log — recent queries/replies/tools (built 2026-07-05)
+
+The dashboard's "Recent turns" table shows the last exchanges verbatim: query,
+reply, which tools ran, escalated y/n, per channel. Pipeline:
+
+- `wes_server` logs one JSONL record per completed exchange to
+  `C:\Users\awarm\wes-pc\logs\turns.jsonl` (env `WES_TURNS_LOG`), from the same
+  `record_turn()` choke point as conversation memory — voice, Discord, and
+  text all flow through it. Tool calls and escalations are captured via a
+  thread-local notepad (`_turn_begin`/`_note_tool`/`_note_escalation`).
+- **This file stores content** — transcripts of everything said in the house —
+  so unlike `usage.csv` it is a rolling window, not append-forever: past ~4MB
+  it trims itself to the last `WES_TURNS_MAX` (default 2000) exchanges.
+- `GET /turns?n=20&channel=voice` serves the tail, newest first (also handy
+  from curl or a future Discord `!turns`).
+- Grafana renders it via the **Infinity datasource** plugin
+  (`yesoreyeram-infinity-datasource`, installed with
+  `sudo grafana cli --homepath /usr/share/grafana plugins install ...` +
+  restart; provisioned in `/etc/grafana/provisioning/datasources/infinity.yaml`).
+  The table panel polls `http://10.0.0.168:8080/turns?n=15` — it shows the
+  *current* tail regardless of the dashboard's time range.
+
 ## Still planned (phase 3b)
 
 - Turn-latency histograms by channel (stt/ttfa/total) on `/metrics`.

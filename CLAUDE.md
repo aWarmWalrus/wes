@@ -93,7 +93,8 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   and host observability are built.
 - `docs/observability.md` — Prometheus + Grafana utilization dashboard
   (<http://10.0.0.79:3000>): exporters on both hosts + `wes_server` `/metrics`
-  (token counters), dashboard provisioning, restart commands.
+  (token counters) + `/turns` (recent-exchange log, size-capped `turns.jsonl`),
+  dashboard provisioning, restart commands.
 - `docs/eval-design.md` — design for the automated quality-eval harness (golden
   set + LLM-as-judge + nightly gate); phases 1-2 (`tests/eval_turns.py`,
   deterministic checks + Haiku judge) are built.

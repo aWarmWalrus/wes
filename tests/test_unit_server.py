@@ -766,6 +766,79 @@ class TestUsageLedger:
         assert "wes_llm_calls_total" in text
 
 
+class TestTurnLog:
+    """turns.jsonl: per-exchange content log with tool/escalation capture,
+    a rolling size cap, and the GET /turns tail endpoint. (conftest's
+    _sandbox_ledgers autouse fixture points TURNS_LOG at tmp.)"""
+
+    def test_record_turn_logs_with_tools_and_escalation(self):
+        ws._turn_begin()
+        ws._note_tool("get_time")
+        ws._note_escalation()
+        ws.record_turn("what time is it", "It's noon.", channel="discord")
+        rec = ws.recent_turns()[0]
+        assert rec["transcript"] == "what time is it"
+        assert rec["reply"] == "It's noon."
+        assert rec["channel"] == "discord"
+        assert rec["tools"] == ["get_time"]
+        assert rec["escalated"] is True
+
+    def test_notes_are_consumed_per_turn(self):
+        ws._turn_begin()
+        ws._note_tool("look")
+        ws.record_turn("q1", "r1")
+        ws.record_turn("q2", "r2")  # no new notes -> clean record
+        newest = ws.recent_turns()[0]
+        assert newest["transcript"] == "q2"
+        assert newest["tools"] == [] and newest["escalated"] is False
+
+    def test_notes_without_begin_are_ignored(self):
+        # unit tests / stray threads may call _note_tool with no turn open
+        ws._turn_notes.__dict__.clear()
+        ws._note_tool("get_time")
+        ws._note_escalation()
+        ws.record_turn("q", "r")
+        assert ws.recent_turns()[0]["tools"] == []
+
+    def test_empty_turns_are_not_logged(self):
+        ws.record_turn("", "Sorry, I didn't catch that.")
+        ws.record_turn("hello", "  ")
+        assert ws.recent_turns() == []
+
+    def test_stream_local_tool_call_is_captured(self, monkeypatch):
+        fake, _ = TestOllamaBackend._fake_urlopen([
+            [{"message": {"tool_calls": [{"function": {
+                "name": "get_time", "arguments": {}}}]}, "done": True}],
+            [{"message": {"content": "It's noon."}, "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        ws._turn_begin()
+        reply = "".join(ws._stream_local("what time is it"))
+        ws.record_turn("what time is it", reply)
+        assert ws.recent_turns()[0]["tools"] == ["get_time"]
+
+    def test_rolling_cap_trims_to_turns_max(self, monkeypatch):
+        monkeypatch.setattr(ws, "TURNS_MAX", 5)
+        monkeypatch.setattr(ws, "_TURNS_TRIM_BYTES", 200)
+        for i in range(20):
+            ws.record_turn(f"q{i}", f"r{i}")
+        turns = ws.recent_turns(n=100)
+        assert len(turns) <= 5
+        assert turns[0]["transcript"] == "q19"  # newest survives the trim
+
+    def test_turns_endpoint_n_and_channel_filter(self):
+        ws.record_turn("from voice", "v", channel="voice")
+        ws.record_turn("from discord", "d", channel="discord")
+        with ws.app.test_client() as c:
+            r = c.get("/turns?n=1&channel=voice")
+        assert r.status_code == 200
+        body = r.get_json()["turns"]
+        assert len(body) == 1 and body[0]["transcript"] == "from voice"
+
+    def test_missing_log_is_empty(self):
+        with ws.app.test_client() as c:
+            assert c.get("/turns").get_json()["turns"] == []
+
+
 class TestFaceSummary:
     def test_no_data(self):
         out = ws._face_summary(None)

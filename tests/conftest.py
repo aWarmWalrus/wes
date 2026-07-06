@@ -33,6 +33,16 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
+@pytest.fixture(autouse=True)
+def _sandbox_ledgers(tmp_path, monkeypatch):
+    """Unit tests exercise routes that write the usage ledger and turn log —
+    point both at tmp so test runs never pollute the real files."""
+    import wes_server as ws
+
+    monkeypatch.setattr(ws, "USAGE_LOG", str(tmp_path / "usage.csv"))
+    monkeypatch.setattr(ws, "TURNS_LOG", str(tmp_path / "turns.jsonl"))
+
+
 @pytest.fixture(scope="session")
 def server_url():
     return SERVER_URL
