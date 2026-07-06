@@ -665,6 +665,52 @@ class TestRespondText:
         assert ws.conversation_context("discord") == []
 
 
+class TestAnnounce:
+    """Proactive notifications: Jarvis phrases an internal event and — crucially
+    — records it into the channel's memory so a follow-up reply has context
+    (the gap that made him forget alert DMs he'd sent)."""
+
+    def setup_method(self):
+        ws.reset_conversation()
+
+    def teardown_method(self):
+        ws.reset_conversation()
+
+    def test_announce_frames_event_and_records_both_sides(self, monkeypatch):
+        seen = {}
+
+        def fake_think(text, channel="voice"):
+            seen["text"], seen["channel"] = text, channel
+            return "Heads up — your GPU is running hot."
+
+        monkeypatch.setattr(ws, "think", fake_think)
+        reply = ws.announce("GPUHot on pc_gpu: over 85C.", channel="discord")
+        assert reply == "Heads up — your GPU is running hot."
+        # The framing marks it as unprompted so Jarvis doesn't reply as if asked.
+        assert ws.ANNOUNCE_FRAMING in seen["text"]
+        assert "GPUHot" in seen["text"] and seen["channel"] == "discord"
+        # Both sides land in memory: the trigger (compact marker, not the verbose
+        # framing) and Jarvis's own words — so "what was that?" has context.
+        conv = ws.conversation_context("discord")
+        assert conv[-2]["role"] == "user" and "[system event]" in conv[-2]["content"]
+        assert ws.ANNOUNCE_FRAMING not in conv[-2]["content"]
+        assert conv[-1]["role"] == "assistant"
+        assert conv[-1]["content"] == "Heads up — your GPU is running hot."
+
+    def test_announce_route(self, monkeypatch):
+        monkeypatch.setattr(ws, "think",
+                            lambda text, channel="voice": "Notified.")
+        with ws.app.test_client() as c:
+            r = c.post("/announce",
+                       json={"event": "TargetDown on pc_gpu.", "channel": "discord"})
+        assert r.status_code == 200 and r.get_json()["reply"] == "Notified."
+        assert ws.conversation_context("discord")[-1]["content"] == "Notified."
+
+    def test_announce_empty_event_is_400(self):
+        with ws.app.test_client() as c:
+            assert c.post("/announce", json={"event": "  "}).status_code == 400
+
+
 class TestUsageLedger:
     """Token usage tracking: per-call CSV ledger + /usage rollup with the
     saved-vs-Claude estimate."""

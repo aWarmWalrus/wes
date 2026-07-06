@@ -83,6 +83,29 @@ ssh walrus-pi "journalctl --user -u wes-client -n 30 --no-pager -o cat"
   (`observability/dashboards/wes-overview.json`) — edit there, copy to
   `/var/lib/grafana/dashboards/`, restart grafana-server.
 
+## Smoke-test via the scheduled task, not just the script
+
+**The scheduled-task environment differs from an interactive shell — verify
+service changes on the task, never only by running the .py directly.** Two
+production bugs came from exactly this gap (both 2026-07-05): the "WES
+Exporters" task launched without `-WindowStyle Hidden` (a visible console that,
+when closed, killed the service with no auto-restart), and the Discord bot's
+alert watcher died on its first real alert because the task's stdout is
+**cp1252** — `print()`-ing an emoji raised `UnicodeEncodeError`. Neither
+reproduces when you run the script in your own UTF-8 terminal.
+
+So after editing a service:
+1. Reload the **task** (not `python wes_*.py` in your shell), then
+2. exercise the real path and read the **task's** log
+   (`logs\server.log` / `discord.log`, UTF-16-ish — strip nulls as above), and
+3. for anything that prints user/dynamic content or runs in the background,
+   confirm it survived (look for the expected log line, not just absence of a
+   crash — the cp1252 death was silent).
+
+Rules for new service code: keep console `print()`s ASCII-safe (use `!a` or
+reconfigure the stream `errors="replace"` in `main`, as both services now do);
+give every new scheduled task `-WindowStyle Hidden`.
+
 ## Cautions
 
 - Restarting "WES Server" briefly takes the house assistant down — routine

@@ -14,7 +14,7 @@ groups:
         annotations:
           summary: >-
             Metrics from {{ $labels.job }} ({{ $labels.instance }}) have been
-            missing for 5 minutes — the exporter or its host is down.
+            missing for 5 minutes; the exporter or its host is down.
 
       - alert: GPUHot
         expr: nvidia_smi_temperature_gpu > 85

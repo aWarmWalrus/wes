@@ -92,45 +92,125 @@ def reset_server():
     return _post_json("/reset_conversation", {"channel": CONV_CHANNEL})["cleared_turns"]
 
 
+# What each alert rule (observability/prometheus/wes-alerts.yml) actually means,
+# in plain terms — handed to Jarvis so his explanation is grounded, not guessed.
+# Keep in sync when rules are added/renamed.
+ALERT_CONTEXT = {
+    "TargetDown": (
+        "Prometheus (on the Pi) has been unable to scrape this metrics target "
+        "for 5 minutes. It usually means the exporter process died, the host "
+        "is off/asleep, or a firewall/network path broke. For a PC target "
+        "(windows_exporter :9182 or nvidia_gpu_exporter :9835) the likely cause "
+        "is the 'WES Exporters' scheduled task stopping; for the Pi's own "
+        "node_exporter it's more serious. While a target is down, the metrics "
+        "and dashboards it feeds are blank."),
+    "GPUHot": (
+        "The PC's RTX 5060 Ti GPU has been above 85 degrees Celsius for 5 "
+        "minutes. The GPU runs the local Gemma models; sustained heat can throttle "
+        "inference and shortens hardware life. Worth checking case airflow or "
+        "whether something is pinning the GPU."),
+    "PiHot": (
+        "The Raspberry Pi 5's CPU has been above 80 degrees Celsius for 5 "
+        "minutes. The Pi runs the voice client, Prometheus and Grafana; at ~85C "
+        "it throttles. Check the Pi's fan/heatsink and ambient temperature."),
+    "PiDiskLow": (
+        "The Pi's SD card root filesystem has been under 10 percent free for 30 "
+        "minutes. If it fills up, logging, Prometheus, and the voice client can "
+        "fail. Prometheus data and journald logs are the usual culprits."),
+    "PCDiskLow": (
+        "The PC's C: drive has been under 10 percent free for 30 minutes. The "
+        "WES server, models, and logs live there; a full disk can crash the "
+        "server."),
+}
+
+
 def parse_alerts(payload):
-    """{alert key: human summary} from a Prometheus /api/v1/query response for
-    ALERTS{alertstate="firing"}. Keyed by (alertname, instance) so the same
-    rule firing on two targets DMs twice, and a still-firing alert is stable
-    across polls (no repeat DMs)."""
+    """{alert key: info dict} from Prometheus GET /api/v1/alerts. Keyed by
+    (alertname, instance) so the same rule on two targets is two alerts, and a
+    still-firing alert keeps a stable key across polls (no repeat DMs). Each
+    info carries the rule's own templated `summary` annotation and value."""
     alerts = {}
-    for r in payload.get("data", {}).get("result", []):
-        m = r.get("metric", {})
-        key = f'{m.get("alertname", "?")}|{m.get("instance", "")}'
-        alerts[key] = (f'{m.get("alertname", "?")}'
-                       f' [{m.get("job", m.get("instance", "?"))}]')
+    for a in payload.get("data", {}).get("alerts", []):
+        if a.get("state") != "firing":
+            continue
+        lbl = a.get("labels", {})
+        name = lbl.get("alertname", "?")
+        instance = lbl.get("instance", "")
+        alerts[f"{name}|{instance}"] = {
+            "alertname": name,
+            "job": lbl.get("job", instance or "?"),
+            "instance": instance,
+            "summary": (a.get("annotations", {}).get("summary") or name).strip(),
+            "value": a.get("value", ""),
+        }
     return alerts
 
 
-def alert_messages(fired, resolved):
-    """DM texts for state changes. fired/resolved: {key: summary} dicts."""
-    msgs = [f"🚨 WES alert: {s}" for s in sorted(fired.values())]
-    msgs += [f"✅ Resolved: {s}" for s in sorted(resolved.values())]
-    return msgs
+def raw_summary(info, resolved=False):
+    """Plain fallback DM used when the server can't be reached to phrase the
+    alert — never drop an alert just because the explainer is down."""
+    tag = "✅ Resolved" if resolved else "🚨 WES alert"
+    return f"{tag}: {info['summary']} [{info['job']}]"
+
+
+def describe_event(info, resolved=False):
+    """The internal event string handed to the server's /announce so Jarvis can
+    explain it: the alert, the affected host, the rule's summary, and what the
+    rule means (ALERT_CONTEXT)."""
+    ctx = ALERT_CONTEXT.get(info["alertname"], "")
+    if resolved:
+        return (f"A monitoring alert just CLEARED. Alert '{info['alertname']}' "
+                f"on {info['job']} ({info['instance']}) is no longer firing. "
+                f"It had been: {info['summary']} Let the user know it has "
+                f"resolved. Background on the alert: {ctx}")
+    return (f"A monitoring alert just STARTED FIRING. Alert '{info['alertname']}' "
+            f"on {info['job']} ({info['instance']}). Details: {info['summary']} "
+            f"What this alert means: {ctx}")
+
+
+def explain_event(info, resolved=False):
+    """Ask the server to have Jarvis phrase the event in natural English (and
+    record it into the discord conversation memory so a follow-up reply has
+    context). Blocking; run off the event loop."""
+    return _post_json(
+        "/announce",
+        {"event": describe_event(info, resolved), "channel": CONV_CHANNEL},
+    )["reply"]
 
 
 def fetch_firing_alerts():
     """Poll Prometheus for currently-firing alerts (blocking; run off-loop)."""
-    q = urllib.parse.quote('ALERTS{alertstate="firing"}')
     with urllib.request.urlopen(
-            f"{PROM_URL}/api/v1/query?query={q}", timeout=10) as r:
+            f"{PROM_URL}/api/v1/alerts", timeout=10) as r:
         return parse_alerts(json.loads(r.read()))
 
 
 async def alert_watch(client):
-    """DM the owner when an alert starts or stops firing. Also complains once
-    if Prometheus itself has been unreachable for PROM_FAIL_POLLS polls."""
+    """DM the owner when an alert starts or stops firing — phrased by Jarvis in
+    natural English (falling back to the raw summary if the server is down, so
+    an alert is never lost). Also complains once if Prometheus itself has been
+    unreachable for PROM_FAIL_POLLS polls."""
     await client.wait_until_ready()
     prev, fails, prom_down = {}, 0, False
     print(f"[alerts] watching {PROM_URL} every {ALERT_POLL_S:g}s", flush=True)
 
     async def dm(text):
         user = await client.fetch_user(OWNER_ID)
-        await user.send(text)
+        for chunk in chunk_reply(text):
+            await user.send(chunk)
+
+    async def announce_change(info, resolved):
+        # Prefer Jarvis's natural phrasing; fall back to the raw summary if the
+        # server (the explainer) is itself unreachable — which may be WHY the
+        # alert fired, so this path must stay dead simple.
+        try:
+            text = await asyncio.to_thread(explain_event, info, resolved)
+        except Exception as e:  # noqa: BLE001
+            print(f"[alerts] explain failed, sending raw: {e!a}", flush=True)
+            text = raw_summary(info, resolved)
+        print(f"[alerts] dm ({'resolved' if resolved else 'firing'}): "
+              f"{text!a}", flush=True)
+        await dm(text)
 
     while not client.is_closed():
         try:
@@ -138,16 +218,11 @@ async def alert_watch(client):
             fails = 0
             if prom_down:
                 prom_down = False
-                await dm("✅ Resolved: Prometheus is reachable again.")
-            fired = {k: v for k, v in cur.items() if k not in prev}
-            resolved = {k: v for k, v in prev.items() if k not in cur}
-            for msg in alert_messages(fired, resolved):
-                # !a: console prints must be ASCII-safe — under the scheduled
-                # task stdout is cp1252, and a raw emoji print raises
-                # UnicodeEncodeError, which killed this task silently once
-                # (2026-07-05: the first real alert died on its own 🚨).
-                print(f"[alerts] dm: {msg!a}", flush=True)
-                await dm(msg)
+                await dm("✅ Monitoring back: Prometheus is reachable again.")
+            for key in sorted(k for k in cur if k not in prev):
+                await announce_change(cur[key], resolved=False)
+            for key in sorted(k for k in prev if k not in cur):
+                await announce_change(prev[key], resolved=True)
             prev = cur
         except Exception as e:  # noqa: BLE001 — the watcher must never die
             fails += 1

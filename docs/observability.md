@@ -118,13 +118,23 @@ Division of labor: **Prometheus evaluates, the Discord bot delivers.**
   `PiHot` (>80°C 5m), `PiDiskLow` / `PCDiskLow` (<10% free 30m). Prometheus
   owns thresholds, `for:` durations, and flap suppression — state at
   <http://10.0.0.79:9090/alerts>.
-- `wes_discord.py` runs an `alert_watch` task: polls
-  `ALERTS{alertstate="firing"}` every 60s (`WES_PROM_URL`,
-  `WES_ALERT_POLL_S`) and DMs the owner on changes — `🚨 WES alert: ...` on
-  fire, `✅ Resolved: ...` when it clears. One DM per (rule, instance); a
-  still-firing alert never repeats. If Prometheus itself is unreachable 5
-  polls in a row it DMs that too (the watchdog needs a watchdog), and again
-  on recovery.
+- `wes_discord.py` runs an `alert_watch` task: polls Prometheus'
+  `GET /api/v1/alerts` every 60s (`WES_PROM_URL`, `WES_ALERT_POLL_S`) and
+  notifies the owner on changes. One DM per (rule, instance); a still-firing
+  alert never repeats. If Prometheus itself is unreachable 5 polls in a row it
+  DMs that too (the watchdog needs a watchdog), and again on recovery.
+- **Alerts are phrased by Jarvis, not sent raw.** On a change the bot builds a
+  grounded event string — the rule's own `summary`, the affected host, and a
+  plain-English description of what the rule means (`ALERT_CONTEXT` in
+  `wes_discord.py`, keep it in sync with the rules) — and POSTs it to the
+  server's **`POST /announce`**. The server has Jarvis explain it in his own
+  voice AND **records it into the "discord" conversation memory**, so a reply
+  like "what was that?" has context (without `/announce` the DM would bypass
+  the server and Jarvis would have no memory of sending it). If the server is
+  unreachable (which may be *why* an alert fired) the bot falls back to a raw
+  `🚨 WES alert: <summary>` DM — an alert is never lost.
+- `/announce` (`{"event", "channel"}` → `{"reply"}`) is the general proactive-
+  notification primitive; scheduled/deferred actions will reuse it.
 - No Alertmanager: for one owner and five rules, the bot-as-receiver keeps it
   to zero new services. Revisit if rules need routing/grouping/silences.
 - Verified live 2026-07-05: stopped the PC exporters → two TargetDown DMs

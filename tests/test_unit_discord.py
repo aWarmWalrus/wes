@@ -107,39 +107,56 @@ class TestServerRoundTrip:
 
 
 class TestAlertWatcher:
-    """Pure logic of the Prometheus alert poller: response parsing, keying
-    (per rule+instance), and fire/resolve message formatting."""
+    """The Prometheus alert poller: parsing /api/v1/alerts, keying per
+    rule+instance, building the event Jarvis explains, and the raw fallback."""
 
-    PAYLOAD = {"status": "success", "data": {"result": [
-        {"metric": {"alertname": "TargetDown", "alertstate": "firing",
-                    "instance": "10.0.0.168:9835", "job": "pc_gpu"}},
-        {"metric": {"alertname": "TargetDown", "alertstate": "firing",
-                    "instance": "10.0.0.168:9182", "job": "pc_windows"}},
-        {"metric": {"alertname": "GPUHot", "alertstate": "firing",
-                    "instance": "10.0.0.168:9835", "job": "pc_gpu"}},
+    PAYLOAD = {"status": "success", "data": {"alerts": [
+        {"labels": {"alertname": "TargetDown", "instance": "10.0.0.168:9835",
+                    "job": "pc_gpu"},
+         "annotations": {"summary": "Metrics from pc_gpu missing for 5 minutes."},
+         "state": "firing", "value": "0"},
+        {"labels": {"alertname": "TargetDown", "instance": "10.0.0.168:9182",
+                    "job": "pc_windows"},
+         "annotations": {"summary": "Metrics from pc_windows missing 5 minutes."},
+         "state": "firing", "value": "0"},
+        {"labels": {"alertname": "GPUHot", "instance": "10.0.0.168:9835",
+                    "job": "pc_gpu"},
+         "annotations": {"summary": "PC GPU over 85C for 5 minutes (now 88C)."},
+         "state": "firing", "value": "88"},
+        {"labels": {"alertname": "PiHot", "instance": "10.0.0.79:9100",
+                    "job": "node"},
+         "annotations": {"summary": "not firing yet"},
+         "state": "pending", "value": "81"},
     ]}}
 
     def test_parse_keys_by_rule_and_instance(self):
         alerts = wd.parse_alerts(self.PAYLOAD)
-        assert len(alerts) == 3  # same rule on two targets = two alerts
-        assert alerts["TargetDown|10.0.0.168:9835"] == "TargetDown [pc_gpu]"
+        assert len(alerts) == 3  # same rule on two targets = two; pending dropped
+        gpu = alerts["TargetDown|10.0.0.168:9835"]
+        assert gpu["alertname"] == "TargetDown" and gpu["job"] == "pc_gpu"
+        assert "missing for 5 minutes" in gpu["summary"]
 
-    def test_parse_empty_result(self):
-        assert wd.parse_alerts({"data": {"result": []}}) == {}
+    def test_parse_ignores_pending(self):
+        assert "PiHot|10.0.0.79:9100" not in wd.parse_alerts(self.PAYLOAD)
+
+    def test_parse_empty(self):
+        assert wd.parse_alerts({"data": {"alerts": []}}) == {}
         assert wd.parse_alerts({}) == {}
 
-    def test_messages_fire_and_resolve(self):
-        msgs = wd.alert_messages({"k": "GPUHot [pc_gpu]"},
-                                 {"j": "TargetDown [pc_windows]"})
-        assert msgs == ["🚨 WES alert: GPUHot [pc_gpu]",
-                        "✅ Resolved: TargetDown [pc_windows]"]
+    def test_describe_event_grounds_in_context(self):
+        info = wd.parse_alerts(self.PAYLOAD)["GPUHot|10.0.0.168:9835"]
+        ev = wd.describe_event(info, resolved=False)
+        assert "STARTED FIRING" in ev and "over 85C" in ev
+        assert "RTX 5060 Ti" in ev  # ALERT_CONTEXT background is included
+        res = wd.describe_event(info, resolved=True)
+        assert "CLEARED" in res
 
-    def test_steady_state_produces_no_messages(self):
-        cur = wd.parse_alerts(self.PAYLOAD)
-        fired = {k: v for k, v in cur.items() if k not in cur}
-        assert wd.alert_messages(fired, {}) == []
+    def test_raw_summary_fallback_has_emoji(self):
+        info = wd.parse_alerts(self.PAYLOAD)["GPUHot|10.0.0.168:9835"]
+        assert wd.raw_summary(info).startswith("🚨")
+        assert wd.raw_summary(info, resolved=True).startswith("✅")
 
-    def test_fetch_queries_firing_alerts(self, monkeypatch):
+    def test_fetch_uses_alerts_endpoint(self, monkeypatch):
         calls = []
 
         class FakeResp(io.BytesIO):
@@ -154,26 +171,94 @@ class TestAlertWatcher:
             return FakeResp(json.dumps(self.PAYLOAD).encode())
 
         monkeypatch.setattr(wd.urllib.request, "urlopen", fake)
-        alerts = wd.fetch_firing_alerts()
-        assert len(alerts) == 3
-        assert calls[0].startswith(wd.PROM_URL + "/api/v1/query?query=")
-        assert "alertstate" in calls[0]
+        assert len(wd.fetch_firing_alerts()) == 3
+        assert calls[0] == wd.PROM_URL + "/api/v1/alerts"
 
-    def test_watcher_survives_cp1252_stdout(self, monkeypatch, capsys):
-        """Regression (2026-07-05): under the scheduled task stdout is cp1252,
-        and printing the DM's emoji raised UnicodeEncodeError — the except
-        block re-raised printing the repr and the watcher died silently on
-        the first real alert. All console lines must be ASCII-safe."""
+    def test_explain_event_posts_announce(self, monkeypatch):
+        calls = []
+
+        class FakeResp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake(req, timeout=None):
+            calls.append((req.full_url, json.loads(req.data)))
+            return FakeResp(json.dumps({"reply": "Heads up, GPU is hot."}).encode())
+
+        monkeypatch.setattr(wd.urllib.request, "urlopen", fake)
+        info = wd.parse_alerts(self.PAYLOAD)["GPUHot|10.0.0.168:9835"]
+        assert wd.explain_event(info) == "Heads up, GPU is hot."
+        url, body = calls[0]
+        assert url.endswith("/announce")
+        assert body["channel"] == "discord"
+        assert "STARTED FIRING" in body["event"]
+
+    def test_watcher_explains_then_falls_back(self, monkeypatch):
+        """Fired alert is phrased by the server; if the server is down the DM
+        falls back to the raw summary so the alert is never lost."""
         import asyncio
-        import builtins
 
-        seq = [{}, {"TargetDown|x": "TargetDown [pc_gpu]"}, {}]
+        seq = [{}, wd.parse_alerts(self.PAYLOAD), {}]
         n = {"i": 0}
 
         def fake_fetch():
             i = min(n["i"], len(seq) - 1)
             n["i"] += 1
             return seq[i]
+
+        def boom(info, resolved=False):
+            raise OSError("server down")
+
+        monkeypatch.setattr(wd, "fetch_firing_alerts", fake_fetch)
+        monkeypatch.setattr(wd, "explain_event", boom)
+        monkeypatch.setattr(wd, "ALERT_POLL_S", 0.001)
+
+        sent = []
+
+        class FakeUser:
+            async def send(self, t):
+                sent.append(t)
+
+        class FakeClient:
+            async def wait_until_ready(self):
+                pass
+
+            def is_closed(self):
+                return n["i"] > 4
+
+            async def fetch_user(self, uid):
+                return FakeUser()
+
+        asyncio.run(wd.alert_watch(FakeClient()))
+        # three alerts fired then resolved -> raw fallback for all six
+        assert any(m.startswith("🚨") and "GPU" in m for m in sent)
+        assert any(m.startswith("✅") for m in sent)
+
+    def test_watcher_survives_cp1252_stdout(self, monkeypatch):
+        """Regression (2026-07-05): under the scheduled task stdout is cp1252,
+        and printing the DM's emoji raised UnicodeEncodeError — the watcher
+        died silently on the first real alert. All console lines must be
+        ASCII-safe (the code logs with !a)."""
+        import asyncio
+        import builtins
+
+        seq = [{}, wd.parse_alerts(self.PAYLOAD), {}]
+        n = {"i": 0}
+
+        def fake_fetch():
+            i = min(n["i"], len(seq) - 1)
+            n["i"] += 1
+            return seq[i]
+
+        # server reachable, returns emoji-laden natural text (worst case for
+        # an ASCII console)
+        monkeypatch.setattr(wd, "fetch_firing_alerts", fake_fetch)
+        monkeypatch.setattr(wd, "explain_event",
+                            lambda info, resolved=False: "🚨 GPU is hot, heads up.")
+        monkeypatch.setattr(wd, "ALERT_POLL_S", 0.001)
 
         real_print = builtins.print
 
@@ -182,8 +267,6 @@ class TestAlertWatcher:
                 str(a).encode("cp1252")  # raises exactly like the task's stdout
             real_print(*args, **kw)
 
-        monkeypatch.setattr(wd, "fetch_firing_alerts", fake_fetch)
-        monkeypatch.setattr(wd, "ALERT_POLL_S", 0.001)
         monkeypatch.setattr(builtins, "print", cp1252_print)
 
         sent = []
@@ -203,5 +286,4 @@ class TestAlertWatcher:
                 return FakeUser()
 
         asyncio.run(wd.alert_watch(FakeClient()))
-        assert any("🚨" in m and "TargetDown" in m for m in sent)   # fired DM
-        assert any(m.startswith("✅") for m in sent)                # resolved DM
+        assert any("🚨" in m for m in sent)  # DMs still delivered

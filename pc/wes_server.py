@@ -129,6 +129,16 @@ def system_prompt(channel="voice"):
     note = "" if channel == "voice" else TEXT_CHANNEL_NOTE
     return SYSTEM_PROMPT + note + _scene_context()
 
+
+# Framing for a proactive notification (an alert, later a scheduled action):
+# the user did NOT ask anything, so Jarvis must not answer as if replying.
+ANNOUNCE_FRAMING = (
+    "[WES system monitoring event — the user did NOT send you a message. "
+    "Proactively notify them about the situation below in your own voice: say "
+    "plainly what happened, what it means, and why it matters, and mention an "
+    "obvious next step if there is one. One or two sentences. Do not say the "
+    "user asked; do not invent any detail beyond what is given.]\n\n")
+
 # --- Tools (Pi introspection) ----------------------------------------------
 TOOLS_ENABLED = os.environ.get("WES_TOOLS", "1") == "1"
 PI_STATE_URL = os.environ.get("WES_PI_STATE_URL", "http://10.0.0.79:8090")
@@ -929,6 +939,19 @@ def think(transcript, channel="voice"):
     return _think_claude(transcript, channel=channel)
 
 
+def announce(event, channel="discord"):
+    """Have Jarvis phrase an internal system event as a proactive, natural
+    message to the owner, then record it into the channel's conversation
+    memory so a follow-up ("what was that?") has context. Returns the text.
+
+    The recorded user-side is a compact '[system event] ...' marker, not the
+    verbose framing instructions — future context sees what triggered Jarvis,
+    not the meta-prompt."""
+    reply = think(ANNOUNCE_FRAMING + event, channel=channel)
+    record_turn(f"[system event] {event}", reply, channel=channel)
+    return reply
+
+
 def _think_claude(transcript, channel="voice"):
     """Get a reply from Claude, or echo the transcript if no API key."""
     client = get_anthropic()
@@ -1296,6 +1319,24 @@ def respond_text():
     print(f"[respond_text] reply: {reply!r} ({llm_ms}ms)", flush=True)
     record_turn(text, reply, channel=channel)
     return jsonify(reply=reply, timing={"llm_ms": llm_ms})
+
+
+@app.route("/announce", methods=["POST"])
+def announce_route():
+    """Body: JSON {"event": str, "channel"?: str}. Jarvis proactively phrases
+    an internal system event (a monitoring alert today; scheduled actions
+    later) as a natural message to the owner, records it in that channel's
+    memory, and returns {reply}. The caller (the Discord bot) delivers it and
+    supplies the event context — see docs/observability.md."""
+    data = request.get_json(silent=True) or {}
+    event = (data.get("event") or "").strip()
+    channel = (data.get("channel") or "discord").strip() or "discord"
+    if not event:
+        return jsonify(error='empty event; POST JSON {"event": ...}'), 400
+    print(f"[announce] ({channel}) {event!r}", flush=True)
+    reply = announce(event, channel=channel)
+    print(f"[announce] reply: {reply!r}", flush=True)
+    return jsonify(reply=reply)
 
 
 @app.route("/respond", methods=["POST"])
