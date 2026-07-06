@@ -13,6 +13,58 @@ acknowledgment masks the thinking latency; Claude Haiku is now error-fallback on
 Keeping e4b as the router is evidence-backed
 (A/B in `docs/pipeline.md`: 12b-as-router = +44-63% latency, no quality gain).
 
+## Known issues — NEXT UP (diagnosed 2026-07-05 via the turn log)
+
+Owner-reported, investigated against `/turns` + server logs the same day.
+Any prompt/routing fix here must run the full eval (`--judge local`) before
+shipping, and each fix should add a golden case.
+
+1. **Discord vision hallucination.** "use the camera to describe what you see"
+   (discord) → e4b answered in 1.1s with an invented living-room description
+   and **no tool call** (`/turns` shows `tools: []`; a real capture takes
+   10-18s). The whole 17:08 Discord conversation is the same: "I used my
+   description tool again" — it never called anything, and it even
+   contradicted live face-rec (said "no people" while the prefetch saw
+   charlie). `describe_scene` itself works from any channel (fresh Pi capture
+   on cache miss) — the router just doesn't call it on the text channel.
+   Likely contributor: `TEXT_CHANNEL_NOTE` frames the user as "away from
+   home", and says nothing about tools still being live; multi-turn context
+   then normalizes answering from imagination. Fix direction: add an explicit
+   "you still have live camera/tool access to the house; any question about
+   what you can SEE right now requires calling describe_scene or look — you
+   have no visual memory" line to `TEXT_CHANNEL_NOTE`; add a discord-channel
+   vision golden case (checks the tool actually ran — needs X-Tools or a
+   /turns assertion, eval phase 3); consider a server-side guard (vision-y
+   query + zero vision tool calls → retry with a nudge).
+
+2. **Voice latency vs Discord.** Measured 2026-07-05: text turns 1.1-1.9s
+   total; voice turns stt 370-420ms + ttfa 1.0-1.9s — the *pipelines* are
+   comparable. Voice feels much slower because (a) VAD endpointing waits
+   ~1s of silence before the turn even starts, (b) the reply is consumed at
+   speaking speed (5-15s of audio vs instant text), and (c) tool turns block
+   first audio — a `describe_scene` cache miss measured **ttfa 17.9s**
+   (capture + face-rec + 12b VLM, SCENE_TTL=20s means misses are common).
+   Fix direction: this is mostly physics, but the tool-turn stall is
+   addressable — speak a filler ("let me take a look") before slow tools the
+   way ESCALATE_ACK masks escalation, and/or lengthen SCENE_TTL / prefetch
+   more aggressively. Don't chase the baseline 1.4-2.3s; the eval gate
+   already tracks it.
+
+3. **Escalation announced but never executed (multi-turn).** The
+   RESET/buffered-retraction fix (5bd8cdc) handles announce+call in the SAME
+   reply; the remaining failure is the router *saying* "I'll ask for help /
+   look into it" with **no `escalate_to_claude` call at all** — nothing to
+   retract, promise never kept, and on the next turn the context contains an
+   unfulfilled promise it can't act on ("multi-turn" gap: WES has no deferred
+   actions). Seen on discord (e.g. the quadratic-formula-for-a-toddler turn
+   answered weakly with no escalation). Fix direction: (a) server-side check —
+   reply matches a promise-to-escalate/defer pattern AND no escalation
+   happened → re-run the turn as an escalation (mirrors the retraction
+   design, buffered channels first); (b) extend the escalation-silent golden
+   case with a multi-turn variant ("can you look into it?" follow-up);
+   (c) longer term, scheduled/deferred actions (see roadmap section below)
+   would make "I'll get back to you" actually possible.
+
 Host observability is BUILT (2026-07-05, `docs/observability.md`): Prometheus +
 Grafana on the Pi scraping node_exporter (Pi) and windows_exporter +
 nvidia_gpu_exporter (PC); dashboard at <http://10.0.0.79:3000>. Phase 3 —
