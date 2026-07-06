@@ -119,8 +119,11 @@ TEXT_CHANNEL_NOTE = (
     " Correction for this conversation: the user is TYPING to you over a text "
     "chat (Discord), probably away from home — no microphone, speech "
     "recognition, or text-to-speech is involved, so never mention voice or "
-    "speaking. Their words arrive exactly as typed. Keep replies short and "
-    "conversational; digits and simple formatting are fine in text."
+    "speaking. Their words arrive exactly as typed. Ignore the spoken-output "
+    "rule above: write numbers, times, IP addresses, ports, filenames, and "
+    "other identifiers as ordinary digits and text (e.g. '10.0.0.168:9835', "
+    "not 'ten dot zero...') — never spell them out phonetically. Keep replies "
+    "short and conversational; digits and simple formatting are fine in text."
 )
 
 
@@ -136,8 +139,10 @@ ANNOUNCE_FRAMING = (
     "[WES system monitoring event — the user did NOT send you a message. "
     "Proactively notify them about the situation below in your own voice: say "
     "plainly what happened, what it means, and why it matters, and mention an "
-    "obvious next step if there is one. One or two sentences. Do not say the "
-    "user asked; do not invent any detail beyond what is given.]\n\n")
+    "obvious next step if there is one. One or two sentences. Refer to machines "
+    "by a plain name (e.g. 'the GPU metrics exporter' or 'the Windows PC'); do "
+    "not read out raw IP addresses or port numbers. Do not say the user asked; "
+    "do not invent any detail beyond what is given.]\n\n")
 
 # --- Tools (Pi introspection) ----------------------------------------------
 TOOLS_ENABLED = os.environ.get("WES_TOOLS", "1") == "1"
