@@ -1,0 +1,45 @@
+# WES alert rules — evaluated by Prometheus on the Pi; the Discord bot polls
+# ALERTS{alertstate="firing"} every minute and DMs the owner on fire/resolve
+# (docs/observability.md). Deploy after editing:
+#   ssh walrus-pi "sudo cp ~/claude/wes/observability/prometheus/wes-alerts.yml \
+#     /etc/prometheus/rules/ && promtool check rules /etc/prometheus/rules/wes-alerts.yml \
+#     && sudo systemctl reload prometheus"
+# `summary` is the human sentence the DM shows — write it for a phone screen.
+groups:
+  - name: wes
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 5m
+        annotations:
+          summary: >-
+            Metrics from {{ $labels.job }} ({{ $labels.instance }}) have been
+            missing for 5 minutes — the exporter or its host is down.
+
+      - alert: GPUHot
+        expr: nvidia_smi_temperature_gpu > 85
+        for: 5m
+        annotations:
+          summary: "PC GPU has been over 85°C for 5 minutes (now {{ $value }}°C)."
+
+      - alert: PiHot
+        expr: max(node_thermal_zone_temp) > 80
+        for: 5m
+        annotations:
+          summary: "The Pi has been over 80°C for 5 minutes (now {{ $value }}°C)."
+
+      - alert: PiDiskLow
+        expr: >-
+          node_filesystem_avail_bytes{mountpoint="/"} /
+          node_filesystem_size_bytes{mountpoint="/"} < 0.10
+        for: 30m
+        annotations:
+          summary: "The Pi's SD card is under 10% free space."
+
+      - alert: PCDiskLow
+        expr: >-
+          windows_logical_disk_free_bytes{volume="C:"} /
+          windows_logical_disk_size_bytes{volume="C:"} < 0.10
+        for: 30m
+        annotations:
+          summary: "The PC's C: drive is under 10% free space."

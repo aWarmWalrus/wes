@@ -19,15 +19,26 @@ Env:
                           the Anthropic key — never the repo)
     WES_DISCORD_OWNER_ID  the one Discord user ID allowed to talk to the bot
     WES_SERVER_URL        default http://127.0.0.1:8080
+    WES_PROM_URL          Prometheus for the alert watcher (default the Pi,
+                          http://10.0.0.79:9090); WES_ALERT_POLL_S interval
 """
 import asyncio
 import json
 import os
+import urllib.parse
 import urllib.request
 
 SERVER_URL = os.environ.get("WES_SERVER_URL", "http://127.0.0.1:8080")
 OWNER_ID = int(os.environ.get("WES_DISCORD_OWNER_ID", "0"))
 CONV_CHANNEL = "discord"
+
+# Alerting: Prometheus (on the Pi) evaluates the rules in
+# observability/prometheus/wes-alerts.yml; this bot only polls the firing set
+# and DMs the owner on changes — Prometheus owns thresholds and durations.
+PROM_URL = os.environ.get("WES_PROM_URL", "http://10.0.0.79:9090")
+ALERT_POLL_S = float(os.environ.get("WES_ALERT_POLL_S", "60"))
+# DM once if Prometheus itself is unreachable this many polls in a row.
+PROM_FAIL_POLLS = 5
 
 # Discord rejects messages over 2000 chars; leave headroom for safety.
 DISCORD_MSG_LIMIT = 2000
@@ -81,6 +92,77 @@ def reset_server():
     return _post_json("/reset_conversation", {"channel": CONV_CHANNEL})["cleared_turns"]
 
 
+def parse_alerts(payload):
+    """{alert key: human summary} from a Prometheus /api/v1/query response for
+    ALERTS{alertstate="firing"}. Keyed by (alertname, instance) so the same
+    rule firing on two targets DMs twice, and a still-firing alert is stable
+    across polls (no repeat DMs)."""
+    alerts = {}
+    for r in payload.get("data", {}).get("result", []):
+        m = r.get("metric", {})
+        key = f'{m.get("alertname", "?")}|{m.get("instance", "")}'
+        alerts[key] = (f'{m.get("alertname", "?")}'
+                       f' [{m.get("job", m.get("instance", "?"))}]')
+    return alerts
+
+
+def alert_messages(fired, resolved):
+    """DM texts for state changes. fired/resolved: {key: summary} dicts."""
+    msgs = [f"🚨 WES alert: {s}" for s in sorted(fired.values())]
+    msgs += [f"✅ Resolved: {s}" for s in sorted(resolved.values())]
+    return msgs
+
+
+def fetch_firing_alerts():
+    """Poll Prometheus for currently-firing alerts (blocking; run off-loop)."""
+    q = urllib.parse.quote('ALERTS{alertstate="firing"}')
+    with urllib.request.urlopen(
+            f"{PROM_URL}/api/v1/query?query={q}", timeout=10) as r:
+        return parse_alerts(json.loads(r.read()))
+
+
+async def alert_watch(client):
+    """DM the owner when an alert starts or stops firing. Also complains once
+    if Prometheus itself has been unreachable for PROM_FAIL_POLLS polls."""
+    await client.wait_until_ready()
+    prev, fails, prom_down = {}, 0, False
+    print(f"[alerts] watching {PROM_URL} every {ALERT_POLL_S:g}s", flush=True)
+
+    async def dm(text):
+        user = await client.fetch_user(OWNER_ID)
+        await user.send(text)
+
+    while not client.is_closed():
+        try:
+            cur = await asyncio.to_thread(fetch_firing_alerts)
+            fails = 0
+            if prom_down:
+                prom_down = False
+                await dm("✅ Resolved: Prometheus is reachable again.")
+            fired = {k: v for k, v in cur.items() if k not in prev}
+            resolved = {k: v for k, v in prev.items() if k not in cur}
+            for msg in alert_messages(fired, resolved):
+                # !a: console prints must be ASCII-safe — under the scheduled
+                # task stdout is cp1252, and a raw emoji print raises
+                # UnicodeEncodeError, which killed this task silently once
+                # (2026-07-05: the first real alert died on its own 🚨).
+                print(f"[alerts] dm: {msg!a}", flush=True)
+                await dm(msg)
+            prev = cur
+        except Exception as e:  # noqa: BLE001 — the watcher must never die
+            fails += 1
+            print(f"[alerts] poll failed ({fails}): {e!a}", flush=True)
+            if fails == PROM_FAIL_POLLS and not prom_down:
+                prom_down = True
+                try:
+                    await dm("🚨 WES alert: can't reach Prometheus on the Pi "
+                             f"(down {PROM_FAIL_POLLS} polls) — no monitoring "
+                             "until it's back.")
+                except Exception as e2:  # noqa: BLE001
+                    print(f"[alerts] DM failed: {e2!a}", flush=True)
+        await asyncio.sleep(ALERT_POLL_S)
+
+
 def make_client(discord):
     """Build the discord.Client with handlers attached (factory keeps the
     module importable — and unit-testable — without the discord package)."""
@@ -92,6 +174,9 @@ def make_client(discord):
     @client.event
     async def on_ready():
         print(f"[discord] logged in as {client.user} (owner={OWNER_ID})", flush=True)
+        # on_ready can re-fire on reconnect — start the watcher exactly once.
+        if not getattr(client, "_alert_task", None):
+            client._alert_task = asyncio.create_task(alert_watch(client))
 
     @client.event
     async def on_message(message):
@@ -131,6 +216,12 @@ def make_client(discord):
 
 
 def main():
+    # Under the scheduled task, stdout is cp1252 — any print of user content
+    # or emoji would raise UnicodeEncodeError mid-handler. Log lossy, not fatal.
+    import sys
+    for s in (sys.stdout, sys.stderr):
+        if hasattr(s, "reconfigure"):
+            s.reconfigure(encoding="utf-8", errors="replace")
     token = os.environ.get("WES_DISCORD_TOKEN")
     if not token:
         raise SystemExit("WES_DISCORD_TOKEN is not set (see module docstring)")

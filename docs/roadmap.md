@@ -74,9 +74,10 @@ tighten math-simple's `reply_regex`.
 
 Host observability is BUILT (2026-07-05, `docs/observability.md`): Prometheus +
 Grafana on the Pi scraping node_exporter (Pi) and windows_exporter +
-nvidia_gpu_exporter (PC); dashboard at <http://10.0.0.79:3000>. Phase 3 —
-app-level `/metrics` in `wes_server.py` (tokens/latency/escalations) and
-Discord-delivered alerts — is planned.
+nvidia_gpu_exporter (PC); dashboard at <http://10.0.0.79:3000>, including
+app-level token metrics (`/metrics`) and the recent-turns table (`/turns`).
+Alerting is BUILT too: Prometheus rules + the Discord bot DM-ing the owner on
+fire/resolve. Still open: turn-latency histograms on `/metrics`.
 
 ## Hybrid local inference — DONE (July 2026)
 

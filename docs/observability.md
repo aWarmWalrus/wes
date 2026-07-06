@@ -108,7 +108,34 @@ reply, which tools ran, escalated y/n, per channel. Pipeline:
   The table panel polls `http://10.0.0.168:8080/turns?n=15` — it shows the
   *current* tail regardless of the dashboard's time range.
 
+## Alerting — Jarvis DMs the owner (built 2026-07-05)
+
+Division of labor: **Prometheus evaluates, the Discord bot delivers.**
+
+- Rules live in the repo at `observability/prometheus/wes-alerts.yml`
+  (deploy command in its header) → `/etc/prometheus/rules/` on the Pi.
+  Current set: `TargetDown` (any scrape target, 5m), `GPUHot` (>85°C 5m),
+  `PiHot` (>80°C 5m), `PiDiskLow` / `PCDiskLow` (<10% free 30m). Prometheus
+  owns thresholds, `for:` durations, and flap suppression — state at
+  <http://10.0.0.79:9090/alerts>.
+- `wes_discord.py` runs an `alert_watch` task: polls
+  `ALERTS{alertstate="firing"}` every 60s (`WES_PROM_URL`,
+  `WES_ALERT_POLL_S`) and DMs the owner on changes — `🚨 WES alert: ...` on
+  fire, `✅ Resolved: ...` when it clears. One DM per (rule, instance); a
+  still-firing alert never repeats. If Prometheus itself is unreachable 5
+  polls in a row it DMs that too (the watchdog needs a watchdog), and again
+  on recovery.
+- No Alertmanager: for one owner and five rules, the bot-as-receiver keeps it
+  to zero new services. Revisit if rules need routing/grouping/silences.
+- Verified live 2026-07-05: stopped the PC exporters → two TargetDown DMs
+  after 5m → restarted → two Resolved DMs.
+- **Encoding gotcha:** under the scheduled task, Python's stdout is cp1252, so
+  `print()`-ing an emoji or any non-Latin-1 char raises `UnicodeEncodeError`
+  mid-handler. The first real alert died on its own 🚨 this way. Both
+  `wes_discord.py` and `wes_server.py` now `reconfigure(errors="replace")`
+  their streams in `main`, and the alert watcher logs with `!a` (ASCII repr).
+  Keep any new console print in the services ASCII-safe.
+
 ## Still planned (phase 3b)
 
 - Turn-latency histograms by channel (stt/ttfa/total) on `/metrics`.
-- Alerting (GPU temp, disk, service down) delivered through the Discord bot.

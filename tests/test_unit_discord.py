@@ -104,3 +104,104 @@ class TestServerRoundTrip:
         url, body = calls[0]
         assert url.endswith("/reset_conversation")
         assert body == {"channel": "discord"}  # never the voice channel
+
+
+class TestAlertWatcher:
+    """Pure logic of the Prometheus alert poller: response parsing, keying
+    (per rule+instance), and fire/resolve message formatting."""
+
+    PAYLOAD = {"status": "success", "data": {"result": [
+        {"metric": {"alertname": "TargetDown", "alertstate": "firing",
+                    "instance": "10.0.0.168:9835", "job": "pc_gpu"}},
+        {"metric": {"alertname": "TargetDown", "alertstate": "firing",
+                    "instance": "10.0.0.168:9182", "job": "pc_windows"}},
+        {"metric": {"alertname": "GPUHot", "alertstate": "firing",
+                    "instance": "10.0.0.168:9835", "job": "pc_gpu"}},
+    ]}}
+
+    def test_parse_keys_by_rule_and_instance(self):
+        alerts = wd.parse_alerts(self.PAYLOAD)
+        assert len(alerts) == 3  # same rule on two targets = two alerts
+        assert alerts["TargetDown|10.0.0.168:9835"] == "TargetDown [pc_gpu]"
+
+    def test_parse_empty_result(self):
+        assert wd.parse_alerts({"data": {"result": []}}) == {}
+        assert wd.parse_alerts({}) == {}
+
+    def test_messages_fire_and_resolve(self):
+        msgs = wd.alert_messages({"k": "GPUHot [pc_gpu]"},
+                                 {"j": "TargetDown [pc_windows]"})
+        assert msgs == ["🚨 WES alert: GPUHot [pc_gpu]",
+                        "✅ Resolved: TargetDown [pc_windows]"]
+
+    def test_steady_state_produces_no_messages(self):
+        cur = wd.parse_alerts(self.PAYLOAD)
+        fired = {k: v for k, v in cur.items() if k not in cur}
+        assert wd.alert_messages(fired, {}) == []
+
+    def test_fetch_queries_firing_alerts(self, monkeypatch):
+        calls = []
+
+        class FakeResp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake(url, timeout=None):
+            calls.append(url)
+            return FakeResp(json.dumps(self.PAYLOAD).encode())
+
+        monkeypatch.setattr(wd.urllib.request, "urlopen", fake)
+        alerts = wd.fetch_firing_alerts()
+        assert len(alerts) == 3
+        assert calls[0].startswith(wd.PROM_URL + "/api/v1/query?query=")
+        assert "alertstate" in calls[0]
+
+    def test_watcher_survives_cp1252_stdout(self, monkeypatch, capsys):
+        """Regression (2026-07-05): under the scheduled task stdout is cp1252,
+        and printing the DM's emoji raised UnicodeEncodeError — the except
+        block re-raised printing the repr and the watcher died silently on
+        the first real alert. All console lines must be ASCII-safe."""
+        import asyncio
+        import builtins
+
+        seq = [{}, {"TargetDown|x": "TargetDown [pc_gpu]"}, {}]
+        n = {"i": 0}
+
+        def fake_fetch():
+            i = min(n["i"], len(seq) - 1)
+            n["i"] += 1
+            return seq[i]
+
+        real_print = builtins.print
+
+        def cp1252_print(*args, **kw):
+            for a in args:
+                str(a).encode("cp1252")  # raises exactly like the task's stdout
+            real_print(*args, **kw)
+
+        monkeypatch.setattr(wd, "fetch_firing_alerts", fake_fetch)
+        monkeypatch.setattr(wd, "ALERT_POLL_S", 0.001)
+        monkeypatch.setattr(builtins, "print", cp1252_print)
+
+        sent = []
+
+        class FakeUser:
+            async def send(self, t):
+                sent.append(t)
+
+        class FakeClient:
+            async def wait_until_ready(self):
+                pass
+
+            def is_closed(self):
+                return n["i"] > 4
+
+            async def fetch_user(self, uid):
+                return FakeUser()
+
+        asyncio.run(wd.alert_watch(FakeClient()))
+        assert any("🚨" in m and "TargetDown" in m for m in sent)   # fired DM
+        assert any(m.startswith("✅") for m in sent)                # resolved DM

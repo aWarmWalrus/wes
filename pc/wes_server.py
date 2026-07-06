@@ -1541,5 +1541,10 @@ def warmup():
 
 
 if __name__ == "__main__":
+    # Scheduled-task stdout is cp1252; printing a transcript/reply containing
+    # emoji (Discord turns can) would raise UnicodeEncodeError mid-request.
+    for _s in (sys.stdout, sys.stderr):
+        if hasattr(_s, "reconfigure"):
+            _s.reconfigure(encoding="utf-8", errors="replace")
     warmup()
     app.run(host=HOST, port=PORT, threaded=True)
