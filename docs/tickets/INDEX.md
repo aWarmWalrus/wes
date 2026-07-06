@@ -2,7 +2,7 @@
 
 The current WES work queue — **open tickets only** (closed ones live in
 `done/`, out of context). One line each; open the file for full context.
-Conventions + workflow: `README.md`. Next free id: **025** (open here,
+Conventions + workflow: `README.md`. Next free id: **026** (open here,
 014-022 shipped in `done/2026-07/`).
 
 ## High priority
@@ -28,3 +28,4 @@ Conventions + workflow: `README.md`. Next free id: **025** (open here,
 - [010](open/low/010-future-hailo-use.md) — Use spare Hailo headroom: pose/gesture, ambient detection, wake-word on-device
 - [011](open/low/011-eval-flakes.md) — Eval flakes: lexicon-names STT + math-simple arithmetic
 - [013](open/low/013-storage-tier.md) — Storage tier on the PC for audio/video/transcripts
+- [025](open/low/025-dashboard-gpu-temp-power-axis.md) — Dashboard "GPU temperature / power" panel mixes °C and W on one axis (bug)
