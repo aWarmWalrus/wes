@@ -1,13 +1,26 @@
 ---
 id: 023
 title: Deepen + persist per-channel conversation memory (Discord gets a lot more)
-status: open
+status: done
 priority: high
 created: 2026-07-06
-closed:
+closed: 2026-07-06
 tags: [memory, discord, voice, working-memory]
 related: [docs/memory-design.md, "#012", "#015"]
 ---
+
+## Outcome (done 2026-07-06)
+Shipped: `_conv_policy` makes depth + idle TTL per-channel (Discord 40 turns /
+7 days via `WES_CONV_TURNS_DISCORD`/`_TTL_DISCORD`; voice 6 / 5 min);
+`_persist_conversation` writes each window to
+`~/wes-pc/logs/conversations/<channel>.jsonl` (atomic), and `load_conversations`
+restores them at startup. `reset_conversation` clears RAM + disk. No-bleed holds
+by construction (per-channel keys + isolation test). 7 new unit tests (depth,
+TTL, no-bleed, restart, stale-skip, reset-deletes-file); 153 suite green.
+Verified live: recalled dog name+breed across a full server restart on Discord
+(`[conv] restored windows: {'discord': 3}`) while voice stayed ignorant.
+Follow-up (deferred): rolling summarization of very deep windows if context
+pressure appears; unified cross-channel semantic memory is #012.
 
 ## Goal
 Phase 0 of the memory architecture (`docs/memory-design.md` v2). Give **Discord

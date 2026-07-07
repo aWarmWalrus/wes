@@ -257,6 +257,61 @@ class TestConversationMemory:
         assert [m["role"] for m in ctx[0::2]] == ["user"] * (len(ctx) // 2)
         assert [m["role"] for m in ctx[1::2]] == ["assistant"] * (len(ctx) // 2)
 
+    # --- Phase 0 (#023): per-channel depth + persistence -------------------
+
+    def test_discord_window_is_deeper_than_voice(self):
+        dmax = ws._conv_policy("discord")[0]
+        vmax = ws._conv_policy("voice")[0]
+        assert dmax > vmax
+        # Discord keeps far more than the voice depth; voice is capped tight.
+        for i in range(vmax + 10):
+            ws.record_turn(f"dq{i}", f"da{i}", channel="discord")
+            ws.record_turn(f"vq{i}", f"va{i}", channel="voice")
+        assert len(ws.conversation_context("discord")) == 2 * (vmax + 10)
+        assert len(ws.conversation_context("voice")) == 2 * vmax
+
+    def test_discord_ttl_outlives_voice_ttl(self):
+        # a gap that would expire voice must NOT expire discord
+        ws.record_turn("q", "a", channel="discord")
+        ws._conv_last["discord"] = time.time() - ws.CONV_TTL - 1
+        assert ws.conversation_context("discord") != []
+
+    def test_no_bleed_discord_content_absent_from_voice(self):
+        ws.record_turn("secret discord thing", "ok", channel="discord")
+        joined = " ".join(m["content"] for m in ws.conversation_context("voice"))
+        assert "secret discord thing" not in joined
+        assert ws.conversation_context("voice") == []
+
+    def test_window_survives_restart(self):
+        ws.record_turn("my name is charlie", "Hi Charlie.", channel="discord")
+        ws.record_turn("i like purple", "Noted.", channel="discord")
+        # simulate a server restart: drop RAM state, reload from disk
+        ws._convs.clear()
+        ws._conv_last.clear()
+        ws.load_conversations()
+        ctx = ws.conversation_context("discord")
+        assert [m["content"] for m in ctx] == \
+            ["my name is charlie", "Hi Charlie.", "i like purple", "Noted."]
+
+    def test_stale_window_not_reloaded(self, monkeypatch):
+        import os
+        ws.record_turn("old", "reply", channel="voice")
+        path = ws._conv_file("voice")
+        # age the file past the voice TTL
+        old = time.time() - ws.CONV_TTL - 10
+        os.utime(path, (old, old))
+        ws._convs.clear()
+        ws._conv_last.clear()
+        ws.load_conversations()
+        assert ws.conversation_context("voice") == []
+
+    def test_reset_removes_persisted_file(self):
+        import os
+        ws.record_turn("a", "b", channel="discord")
+        assert os.path.exists(ws._conv_file("discord"))
+        ws.reset_conversation("discord")
+        assert not os.path.exists(ws._conv_file("discord"))
+
 
 class TestSttBias:
     """Contextual-biasing prompt for whisper (lexicon + conversation tail)."""

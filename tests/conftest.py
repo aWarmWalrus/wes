@@ -42,6 +42,7 @@ def _sandbox_ledgers(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ws, "USAGE_LOG", str(tmp_path / "usage.csv"))
     monkeypatch.setattr(ws, "TURNS_LOG", str(tmp_path / "turns.jsonl"))
+    monkeypatch.setattr(ws, "CONV_DIR", str(tmp_path / "conversations"))
 
 
 @pytest.fixture(scope="session")

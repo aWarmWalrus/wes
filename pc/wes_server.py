@@ -606,49 +606,132 @@ def _ollama_chat(messages, tools=None, stream=False, max_tokens=512, timeout=120
 # --- Conversation memory ----------------------------------------------------
 # LiveKit ChatContext-style sliding window, keyed by channel: "voice" is the
 # house conversation (one house, one mic); remote text frontends (Discord) get
-# their own channel so a chat from away doesn't clobber the in-house context.
-# The last CONV_TURNS exchanges are replayed to whichever backend answers —
-# including across the escalation handoff, so Claude sees what gemma said.
-# Each channel goes idle-empty after CONV_TTL seconds of silence.
-CONV_TURNS = int(os.environ.get("WES_CONV_TURNS", "6"))
-CONV_TTL = float(os.environ.get("WES_CONV_TTL", "300"))
+# their own channel so a chat from away doesn't clobber the in-house context
+# (channels never bleed — only the future durable layer is shared, see
+# docs/memory-design.md). Depth + idle TTL are PER CHANNEL: Discord chats span
+# hours/days and want a deep, long-lived window; voice is short spoken context
+# where latency matters and old turns age out fast. Windows are persisted to
+# disk so they survive a server restart.
+CONV_TURNS = int(os.environ.get("WES_CONV_TURNS", "6"))       # voice/default depth
+CONV_TTL = float(os.environ.get("WES_CONV_TTL", "300"))       # voice/default idle TTL
+# Per-channel overrides: (max exchanges kept, idle TTL seconds).
+CONV_POLICY = {
+    "discord": (int(os.environ.get("WES_CONV_TURNS_DISCORD", "40")),
+                float(os.environ.get("WES_CONV_TTL_DISCORD", "604800"))),  # 7 days
+}
+# Persisted windows (household content — kept next to the other logs on the PC,
+# NOT in the repo). One <channel>.jsonl per channel, rewritten each turn.
+CONV_DIR = os.environ.get(
+    "WES_CONV_DIR",
+    os.path.join(os.path.expanduser("~"), "wes-pc", "logs", "conversations"))
 _conv_lock = threading.Lock()
 _convs = {}      # channel -> [{"role": "user"|"assistant", "content": str}]
 _conv_last = {}  # channel -> last activity time
 
 
+def _conv_policy(channel):
+    """(max exchanges kept, idle TTL seconds) for a channel."""
+    return CONV_POLICY.get(channel, (CONV_TURNS, CONV_TTL))
+
+
+def _conv_file(channel):
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", channel) or "channel"
+    return os.path.join(CONV_DIR, f"{safe}.jsonl")
+
+
+def _persist_conversation(channel, conv):
+    """Write a channel's window to disk (atomic; best-effort — never breaks a
+    turn). Called under _conv_lock. An emptied window removes the file."""
+    try:
+        path = _conv_file(channel)
+        if not conv:
+            if os.path.exists(path):
+                os.remove(path)
+            return
+        os.makedirs(CONV_DIR, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            for m in conv:
+                f.write(json.dumps(m, ensure_ascii=False) + "\n")
+        os.replace(tmp, path)
+    except OSError as e:  # noqa: BLE001
+        print(f"[conv] persist failed ({channel}): {e}", flush=True)
+
+
+def load_conversations():
+    """Rebuild per-channel windows from disk at startup so a restart doesn't
+    forget mid-conversation. A window past its channel TTL (by file mtime)
+    starts empty. Best-effort — never raises."""
+    try:
+        files = os.listdir(CONV_DIR)
+    except OSError:
+        return
+    now = time.time()
+    for fn in files:
+        if not fn.endswith(".jsonl"):
+            continue
+        channel = fn[:-len(".jsonl")]
+        max_turns, ttl = _conv_policy(channel)
+        path = os.path.join(CONV_DIR, fn)
+        try:
+            mtime = os.path.getmtime(path)
+            if now - mtime > ttl:
+                continue  # stale — leave it empty
+            with open(path, encoding="utf-8") as f:
+                msgs = [json.loads(line) for line in f if line.strip()]
+        except (OSError, ValueError):
+            continue
+        msgs = [m for m in msgs
+                if m.get("role") and "content" in m][-2 * max_turns:]
+        if msgs:
+            with _conv_lock:
+                _convs[channel] = msgs
+                _conv_last[channel] = mtime
+    if _convs:
+        print(f"[conv] restored windows: "
+              f"{ {c: len(m) // 2 for c, m in _convs.items()} }", flush=True)
+
+
 def conversation_context(channel="voice"):
     """Recent exchanges for the LLM, or [] once the conversation went idle."""
+    _, ttl = _conv_policy(channel)
     with _conv_lock:
         conv = _convs.setdefault(channel, [])
-        if time.time() - _conv_last.get(channel, 0.0) > CONV_TTL:
+        if conv and time.time() - _conv_last.get(channel, 0.0) > ttl:
             conv.clear()
         return list(conv)
 
 
 def record_turn(transcript, reply, channel="voice"):
-    """Append one exchange, keeping the last CONV_TURNS exchanges.
-    Empty transcripts (silence) and empty replies are not memory."""
+    """Append one exchange, keeping the last (per-channel) exchanges and
+    persisting the window. Empty transcripts (silence) and empty replies are
+    not memory."""
     if not (transcript and transcript.strip() and reply and reply.strip()):
         return
     log_turn(transcript, reply, channel)
+    max_turns, ttl = _conv_policy(channel)
     with _conv_lock:
         conv = _convs.setdefault(channel, [])
-        if time.time() - _conv_last.get(channel, 0.0) > CONV_TTL:
+        if conv and time.time() - _conv_last.get(channel, 0.0) > ttl:
             conv.clear()
         conv.append({"role": "user", "content": transcript})
         conv.append({"role": "assistant", "content": reply})
-        del conv[:-2 * CONV_TURNS]
+        del conv[:-2 * max_turns]
         _conv_last[channel] = time.time()
+        _persist_conversation(channel, conv)
 
 
 def reset_conversation(channel=None):
-    """Clear one channel's memory, or every channel's when channel is None."""
+    """Clear one channel's memory (RAM + disk), or every channel's when None."""
     with _conv_lock:
-        convs = [_convs.get(channel, [])] if channel else list(_convs.values())
-        n = sum(len(c) // 2 for c in convs)
-        for c in convs:
-            c.clear()
+        channels = [channel] if channel else list(_convs.keys())
+        n = 0
+        for ch in channels:
+            conv = _convs.get(ch)
+            if conv:
+                n += len(conv) // 2
+                conv.clear()
+            _persist_conversation(ch, [])  # removes the file
         return n
 
 
@@ -1613,5 +1696,6 @@ if __name__ == "__main__":
     for _s in (sys.stdout, sys.stderr):
         if hasattr(_s, "reconfigure"):
             _s.reconfigure(encoding="utf-8", errors="replace")
+    load_conversations()  # restore per-channel windows from disk
     warmup()
     app.run(host=HOST, port=PORT, threaded=True)

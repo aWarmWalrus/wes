@@ -2,14 +2,13 @@
 
 The current WES work queue — **open tickets only** (closed ones live in
 `done/`, out of context). One line each; open the file for full context.
-Conventions + workflow: `README.md`. Next free id: **026** (open here,
-014-022 shipped in `done/2026-07/`).
+Conventions + workflow: `README.md`. Next free id: **026** (open here;
+014-023 shipped in `done/2026-07/`).
 
 ## High priority
 
 - [001](open/high/001-discord-vision-hallucination.md) — Discord router answers vision questions without calling `describe_scene` (hallucinates the scene)
 - [002](open/high/002-escalation-announced-not-executed.md) — Router promises to "look into it" but never calls `escalate_to_claude` (no deferred-action support)
-- [023](open/high/023-channel-scoped-persistent-conversation-memory.md) — Deepen + persist per-channel conversation memory (Discord gets a lot more; no voice↔discord bleed)
 
 ## Medium priority
 

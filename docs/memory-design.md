@@ -171,11 +171,12 @@ the layers gate separately.
 
 ## Phased plan (maps to tickets)
 
-- **Phase 0 — deepen Discord working memory (quick win).** Make `CONV_TURNS` /
-  `CONV_TTL` per-channel; persist windows to `conversations/<channel>.jsonl` so
-  they survive restarts; Discord gets a big long-lived window, voice stays
-  short. No new architecture — this alone delivers "a LOT more Discord memory"
-  and the no-bleed guarantee. → ticket #023.
+- **Phase 0 — deepen Discord working memory. ✅ BUILT 2026-07-06 (ticket #023).**
+  `_conv_policy` makes depth + TTL per-channel (Discord 40 turns / 7 days, voice
+  6 / 5 min); windows persist to `~/wes-pc/logs/conversations/<channel>.jsonl`
+  and reload on startup (`load_conversations`), so restarts no longer forget.
+  No-bleed holds by construction (per-channel keys). Verified live: recalled a
+  fact across a server restart on Discord while voice stayed ignorant.
 - **Phase 1 — unified semantic memory.** `MEMORY.md` injection +
   `remember`/`forget`/`recall` tools + golden cases (incl. cross-channel +
   no-bleed). → ticket #012. Good moment to also externalize `SOUL.md` (identity

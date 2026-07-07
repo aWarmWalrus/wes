@@ -88,14 +88,24 @@ Discord bot uses `"discord"`), so a chat from away never clobbers the in-house
 context. Non-voice channels also get `TEXT_CHANNEL_NOTE` appended to the system
 prompt (`system_prompt(channel)`), overriding the voice framing — without it the
 model tells Discord users it hears them "by voice command". Each channel replays
-its last `WES_CONV_TURNS` exchanges (default 6) to whichever backend answers the
-next turn. Key behaviors:
+its recent exchanges to whichever backend answers the next turn. **Depth and
+idle TTL are per-channel** (`_conv_policy`): voice keeps `WES_CONV_TURNS` (6,
+short spoken context where latency matters), while **Discord keeps
+`WES_CONV_TURNS_DISCORD` (40) for a much longer `WES_CONV_TTL_DISCORD` (7 days)**
+— a remote chat spans hours. Key behaviors:
 
 - **Shared across the handoff**: escalated turns give Claude the same history
   gemma saw (and gemma later sees what Claude said) — without this, "explain that
   differently" breaks the moment a turn escalates.
-- **Idle expiry**: `WES_CONV_TTL` seconds without a turn (default 300) clears the
+- **Idle expiry**: the channel's TTL without a turn (voice 300s) clears the
   context, so this morning's chat doesn't color tonight's question.
+- **Persisted across restarts**: each channel's window is written to
+  `~/wes-pc/logs/conversations/<channel>.jsonl` (household content — on the PC,
+  not the repo) and reloaded on startup (`load_conversations`), so a server
+  restart no longer forgets mid-conversation. A window past its TTL (by file
+  mtime) starts empty. This is Phase 0 of the memory architecture
+  (`docs/memory-design.md`); the unified cross-channel semantic/episodic layer
+  is the later phase.
 - **Silence isn't memory**: empty transcripts and empty replies are never
   recorded; a partial reply on a client abort is (it *is* what the user heard —
   barge-in will tag these `[interrupted]` later, per LiveKit practice).
