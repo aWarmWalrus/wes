@@ -658,16 +658,18 @@ class TestChannelSystemPrompt:
     """Text channels override the voice framing so the model never says
     'voice command' to someone typing on Discord."""
 
-    def test_voice_channel_is_pure_voice_prompt(self):
+    def test_voice_channel_gets_the_voice_note(self):
         p = ws.system_prompt("voice")
-        assert p.startswith(ws.SYSTEM_PROMPT)
+        assert p.startswith(ws.SYSTEM_PROMPT)  # channel-agnostic persona first
+        assert ws.VOICE_CHANNEL_NOTE in p
         assert ws.TEXT_CHANNEL_NOTE not in p
 
-    def test_text_channels_get_the_note(self):
+    def test_text_channels_get_the_text_note(self):
         for ch in ("discord", "text"):
             p = ws.system_prompt(ch)
             assert ws.TEXT_CHANNEL_NOTE in p
-            assert p.startswith(ws.SYSTEM_PROMPT)  # base rules still apply
+            assert ws.VOICE_CHANNEL_NOTE not in p
+            assert p.startswith(ws.SYSTEM_PROMPT)  # same persona, different note
 
     def test_stream_local_uses_channel_prompt(self, monkeypatch):
         fake, calls = TestOllamaBackend._fake_urlopen([[
@@ -946,6 +948,74 @@ class TestTurnLog:
     def test_missing_log_is_empty(self):
         with ws.app.test_client() as c:
             assert c.get("/turns").get_json()["turns"] == []
+
+
+class TestDurableMemory:
+    """Phase 1 (#012/#024): unified semantic memory (MEMORY.md) + persona
+    (SOUL.md), injected into every channel's system prompt; remember/forget
+    tools. (conftest sandboxes MEMORY_FILE/SOUL_FILE into tmp.)"""
+
+    def test_remember_then_injected_into_prompt(self):
+        out = ws.run_tool("remember", {"fact": "the user's dog is Biscuit"})
+        assert "remember" in out.lower()
+        # unified: shows up in EVERY channel's system prompt
+        assert "Biscuit" in ws.system_prompt("voice")
+        assert "Biscuit" in ws.system_prompt("discord")
+
+    def test_remember_persists_across_reset(self):
+        ws.run_tool("remember", {"fact": "favorite color is teal"})
+        ws.reset_conversation()  # clears the window, NOT durable memory
+        assert "teal" in ws.system_prompt("voice")
+
+    def test_forget_removes_fact(self):
+        ws.run_tool("remember", {"fact": "the cat is named Mittens"})
+        ws.run_tool("remember", {"fact": "the dog is named Biscuit"})
+        out = ws.run_tool("forget", {"match": "cat"})
+        assert "forgotten" in out.lower()
+        prompt = ws.system_prompt("voice")
+        assert "Mittens" not in prompt and "Biscuit" in prompt
+
+    def test_forget_unknown_is_graceful(self):
+        assert "don't have anything" in ws.run_tool("forget", {"match": "xyz"}).lower()
+
+    def test_empty_memory_injects_nothing(self):
+        assert ws.memory_block() == ""
+
+    def test_soul_falls_back_to_system_prompt_when_absent(self):
+        # no SOUL.md in tmp -> behavior governed by the in-code SYSTEM_PROMPT
+        assert ws.soul_prompt() == ws.SYSTEM_PROMPT
+
+    def test_soul_file_overrides_persona(self, tmp_path, monkeypatch):
+        p = tmp_path / "SOUL.md"
+        p.write_text("You are Jarvis, dry and terse.", encoding="utf-8")
+        monkeypatch.setattr(ws, "SOUL_FILE", str(p))
+        assert ws.soul_prompt() == "You are Jarvis, dry and terse."
+        assert "dry and terse" in ws.system_prompt("voice")
+
+    def test_memory_is_size_capped(self, monkeypatch):
+        monkeypatch.setattr(ws, "MEMORY_MAX_BYTES", 200)
+        for i in range(60):
+            ws.run_tool("remember", {"fact": f"fact number {i} padding padding"})
+        block = ws.memory_block()
+        assert len(block.encode("utf-8")) < 200 + 300  # header text + cap
+        assert "fact number 59" in block          # newest kept
+        assert "fact number 0 " not in block      # oldest dropped
+
+    def test_tools_registered(self):
+        names = [t["name"] for t in ws.TOOLS]
+        assert "remember" in names and "forget" in names
+
+    def test_tool_result_surfaced_when_model_goes_silent(self, monkeypatch):
+        # round 1: call remember; round 2: model emits nothing. The turn must
+        # not be silent — the tool's confirmation becomes the reply.
+        fake, _ = TestOllamaBackend._fake_urlopen([
+            [{"message": {"tool_calls": [{"function": {
+                "name": "remember", "arguments": {"fact": "the sky is blue"}}}]},
+              "done": True}],
+            [{"message": {"content": ""}, "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        reply = "".join(ws._stream_local("remember the sky is blue"))
+        assert "remember" in reply.lower() and "sky is blue" in reply
 
 
 class TestFaceSummary:

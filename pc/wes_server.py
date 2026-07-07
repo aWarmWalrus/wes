@@ -99,41 +99,149 @@ ESCALATE_MODEL = os.environ.get("WES_ESCALATE_MODEL", "")
 ESCALATE_ACK = os.environ.get(
     "WES_ESCALATE_ACK", "Good question — let me think about that. ")
 ANTHROPIC_MODEL = os.environ.get("WES_LLM_MODEL", "claude-haiku-4-5")
+# The base persona is CHANNEL-AGNOSTIC (Jarvis is the same whether reached by
+# voice or Discord). Channel-specific presentation lives in the *_CHANNEL_NOTE
+# constants below and is appended per turn. This is also the in-code fallback
+# for SOUL.md (soul_prompt) — keep it free of spoken/typed assumptions.
 SYSTEM_PROMPT = os.environ.get(
     "WES_SYSTEM_PROMPT",
-    "You are Jarvis, a voice assistant running on a Raspberry Pi. Your replies "
-    "are read aloud by a text-to-speech engine, so keep them short and "
-    "conversational — one or two sentences — in plain spoken English: no "
-    "markdown, bullet points, headings, asterisks, emoji, or other symbols, and "
-    "say numbers, times, and units the way a person would say them out loud. "
-    "The user's words reach you through speech recognition, so if a word looks "
-    "slightly wrong, interpret it charitably from context instead of taking it "
-    "literally. "
-    "You have tools to check the Pi's live status (temperature, memory, "
-    "etc.), the date/time, and recent logs — use them when the question calls for "
-    "current information rather than guessing. You are also a general assistant: "
-    "answer everyday knowledge questions confidently from what you know.",
+    "You are Jarvis, a warm, concise assistant for the user's household. You "
+    "have tools to check live status (the Raspberry Pi's temperature and "
+    "resources, the date and time, recent service logs, the network layout) and "
+    "to remember durable facts across conversations — actually CALL the "
+    "relevant tool when a question needs current information or the user tells "
+    "you something worth keeping; never just claim you did something you didn't. "
+    "You are also a general assistant: answer everyday knowledge questions "
+    "confidently from what you know, and keep replies brief and natural.",
 )
 
-# The base prompt is written for the voice loop; text frontends (Discord)
-# override its speech assumptions so the model doesn't talk about "voice
-# commands" to someone typing on their phone.
-TEXT_CHANNEL_NOTE = (
-    " Correction for this conversation: the user is TYPING to you over a text "
-    "chat (Discord), probably away from home — no microphone, speech "
-    "recognition, or text-to-speech is involved, so never mention voice or "
-    "speaking. Their words arrive exactly as typed. Ignore the spoken-output "
-    "rule above: write numbers, times, IP addresses, ports, filenames, and "
-    "other identifiers as ordinary digits and text (e.g. '10.0.0.168:9835', "
-    "not 'ten dot zero...') — never spell them out phonetically. Keep replies "
-    "short and conversational; digits and simple formatting are fine in text."
+# Voice turns are spoken aloud; text turns are typed. Exactly one of these is
+# appended to the (channel-agnostic) persona per turn — see system_prompt().
+VOICE_CHANNEL_NOTE = (
+    " You are speaking this reply aloud through a text-to-speech engine, so keep "
+    "it to one or two short sentences of plain spoken English: no markdown, "
+    "bullet points, headings, asterisks, emoji, or other symbols, and say "
+    "numbers, times, and units the way a person would say them out loud. The "
+    "user's words reach you through speech recognition, so if a word looks "
+    "slightly wrong, interpret it charitably from context rather than literally."
 )
+TEXT_CHANNEL_NOTE = (
+    " The user is TYPING to you over a text chat (Discord), probably away from "
+    "home — no microphone or speaker is involved, so never mention voice, "
+    "speaking, or hearing them. Their words arrive exactly as typed. Write "
+    "numbers, times, IP addresses, ports, filenames, and other identifiers as "
+    "ordinary digits and text (e.g. '10.0.0.168:9835'), never spelled out "
+    "phonetically. Keep replies short and conversational; simple formatting is "
+    "fine in text."
+)
+
+
+# --- Durable memory (semantic) + identity (soul) ----------------------------
+# UNIFIED across channels (unlike the per-channel conversation window): the
+# persona in SOUL.md and the facts in MEMORY.md are injected into EVERY turn's
+# system prompt, so a fact learned on Discord is known on voice next time.
+# Personal/household data — kept on the PC next to the other logs, NOT in the
+# git repo, family-editable.  SAFETY: hard rules (the house audio rule,
+# owner-only Discord, invisible escalation) live in CODE, never in these
+# editable/model-writable files — soul_prompt falls back to the in-code
+# SYSTEM_PROMPT if SOUL.md is missing/emptied.  See docs/memory-design.md.
+MEMORY_FILE = os.environ.get(
+    "WES_MEMORY_FILE",
+    os.path.join(os.path.expanduser("~"), "wes-pc", "memory", "MEMORY.md"))
+SOUL_FILE = os.environ.get(
+    "WES_SOUL_FILE",
+    os.path.join(os.path.expanduser("~"), "wes-pc", "memory", "SOUL.md"))
+MEMORY_MAX_BYTES = int(os.environ.get("WES_MEMORY_MAX_BYTES", "3000"))
+_memory_lock = threading.Lock()
+
+
+def _read_text(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def soul_prompt():
+    """Jarvis's persona: SOUL.md if present and non-empty, else the in-code
+    SYSTEM_PROMPT fallback (so emptying/deleting SOUL.md can never strip his
+    behavior — and hard safety rules never lived here anyway)."""
+    return _read_text(SOUL_FILE) or SYSTEM_PROMPT
+
+
+def memory_block():
+    """Durable facts injected into every turn, or "" if none. Size-capped: if
+    MEMORY.md exceeds the budget, keep the most recent lines (facts append
+    chronologically)."""
+    text = _read_text(MEMORY_FILE)
+    if not text:
+        return ""
+    if len(text.encode("utf-8")) > MEMORY_MAX_BYTES:
+        kept, size = [], 0
+        for line in reversed(text.splitlines()):
+            size += len(line.encode("utf-8")) + 1
+            if size > MEMORY_MAX_BYTES:
+                break
+            kept.append(line)
+        text = "\n".join(reversed(kept))
+    return ("\n\nWhat you durably remember (persists across every conversation, "
+            "channel, and restart — treat as true unless the user corrects "
+            "it):\n" + text)
+
+
+def remember_fact(fact):
+    """Append a dated fact to MEMORY.md (the explicit-intent write path).
+    Returns a short spoken-friendly confirmation."""
+    fact = (fact or "").strip()
+    if not fact:
+        return "There was nothing to remember."
+    line = f"- ({time.strftime('%Y-%m-%d')}) {fact}"
+    with _memory_lock:
+        try:
+            os.makedirs(os.path.dirname(MEMORY_FILE), exist_ok=True)
+            new = not os.path.exists(MEMORY_FILE)
+            with open(MEMORY_FILE, "a", encoding="utf-8") as f:
+                if new:
+                    f.write("# WES memory — durable facts, one per line. Managed "
+                            "by the remember/forget tools; safe to hand-edit.\n\n")
+                f.write(line + "\n")
+        except OSError as e:  # noqa: BLE001
+            return f"I couldn't save that: {e}"
+    return f"Got it — I'll remember that {fact}"
+
+
+def forget_fact(match):
+    """Drop remembered fact lines containing `match` (case-insensitive)."""
+    match = (match or "").strip().lower()
+    if not match:
+        return "What would you like me to forget?"
+    with _memory_lock:
+        text = _read_text(MEMORY_FILE)
+        if not text:
+            return "I don't have anything remembered yet."
+        kept, removed = [], 0
+        for line in text.splitlines():
+            if line.startswith("- ") and match in line.lower():
+                removed += 1
+            else:
+                kept.append(line)
+        if not removed:
+            return f"I don't have anything remembered about that."
+        try:
+            with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+                f.write("\n".join(kept).rstrip() + "\n")
+        except OSError as e:  # noqa: BLE001
+            return f"I couldn't update my memory: {e}"
+    return f"Okay, I've forgotten that."
 
 
 def system_prompt(channel="voice"):
-    """The system prompt for a turn: base + channel framing + live scene."""
-    note = "" if channel == "voice" else TEXT_CHANNEL_NOTE
-    return SYSTEM_PROMPT + note + _scene_context()
+    """The system prompt for a turn: channel-agnostic persona (SOUL.md) + the
+    channel's presentation note (spoken vs typed) + durable memory (MEMORY.md,
+    unified across channels) + live scene."""
+    note = VOICE_CHANNEL_NOTE if channel == "voice" else TEXT_CHANNEL_NOTE
+    return soul_prompt() + note + memory_block() + _scene_context()
 
 
 # Framing for a proactive notification (an alert, later a scheduled action):
@@ -206,6 +314,43 @@ TOOLS = [
             "whether they're present). For a quick object list only, use 'look'."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "remember",
+        "description": (
+            "Save a durable fact about the user, the household, people, or an "
+            "ongoing situation so you recall it in FUTURE conversations — it "
+            "persists across every channel and restart, beyond the current "
+            "chat. Use when the user asks you to remember something, states a "
+            "lasting preference or fact ('my dog is Biscuit', 'I work from home "
+            "on Fridays'), or shares something clearly worth keeping. Save one "
+            "clear, self-contained fact per call."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fact": {"type": "string",
+                         "description": "the fact to remember, phrased to stand "
+                                        "alone later"},
+            },
+            "required": ["fact"],
+        },
+    },
+    {
+        "name": "forget",
+        "description": (
+            "Remove something you previously remembered. Use when the user asks "
+            "you to forget a fact or says it is no longer true. Give a few words "
+            "identifying which memory to drop."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "match": {"type": "string",
+                          "description": "words identifying the memory to remove"},
+            },
+            "required": ["match"],
+        },
     },
     {
         "name": "lookup_hosts",
@@ -470,6 +615,10 @@ def run_tool(name, tool_input):
             return json.dumps(_pi_get("/look"))
         if name == "lookup_hosts":
             return wes_hosts.summary()
+        if name == "remember":
+            return remember_fact(tool_input.get("fact", ""))
+        if name == "forget":
+            return forget_fact(tool_input.get("match", ""))
         if name == "read_pi_log":
             data = _pi_get(
                 "/logs",
@@ -976,6 +1125,7 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False):
     model = ESCALATE_MODEL if deep else None
     max_tokens = 2048 if deep else 512
     yielded = False
+    last_tool_result = None
     for _ in range(MAX_TOOL_ROUNDS):
         content_parts, tool_calls = [], []
         with _ollama_chat(messages, tools=tools, stream=True,
@@ -996,7 +1146,13 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False):
                                  chunk.get("eval_count"))
                     break
         if not tool_calls:
-            return  # final answer delivered
+            # Final answer delivered — unless the model ran a tool and then went
+            # silent (small models sometimes emit no summary after a tool). Never
+            # leave a turn empty: surface the tool's own result (e.g. remember's
+            # "Got it — I'll remember that ...") rather than dead air.
+            if not yielded and last_tool_result:
+                yield last_tool_result
+            return
         messages.append({
             "role": "assistant",
             "content": "".join(content_parts),
@@ -1030,10 +1186,11 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False):
                 continue
             print(f"[tool] {name}({args})", flush=True)
             _note_tool(name)
+            last_tool_result = run_tool(name, args)
             messages.append({
                 "role": "tool",
                 "tool_name": name,
-                "content": run_tool(name, args),
+                "content": last_tool_result,
             })
 
 

@@ -1,13 +1,24 @@
 ---
 id: 024
 title: SOUL.md — externalize Jarvis's identity/persona (OpenClaw pattern)
-status: open
+status: done
 priority: med
 created: 2026-07-06
-closed:
+closed: 2026-07-06
 tags: [memory, identity, persona, prompt, safety]
 related: [docs/memory-design.md, "#012"]
 ---
+
+## Outcome (done 2026-07-06)
+`soul_prompt()` reads `~/wes-pc/memory/SOUL.md` (personal data, not the repo),
+falling back to the in-code `SYSTEM_PROMPT` if it's missing/emptied — so
+behavior can never be stripped by tampering, and hard safety rules (which never
+lived in the prompt anyway) are unaffected. The persona was made
+**channel-agnostic**: the old voice-specific "read aloud / speech recognition"
+lines moved into `VOICE_CHANNEL_NOTE` (parallel to `TEXT_CHANNEL_NOTE`), so
+SOUL.md is the same Jarvis on voice and Discord while presentation adapts per
+channel. Editing SOUL.md changes his voice with no code change. Eval 13/14 (only
+the math-simple flake), so behavior held. Shipped with #012 Phase 1.
 
 ## Goal
 Move Jarvis's persona/voice/values out of the hardcoded `SYSTEM_PROMPT` into a

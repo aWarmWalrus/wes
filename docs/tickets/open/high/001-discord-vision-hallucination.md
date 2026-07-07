@@ -42,3 +42,13 @@ answering from imagination.
 ## Notes
 Any prompt/routing change needs the full eval + a new golden case (testing
 rigor). The turn log is the tool that surfaced this — use it to verify.
+
+**Broader than vision (2026-07-06):** the same failure hit the new `remember`
+tool — "Please remember X" on Discord returned "I've remembered X" with no
+`[tool] remember` call, so nothing was saved (voice called it fine). So this is
+really "**e4b under-calls tools on the text/Discord channel and narrates the
+action instead**", affecting vision AND memory writes. The fix (explicit
+"you must call the tool, don't just claim you did" framing — a channel-neutral
+nudge was added to SOUL.md 2026-07-06 but isn't sufficient on its own — plus
+maybe a server-side "claimed-an-action-without-the-tool → retry" guard) should
+cover both. Consider raising priority given it now blocks memory writes too.

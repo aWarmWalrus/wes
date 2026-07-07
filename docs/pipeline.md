@@ -85,9 +85,14 @@ The server keeps a **sliding-window conversation context** (the LiveKit
 ChatContext pattern), keyed by channel: `"voice"` is the house conversation —
 one house, one mic — and remote text frontends get their own channel (the
 Discord bot uses `"discord"`), so a chat from away never clobbers the in-house
-context. Non-voice channels also get `TEXT_CHANNEL_NOTE` appended to the system
-prompt (`system_prompt(channel)`), overriding the voice framing — without it the
-model tells Discord users it hears them "by voice command". Each channel replays
+context. The system prompt (`system_prompt(channel)`) is a **channel-agnostic
+persona** (`soul_prompt()`, from `SOUL.md` or the in-code `SYSTEM_PROMPT`
+fallback) plus exactly one presentation note — `VOICE_CHANNEL_NOTE` (spoken:
+short, no symbols, numbers said aloud) or `TEXT_CHANNEL_NOTE` (typed: digits as
+digits, never mention voice) — plus the unified durable **memory block**
+(`MEMORY.md` — semantic facts written by the `remember`/`forget` tools, injected
+on every channel so a fact learned on Discord is known on voice;
+`docs/memory-design.md`) and the live scene. Each channel replays
 its recent exchanges to whichever backend answers the next turn. **Depth and
 idle TTL are per-channel** (`_conv_policy`): voice keeps `WES_CONV_TURNS` (6,
 short spoken context where latency matters), while **Discord keeps

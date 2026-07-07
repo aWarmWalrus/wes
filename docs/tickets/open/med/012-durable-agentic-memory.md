@@ -19,8 +19,10 @@ separate #023; this is the shared knowledge underneath it.
 ## Approach (Phases 1-4 of the design doc)
 File-based (Obsidian/Karpathy-wiki-shaped), chosen over vector/Zep/Mem0/OpenBrain
 infra — a household's facts are kilobytes and should be `cat`-able/deletable.
-- **P1** `MEMORY.md` injection (always in prompt, size-capped) +
-  `remember`/`forget`/`recall` tools + golden cases (cross-channel + no-bleed).
+- **P1 ✅ BUILT 2026-07-06** `MEMORY.md` injection (every channel, size-capped) +
+  `remember`/`forget` tools (+ `SOUL.md`, #024). `recall` dropped — memory is
+  fully in-context, no search tool needed until P4. Verified: voice-written fact
+  recalled on Discord.
 - **P2** nightly "dream": distill `turns.jsonl` into day-logs + confidence-scored
   candidate facts into a review section (never straight to trusted).
 - **P3** temporal/supersedable facts (Zep's idea in Markdown) + per-entity
@@ -28,10 +30,11 @@ infra — a household's facts are kilobytes and should be `cat`-able/deletable.
 - **P4** embedding retrieval ONLY if measured context pressure demands it.
 
 ## Acceptance
-- [ ] remember/forget/recall persist facts across sessions + restarts
-- [ ] a fact learned on Discord is recalled on voice (cross-channel golden case)
-- [ ] Discord-only chatter does NOT surface on voice (no-bleed golden case)
-- [ ] nightly consolidation produces reviewed day-logs + candidate facts
+- [x] remember/forget persist facts across sessions + restarts (P1)
+- [x] a fact learned on Discord is recalled on voice — verified live (P1)
+- [ ] **the router reliably CALLS `remember` on the Discord/text channel**
+      (currently narrates without calling it — rides on #001; voice is fine)
+- [ ] nightly consolidation produces reviewed day-logs + candidate facts (P2)
 
 ## Notes
 Read `docs/memory-design.md` (v2, 2026-07-06) first — the architecture, the

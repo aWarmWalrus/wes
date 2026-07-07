@@ -177,11 +177,21 @@ the layers gate separately.
   and reload on startup (`load_conversations`), so restarts no longer forget.
   No-bleed holds by construction (per-channel keys). Verified live: recalled a
   fact across a server restart on Discord while voice stayed ignorant.
-- **Phase 1 — unified semantic memory.** `MEMORY.md` injection +
-  `remember`/`forget`/`recall` tools + golden cases (incl. cross-channel +
-  no-bleed). → ticket #012. Good moment to also externalize `SOUL.md` (identity
-  layer) since it's the same injection plumbing — but keep hard safety rules in
-  code. → ticket #024.
+- **Phase 1 — unified semantic memory. ✅ BUILT 2026-07-06 (#012 P1, #024).**
+  `MEMORY.md` + `SOUL.md` injected into every channel's `system_prompt`
+  (`memory_block`, `soul_prompt`); `remember`/`forget` tools write MEMORY.md.
+  Persona externalized to `SOUL.md` (channel-agnostic; the spoken/typed
+  constraints moved to `VOICE_CHANNEL_NOTE` / `TEXT_CHANNEL_NOTE`); hard safety
+  stays in code, `soul_prompt` falls back to `SYSTEM_PROMPT` if SOUL.md is
+  empty. `recall` was dropped — memory is fully in-context, so the model reads
+  it directly (a search tool returns only in Phase 4). Verified live: a fact
+  written on **voice** was recalled on **Discord** from a fresh conversation
+  (unified read). Eval 13/14 (only the known math-simple flake #011). **Caveat:
+  the router doesn't reliably CALL `remember` on the Discord/text channel — it
+  narrates "I've remembered…" without the tool call (same root cause as #001);
+  voice calls it fine. Discord write-reliability rides on #001.** A guard now
+  surfaces a tool's result if the model goes silent after calling it (no more
+  empty turns).
 - **Phase 2 — episodic + nightly "dream".** Distill `turns.jsonl` into day-logs
   + confidence-scored candidate facts. → ticket #012.
 - **Phase 3 — temporal facts + per-entity `people/` notes** (Obsidian-style
