@@ -2,7 +2,7 @@
 
 The current WES work queue — **open tickets only** (closed ones live in
 `done/`, out of context). One line each; open the file for full context.
-Conventions + workflow: `README.md`. Next free id: **026** (open here;
+Conventions + workflow: `README.md`. Next free id: **027** (open here;
 001 + 014-024 shipped in `done/2026-07/`).
 
 ## High priority
@@ -15,6 +15,7 @@ Conventions + workflow: `README.md`. Next free id: **026** (open here;
 - [004](open/med/004-smart-home-controls.md) — Smart home tools: Hue-direct first, Home Assistant later (feasibility confirmed)
 - [005](open/med/005-scheduled-actions.md) — Scheduled actions: timers, reminders, recurring routines
 - [012](open/med/012-durable-agentic-memory.md) — Unified durable memory: Phase 1 (MEMORY.md + remember/forget) shipped; remaining = nightly consolidation, temporal facts, per-person notes
+- [026](open/med/026-adaptive-thinking-budget-router.md) — Adaptive thinking budget: router allocates effort per query + verify-and-escalate net (SotA-grounded; supersedes #001's "always 12b on Discord")
 
 ## Low priority / someday
 
