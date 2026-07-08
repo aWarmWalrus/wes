@@ -5,6 +5,25 @@ description: Run the WES test suites correctly (unit, e2e, perf, quality eval). 
 
 # Running the WES test suites
 
+**Prefer the `wes-dev.ps1` helper — it's allowlisted (one rule) so it runs
+without a permission prompt, unlike bespoke one-off commands.** It lives PC-side
+at `C:\Users\awarm\wes-pc\wes-dev.ps1`; invoke verbs like:
+
+```powershell
+& C:\Users\awarm\wes-pc\wes-dev.ps1 test          # unit suite (ignores test_faces.py)
+& C:\Users\awarm\wes-pc\wes-dev.ps1 eval          # golden eval, judge=local (add 'haiku' to override)
+& C:\Users\awarm\wes-pc\wes-dev.ps1 perf          # perf_check
+& C:\Users\awarm\wes-pc\wes-dev.ps1 say voice "what time is it"   # /respond_text, prints reply
+& C:\Users\awarm\wes-pc\wes-dev.ps1 reset         # clear all conversation windows
+```
+
+(Other verbs: `reload [server|discord|exporters]`, `health`, `turns [n]`,
+`usage`, `log [server|discord|exporters] [n]`, `gpu`.) **Do NOT wrap these in
+`$env:...;` prefixes or extra pipelines** — that breaks the prefix allowlist
+match and forces a prompt (`eval_turns.py` already defaults to `127.0.0.1:8080`,
+so no `WES_TEST_URL` is needed). The raw commands below are the equivalents the
+helper runs; use them only when you need flags the helper doesn't expose.
+
 All PC-side testing uses the Windows venv interpreter (never system python,
 never a Pi path):
 

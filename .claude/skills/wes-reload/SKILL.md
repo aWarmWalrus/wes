@@ -12,6 +12,16 @@ pull secrets from the user environment).
 
 ## Reload after a code change
 
+**Use the allowlisted helper (no permission prompt):**
+
+```powershell
+& C:\Users\awarm\wes-pc\wes-dev.ps1 reload            # WES Server (default) + waits for /health
+& C:\Users\awarm\wes-pc\wes-dev.ps1 reload discord    # WES Discord
+& C:\Users\awarm\wes-pc\wes-dev.ps1 reload exporters  # WES Exporters
+```
+
+The raw equivalent (only if you need it):
+
 ```powershell
 Stop-ScheduledTask -TaskName "WES Server"; Start-Sleep 2
 Start-ScheduledTask -TaskName "WES Server"
