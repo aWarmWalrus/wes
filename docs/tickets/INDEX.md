@@ -2,12 +2,13 @@
 
 The current WES work queue — **open tickets only** (closed ones live in
 `done/`, out of context). One line each; open the file for full context.
-Conventions + workflow: `README.md`. Next free id: **028** (open here;
+Conventions + workflow: `README.md`. Next free id: **029** (open here;
 001 + 014-024 shipped in `done/2026-07/`).
 
 ## High priority
 
 - [002](open/high/002-escalation-announced-not-executed.md) — Router promises to "look into it" but never calls `escalate_to_claude` (no deferred-action support)
+- [028](open/high/028-planner-multistep-reasoning.md) — Planner/orchestrator for ambiguous ("when do the Nets next play") + multi-step ("who's playing… who has most pts/reb") queries; design-first, sibling to #026
 
 ## Medium priority
 
@@ -16,7 +17,7 @@ Conventions + workflow: `README.md`. Next free id: **028** (open here;
 - [005](open/med/005-scheduled-actions.md) — Scheduled actions: timers, reminders, recurring routines
 - [012](open/med/012-durable-agentic-memory.md) — Unified durable memory: Phase 1 (MEMORY.md + remember/forget) shipped; remaining = nightly consolidation, temporal facts, per-person notes
 - [026](open/med/026-adaptive-thinking-budget-router.md) — Adaptive thinking budget: router allocates effort per query + verify-and-escalate net (SotA-grounded; supersedes #001's "always 12b on Discord")
-- [027](open/med/027-nba-domain-internet-access.md) — NBA domain expertise: **P1 shipped** (ESPN free-API live scores + per-player points + dated results, both channels). Remaining: P1b r/GoNets, P2 nightly cache, P3 MCP/news
+- [027](open/med/027-nba-domain-internet-access.md) — NBA domain expertise: **P1 + P1b shipped** (ESPN live scores/player points/dated results + r/GoNets discussion via RSS with injection guard, both channels). Remaining: P2 nightly cache, P3 MCP/news
 
 ## Low priority / someday
 

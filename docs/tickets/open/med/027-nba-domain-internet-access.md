@@ -85,9 +85,9 @@ model's memory.
 - [x] "how many points has <player> scored so far" → live box score (P1)
 - [x] "what games were played on May 20th" → real results via tool (P1)
 - [x] curated tool surface — no router-quality regression in the eval (14/14, P1)
-- [ ] "when do the Warriors play next" → from local cache, instant (P2)
-- [ ] "what's r/nba saying about <topic>" → summarized real threads (P1b)
-- [ ] fetched web content cannot trigger memory writes/actions (injection test) (P1b)
+- [x] "what's r/GoNets saying" → summarized real threads via RSS (P1b)
+- [x] fetched web content guarded as untrusted (injection test) (P1b)
+- [ ] "when do the Warriors play next" → schedule lookup (needs #028 / P2 cache)
 - [ ] nightly cache refresh runs as a scheduled task (P2)
 
 ## P1 — SHIPPED 2026-07-07
@@ -110,10 +110,31 @@ model's memory.
   (no free prose), so the injection surface is minimal; the explicit untrusted-
   content guard lands with P1b (reddit/news free text). Documented in-module.
 
+## P1b — SHIPPED 2026-07-07
+- `nba_discussion` tool → `wes_nba.subreddit_discussion()` (default r/GoNets).
+  Reddit's JSON API 403s unauthenticated and OAuth needs an app; **RSS** serves
+  fine to a browser UA with no key — chose RSS. Atom parse (stdlib), recent post
+  titles + author + age.
+- **Injection defense (the P1b security gate):** two layers — (1) the tool
+  result is wrapped in an adjacent `[UNTRUSTED …]` guard stating it's quoted data
+  to summarize, never instructions/facts, and no tool may be called from it;
+  (2) `wes_server.WEB_CONTENT_RULE` appended to every channel's system prompt.
+  Test `test_injection_content_stays_wrapped_as_data` asserts a hostile post
+  title is surfaced only as quoted data under the guard.
+- Reddit rate-limits rapid RSS repeats (429) → 5-min text cache (`_text_cache`);
+  verified three rapid voice calls now all succeed.
+- Tests: +7 in `tests/test_unit_nba.py` (RSS parse/format/guard/injection/cache
+  + live-reachability canary). Verified live on voice + Discord — real r/GoNets
+  posts summarized, grounded, no injection followed.
+- Note: voice tool-calling on this is phrasing-sensitive (e4b sometimes offers
+  instead of calling) — same class as #001/#028, not an NBA bug. Discord (12b)
+  is reliable.
+
 ## Plan (refined 2026-07-07 — direct-first, free)
 - **P1 (DONE)**: ESPN direct-REST tools (curated/wrapped so the small
   router isn't overloaded) → live score, today's games, live player box score;
   Nets as default team. Works voice + Discord. No key, no cost.
+- **P1b (DONE)**: r/GoNets discussion via reddit RSS + injection guard.
 - **P1b**: r/GoNets discussion tool (pick the reliable Reddit path — free
   read-only app or no-auth MCP; raw *.json often 403s from servers).
 - **P2**: local nightly cache (Nets schedule/roster/standings) for instant

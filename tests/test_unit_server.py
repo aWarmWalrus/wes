@@ -649,6 +649,13 @@ class TestTtsClean:
     def test_symbols_translated(self):
         assert ws.tts_clean("A → B ✓") == "A to B"
 
+    def test_jr_sr_spoken_out(self):
+        # piper reads "Jr." as "J R dot" -> expand to the spoken word
+        assert ws.tts_clean("Mikel Brown Jr. had 20 points") == \
+            "Mikel Brown Junior had 20 points"
+        assert ws.tts_clean("Tim Hardaway Jr and Gary Sr") == \
+            "Tim Hardaway Junior and Gary Senior"
+
     def test_ack_survives_cleaning(self):
         # The escalation ack goes through the same path; it must not vanish.
         assert ws.tts_clean(ws.ESCALATE_ACK) == ws.ESCALATE_ACK.strip()
