@@ -226,6 +226,15 @@ feeds the result back, and continues. Tools are **read-only**.
 - `read_pi_log` → Pi `/logs?service=&n=` (whitelisted: bluetooth, wireplumber,
   pipewire, kernel).
 - `look` / `describe_scene` — vision tools, see `docs/vision.md`.
+- `remember` / `forget` — durable memory (`MEMORY.md`), see the memory section.
+- `lookup_hosts` — network registry (`hosts.yaml`).
+- `nba_scores(team?, date?)` / `nba_player(player)` — live NBA data from ESPN's
+  free hidden API (no key), via `pc/wes_nba.py`. Scores/status (quarter + clock),
+  per-player points from the running box score, and dated results ("May 20th",
+  "yesterday"). No team + no date defaults to the Nets; a dated query with no
+  team lists all that day's games. External/untrusted data — surfaced as quoted
+  facts, and it's structured numbers only (no free prose), so low injection
+  surface; the reddit/news guard lands with ticket #027 P1b. See ticket #027.
 
 Adding a tool = a schema entry in `TOOLS` + a branch in `run_tool` (+ a unit test).
 Tool round-trips add ~2s (extra Claude call + Pi fetch).

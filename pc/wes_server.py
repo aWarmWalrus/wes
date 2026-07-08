@@ -43,6 +43,7 @@ import anthropic
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wes_hosts  # noqa: E402 — host registry (hosts.yaml); repo root on path
+import wes_nba  # noqa: E402 — NBA live data (ESPN free API); same dir on path
 
 from flask import Flask, Response, request, jsonify
 from prometheus_client import (Counter, generate_latest,
@@ -405,6 +406,49 @@ TOOLS = [
             "required": ["service"],
         },
     },
+    {
+        "name": "nba_scores",
+        "description": (
+            "Live NBA scores and game status — the score, quarter, and time "
+            "remaining — for today's games, straight from the league feed (not "
+            "your own memory, which is out of date). Defaults to the Brooklyn "
+            "Nets (the user's team) when no team is named. Use for 'what's the "
+            "score', 'are the Nets winning', 'did the Celtics win', 'who plays "
+            "tonight', and past results like 'what games were on May 20th' or "
+            "'did the Nets win yesterday'. Works for any NBA team."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team": {"type": "string",
+                         "description": "team name e.g. 'Celtics' or 'Brooklyn "
+                                        "Nets'; omit for the Nets"},
+                "date": {"type": "string",
+                         "description": "which day, if not today — natural forms "
+                                        "like 'May 20th', 'yesterday', 'last "
+                                        "Tuesday', or '2026-05-20'"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "nba_player",
+        "description": (
+            "How many points a specific NBA player has scored — plus their stat "
+            "line — in their current or most-recent game today, live while the "
+            "game is in progress. Use for 'how many points does <player> have', "
+            "'how many points has <player> scored so far', 'how is <player> "
+            "doing tonight'. Always call this rather than guessing a number."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "player": {"type": "string",
+                           "description": "player's name, e.g. 'Cam Thomas'"},
+            },
+            "required": ["player"],
+        },
+    },
 ]
 
 
@@ -651,6 +695,11 @@ def run_tool(name, tool_input):
                  "n": tool_input.get("lines", 20)},
             )
             return data.get("log", "(no log)")
+        if name == "nba_scores":
+            return wes_nba.live_scores(tool_input.get("team"),
+                                       tool_input.get("date"))
+        if name == "nba_player":
+            return wes_nba.player_points(tool_input.get("player", ""))
         return f"unknown tool: {name}"
     except Exception as e:  # noqa: BLE001
         return f"tool error: {e}"

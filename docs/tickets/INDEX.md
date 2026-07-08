@@ -16,7 +16,7 @@ Conventions + workflow: `README.md`. Next free id: **028** (open here;
 - [005](open/med/005-scheduled-actions.md) — Scheduled actions: timers, reminders, recurring routines
 - [012](open/med/012-durable-agentic-memory.md) — Unified durable memory: Phase 1 (MEMORY.md + remember/forget) shipped; remaining = nightly consolidation, temporal facts, per-person notes
 - [026](open/med/026-adaptive-thinking-budget-router.md) — Adaptive thinking budget: router allocates effort per query + verify-and-escalate net (SotA-grounded; supersedes #001's "always 12b on Discord")
-- [027](open/med/027-nba-domain-internet-access.md) — NBA domain expertise: MCP (balldontlie/reddit/fetch) + local nightly-refreshed cache + live scores/news/discussions
+- [027](open/med/027-nba-domain-internet-access.md) — NBA domain expertise: **P1 shipped** (ESPN free-API live scores + per-player points + dated results, both channels). Remaining: P1b r/GoNets, P2 nightly cache, P3 MCP/news
 
 ## Low priority / someday
 

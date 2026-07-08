@@ -81,18 +81,39 @@ model's memory.
 - scope of subreddits/news sources (tunable later; not gating).
 
 ## Acceptance
-- [ ] "what's the score of the Celtics game" → live/last data via tool, not guess
-- [ ] "when do the Warriors play next" → from local cache, instant
-- [ ] "what's r/nba saying about <topic>" → summarized real threads
-- [ ] fetched web content cannot trigger memory writes/actions (injection test)
-- [ ] curated tool surface — no router-quality regression in the eval
-- [ ] nightly cache refresh runs as a scheduled task
+- [x] "what's the score of the Celtics game" → live/last data via tool, not guess (P1)
+- [x] "how many points has <player> scored so far" → live box score (P1)
+- [x] "what games were played on May 20th" → real results via tool (P1)
+- [x] curated tool surface — no router-quality regression in the eval (14/14, P1)
+- [ ] "when do the Warriors play next" → from local cache, instant (P2)
+- [ ] "what's r/nba saying about <topic>" → summarized real threads (P1b)
+- [ ] fetched web content cannot trigger memory writes/actions (injection test) (P1b)
+- [ ] nightly cache refresh runs as a scheduled task (P2)
+
+## P1 — SHIPPED 2026-07-07
+- `pc/wes_nba.py`: ESPN free-API client (no key). `live_scores(team, date)` +
+  `player_points(player)`; short TTL cache; every entry point degrades to a
+  soft "couldn't reach the NBA data" string so a bad ESPN response never breaks
+  a turn. Pure formatters/matchers/date-parser split out for deterministic tests.
+- Two curated tools in `wes_server.TOOLS` (kept to 2 so the e4b router isn't
+  overloaded): `nba_scores` (team + natural `date` — today live, or "May 20th"/
+  "yesterday"/"last Tuesday"/ISO), `nba_player` (live per-player points + line).
+- Default-team logic: no team + no date → Nets ("what's the score"); dated + no
+  team → all games that day ("what games were played on May 20th").
+- Tests: `tests/test_unit_nba.py` (27 pure tests vs ESPN's real schema + a
+  `WES_NBA_LIVE=1` schema-drift canary). Full suite 193 passed. Golden eval
+  14/14 after adding the tools (no router regression).
+- Verified live on voice + Discord: live "what's the score", per-player points,
+  and dated "what games were played on May 20th" (Thunder def. Spurs 122-113)
+  all answer from the tool with no hallucinated numbers.
+- Injection note: P1 surfaces only structured ESPN numbers + team/player names
+  (no free prose), so the injection surface is minimal; the explicit untrusted-
+  content guard lands with P1b (reddit/news free text). Documented in-module.
 
 ## Plan (refined 2026-07-07 — direct-first, free)
-- **P1 (build now)**: ESPN direct-REST tools (curated/wrapped so the small
+- **P1 (DONE)**: ESPN direct-REST tools (curated/wrapped so the small
   router isn't overloaded) → live score, today's games, live player box score;
-  Nets as default team; injection guard on any fetched text. Works voice +
-  Discord. No key, no cost.
+  Nets as default team. Works voice + Discord. No key, no cost.
 - **P1b**: r/GoNets discussion tool (pick the reliable Reddit path — free
   read-only app or no-auth MCP; raw *.json often 403s from servers).
 - **P2**: local nightly cache (Nets schedule/roster/standings) for instant

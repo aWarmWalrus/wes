@@ -1,0 +1,340 @@
+"""NBA live data via ESPN's free, hidden site API (no key, no signup).
+
+Covers the two owner queries: live scores ("what's the score right now") and
+live per-player points ("how many points has <player> scored so far in the
+third quarter"). ESPN's scoreboard/summary endpoints return the running box
+score during a game, so PTS is the points-so-far.
+
+SECURITY: everything returned here is EXTERNAL, UNTRUSTED data. Callers hand
+these strings to the model as quoted facts to read out, never as instructions.
+The payloads we surface are structured numbers plus team/player names (not free
+prose), so the injection surface is minimal; the reddit/news free-text path
+(ticket #027 P1b) is where the explicit injection guard lands.
+
+Unofficial API: it can change or break without notice. Every entry point
+degrades to a plain "couldn't reach the NBA data" string rather than raising,
+so a bad ESPN response never breaks the voice/Discord turn.
+"""
+import json
+import re
+import time
+import urllib.parse
+import urllib.request
+from datetime import date as _date
+from datetime import timedelta
+
+_SITE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
+_WEB = "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba"
+_UA = {"User-Agent": "Mozilla/5.0 (WES NBA data)"}
+
+DEFAULT_TEAM = "Brooklyn Nets"
+
+# Short in-process TTL cache: "score right now" asked twice, and the player
+# scan reusing today's summaries, stay cheap and easy on ESPN's servers.
+_CACHE_TTL = 20.0
+_cache = {}  # url -> (expiry_ts, data)
+
+
+def _get(url):
+    now = time.time()
+    hit = _cache.get(url)
+    if hit and hit[0] > now:
+        return hit[1]
+    req = urllib.request.Request(url, headers=_UA)
+    with urllib.request.urlopen(req, timeout=12) as r:
+        data = json.loads(r.read().decode())
+    _cache[url] = (now + _CACHE_TTL, data)
+    return data
+
+
+# --- pure formatting helpers (unit-tested without the network) --------------
+
+_ORDINAL = {1: "1st quarter", 2: "2nd quarter", 3: "3rd quarter", 4: "4th quarter"}
+
+
+def ordinal_quarter(period):
+    """Spoken-friendly period name. >4 is overtime."""
+    if period in _ORDINAL:
+        return _ORDINAL[period]
+    if period and period > 4:
+        n = period - 4
+        return "overtime" if n == 1 else f"{n}x overtime"
+    return "the game"
+
+
+def _sides(competition):
+    """(away, home) competitor dicts, tolerant of missing homeAway."""
+    comps = competition.get("competitors", [])
+    away = next((c for c in comps if c.get("homeAway") == "away"), None)
+    home = next((c for c in comps if c.get("homeAway") == "home"), None)
+    if away is None or home is None:  # fall back to list order
+        away = comps[0] if comps else {}
+        home = comps[1] if len(comps) > 1 else {}
+    return away, home
+
+
+def _name(competitor):
+    return competitor.get("team", {}).get("displayName", "?")
+
+
+def format_game(event):
+    """One spoken-friendly line for a scoreboard event (pre / in / post)."""
+    comp = event.get("competitions", [{}])[0]
+    status = comp.get("status", {}) or event.get("status", {})
+    stype = status.get("type", {})
+    state = stype.get("state", "")
+    away, home = _sides(comp)
+    an, hn = _name(away), _name(home)
+    asc, hsc = away.get("score", "0"), home.get("score", "0")
+
+    if state == "pre":
+        when = stype.get("shortDetail") or stype.get("detail") or "later"
+        return f"{an} at {hn}, {when}."
+    if state == "post":
+        return f"Final: {an} {asc}, {hn} {hsc}."
+    # in progress
+    q = ordinal_quarter(status.get("period"))
+    clock = status.get("displayClock", "")
+    tail = f"{q}, {clock} to go" if clock else q
+    return f"{an} {asc}, {hn} {hsc} — {tail}."
+
+
+def team_matches(query, competitor):
+    """Loose match of a user's team words against a competitor's team names."""
+    q = (query or "").strip().lower()
+    if not q:
+        return False
+    team = competitor.get("team", {})
+    haystack = " ".join(str(team.get(k, "")) for k in (
+        "displayName", "shortDisplayName", "name", "location", "abbreviation",
+        "nickname")).lower()
+    return any(tok in haystack for tok in q.split())
+
+
+def _norm(s):
+    return "".join(ch for ch in (s or "").lower() if ch.isalnum() or ch == " ").strip()
+
+
+def player_matches(query, athlete_name):
+    """Match 'cam thomas' / 'thomas' against an athlete displayName."""
+    q, name = _norm(query), _norm(athlete_name)
+    if not q or not name:
+        return False
+    if q in name:
+        return True
+    # last-name-only queries: match the athlete's final name token
+    return q == name.split()[-1] if name.split() else False
+
+
+# --- date parsing (for historical "games on May 20th" queries) --------------
+
+_MONTHS = {m: i for i, m in enumerate(
+    ["january", "february", "march", "april", "may", "june", "july",
+     "august", "september", "october", "november", "december"], start=1)}
+_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday",
+             "saturday", "sunday"]
+
+
+def _clean_ordinal(s):
+    return re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", s)
+
+
+def parse_date(text, today=None):
+    """Best-effort natural date -> 'YYYYMMDD' for ESPN, else None.
+
+    Handles: today/tonight/yesterday/tomorrow; weekday names (optionally
+    last/this/next); 'May 20', 'May 20th', '20 May'; M/D, M/D/Y, YYYY-MM-DD,
+    YYYYMMDD. Bare month/day with no year assumes the most recent such date
+    (so 'May 20' asked in July resolves to this year, not next)."""
+    if not text:
+        return None
+    today = today or _date.today()
+    t = _clean_ordinal(text.strip().lower())
+
+    if t in ("today", "tonight", "now", "this evening"):
+        return today.strftime("%Y%m%d")
+    if t == "yesterday":
+        return (today - timedelta(days=1)).strftime("%Y%m%d")
+    if t == "tomorrow":
+        return (today + timedelta(days=1)).strftime("%Y%m%d")
+
+    # weekday, optionally prefixed last/this/next -> nearest matching day
+    m = re.fullmatch(r"(last|this|next)?\s*(\w+)", t)
+    if m and m.group(2) in _WEEKDAYS:
+        target = _WEEKDAYS.index(m.group(2))
+        which = m.group(1) or "last"  # bare "Tuesday" = most recent past Tuesday
+        delta = (today.weekday() - target) % 7
+        if which == "next":
+            d = today + timedelta(days=(target - today.weekday()) % 7 or 7)
+        else:  # last / this -> the most recent occurrence (today if it matches)
+            d = today - timedelta(days=delta)
+        return d.strftime("%Y%m%d")
+
+    # YYYYMMDD / YYYY-MM-DD
+    m = re.fullmatch(r"(\d{4})-?(\d{2})-?(\d{2})", t)
+    if m:
+        return f"{m.group(1)}{m.group(2)}{m.group(3)}"
+
+    # "May 20" or "20 May"
+    for pat, gi in ((r"([a-z]+)\s+(\d{1,2})", (1, 2)),
+                    (r"(\d{1,2})\s+([a-z]+)", (2, 1))):
+        m = re.fullmatch(pat, t)
+        if m:
+            mon = _MONTHS.get(m.group(gi[0]))
+            day = int(m.group(gi[1]))
+            if mon and 1 <= day <= 31:
+                return _recent_ymd(today, mon, day)
+
+    # M/D or M/D/Y
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?", t)
+    if m:
+        mon, day = int(m.group(1)), int(m.group(2))
+        if m.group(3):
+            yr = int(m.group(3))
+            yr += 2000 if yr < 100 else 0
+            try:
+                return _date(yr, mon, day).strftime("%Y%m%d")
+            except ValueError:
+                return None
+        return _recent_ymd(today, mon, day)
+    return None
+
+
+def _recent_ymd(today, mon, day):
+    """A month/day with no year -> the most recent such date at or before today."""
+    for yr in (today.year, today.year - 1):
+        try:
+            d = _date(yr, mon, day)
+        except ValueError:
+            return None
+        if d <= today:
+            return d.strftime("%Y%m%d")
+    return _date(today.year - 1, mon, day).strftime("%Y%m%d")
+
+
+def _spoken_date(ymd):
+    d = _date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:8]))
+    return d.strftime("%B %d, %Y").replace(" 0", " ")
+
+
+# --- scoreboard (live scores) -----------------------------------------------
+
+def _events(date=None):
+    url = f"{_SITE}/scoreboard"
+    if date:
+        url += "?" + urllib.parse.urlencode({"dates": date})
+    return _get(url).get("events", []) or []
+
+
+def live_scores(team=None, date=None, _events_fn=None):
+    """Scores for today (live) or a given past/future date. When no team is
+    named: a live/today query defaults to the Nets ("what's the score"), but a
+    dated query lists all games that day ("what games were played on May 20th").
+    _events_fn injectable for tests."""
+    if not team and not date:
+        team = DEFAULT_TEAM  # "what's the score" -> the user's team
+
+    day_ymd = None
+    past = False
+    when = "today"
+    if date:
+        day_ymd = parse_date(date)
+        if not day_ymd:
+            return (f"I couldn't understand the date \"{date}\" — try something "
+                    f"like \"May 20th\" or \"yesterday\".")
+        when = f"on {_spoken_date(day_ymd)}"
+        past = day_ymd < _date.today().strftime("%Y%m%d")
+
+    were, have = ("were", "didn't have") if past else ("are", "don't have")
+    was_were = lambda n: (("was" if n == 1 else "were") if past
+                          else ("is" if n == 1 else "are"))
+    try:
+        events = (_events_fn or (lambda: _events(day_ymd)))()
+    except Exception as e:  # noqa: BLE001
+        return f"I couldn't reach the NBA scores just now ({e})."
+
+    if not events:
+        tail = when if date else "scheduled today"
+        return f"There {were} no NBA games {tail}."
+
+    matched = [e for e in events
+               if any(team_matches(team, c)
+                      for c in e.get("competitions", [{}])[0].get("competitors", []))]
+    if team and not matched:
+        others = len(events)
+        return (f"The {team} {have} a game {when}. "
+                f"There {was_were(others)} {others} other "
+                f"game{'' if others == 1 else 's'} on.")
+
+    games = matched or events
+    lines = [format_game(e) for e in games[:8]]
+    return " ".join(lines)
+
+
+# --- box score (per-player points) ------------------------------------------
+
+def _summary(event_id):
+    url = f"{_WEB}/summary?" + urllib.parse.urlencode({"event": event_id})
+    return _get(url)
+
+
+def _find_in_summary(player, summary):
+    """Return a spoken line for `player` if present in this game's box score."""
+    box = summary.get("boxscore", {})
+    for team in box.get("players", []):
+        stats_blocks = team.get("statistics", [])
+        if not stats_blocks:
+            continue
+        block = stats_blocks[0]
+        keys = block.get("keys", [])
+        pts_i = keys.index("points") if "points" in keys else 1
+        reb_i = keys.index("rebounds") if "rebounds" in keys else None
+        for a in block.get("athletes", []):
+            name = a.get("athlete", {}).get("displayName", "")
+            if not player_matches(player, name):
+                continue
+            row = a.get("stats", [])
+            if not row:  # listed but did not play
+                return f"{name} hasn't played in this game."
+            pts = row[pts_i] if pts_i < len(row) else "?"
+            reb = (row[reb_i] if reb_i is not None and reb_i < len(row) else None)
+            extra = f", {reb} rebounds" if reb not in (None, "0") else ""
+            return f"{name} has {pts} points{extra}"
+    return None
+
+
+def player_points(player, _events_fn=None, _summary_fn=None):
+    """How many points `player` has in their current/most-recent game today.
+    Scans today's games' box scores (in-progress first). Injectables for tests."""
+    if not player or not player.strip():
+        return "Which player did you mean?"
+    try:
+        events = (_events_fn or _events)()
+    except Exception as e:  # noqa: BLE001
+        return f"I couldn't reach the NBA data just now ({e})."
+    if not events:
+        return f"There are no NBA games today, so I can't check on {player}."
+
+    summ = _summary_fn or _summary
+
+    # in-progress games first, then finals; skip games that haven't tipped off
+    def rank(e):
+        state = (e.get("competitions", [{}])[0].get("status", {})
+                 .get("type", {}).get("state", ""))
+        return {"in": 0, "post": 1}.get(state, 2)
+
+    for e in sorted(events, key=rank):
+        state = (e.get("competitions", [{}])[0].get("status", {})
+                 .get("type", {}).get("state", ""))
+        if state == "pre":
+            break  # remaining are all not-yet-started
+        try:
+            found = _find_in_summary(player, summ(e["id"]))
+        except Exception:  # noqa: BLE001
+            continue
+        if found:
+            game = format_game(e)
+            # attach the game context so the answer is self-locating
+            return f"{found} — {game}"
+    return (f"I couldn't find {player} in any of today's games — "
+            f"they may not be playing today.")
