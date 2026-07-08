@@ -1,0 +1,15 @@
+# Tier 1 (Pi client) runtime deps — install into ~/wes/.venv on the Pi.
+# See docs/setup.md "Tier 1 (Pi) client".
+#
+#   ~/wes/.venv/bin/python -m pip install -r pi/requirements.txt
+#
+# NOTE: the Hailo/vision code (hailo_*.py, pi_state.py) runs under the Pi's
+# SYSTEM python3 and depends on the Hailo SDK (hailo_platform), cv2, and
+# mediapipe, which are provisioned system-wide (apt / Hailo installer), not via
+# pip here. This file covers only the wake-word/audio client venv.
+
+openwakeword
+pyaudio
+requests
+numpy
+pyyaml

@@ -47,7 +47,9 @@ import wes_hosts  # noqa: E402 — host registry (hosts.yaml); repo root on path
 from flask import Flask, Response, request, jsonify
 from prometheus_client import (Counter, generate_latest,
                                CONTENT_TYPE_LATEST)
-from faster_whisper import WhisperModel
+# faster_whisper (and its heavy ctranslate2/onnxruntime stack) is imported lazily
+# inside get_whisper() so the pure-logic unit suite can import this module without
+# it — keeps CI light and STT deps off the fast test path.
 
 # --- Config (override via environment) -------------------------------------
 
@@ -666,6 +668,7 @@ _anthropic = None
 def get_whisper():
     global _whisper
     if _whisper is None:
+        from faster_whisper import WhisperModel
         if WHISPER_DEVICE == "cuda":
             _whisper = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
             app.logger.info("Whisper on CUDA (float16)")

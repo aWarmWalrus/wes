@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  unit:
+    name: Fast unit suite
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      # The hardware/API-free suite: pure logic only. STT/TTS/vision paths and
+      # the live-server e2e/perf/eval scripts are excluded by design (they need
+      # models, a running server, or Pi hardware) — see tests/README.md.
+      - name: Run unit tests
+        run: |
+          python -m pytest -q \
+            tests/test_unit_server.py \
+            tests/test_unit_discord.py \
+            tests/test_unit_hosts.py \
+            tests/test_eval_harness.py

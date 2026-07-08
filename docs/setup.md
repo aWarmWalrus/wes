@@ -5,11 +5,13 @@
 - venv: `C:\Users\awarm\wes-pc\.venv` (Windows; `Z:\` is the Pi's Linux share).
 - voice model: `C:\Users\awarm\wes-pc\voices\en_GB-alan-medium.onnx` (British male,
   22050 Hz — matches the Pi player). `en_US-amy-medium` also present but unused.
-- deps: `flask anthropic faster-whisper piper-tts pychromecast pytest discord.py
-  prometheus-client pyyaml`
-  **plus two pins**:
+- deps: `pip install -r pc/requirements.txt` (`flask anthropic faster-whisper
+  piper-tts pychromecast discord.py prometheus-client pyyaml`)
+  **plus two pins** (both encoded in that file):
   - **`ctranslate2==4.4.0`** — 4.8.0 segfaults (`0xC0000005`) on model load on this PC.
   - **`onnxruntime==1.20.1`** — 1.27.0's DLL init fails (piper needs onnxruntime).
+- CI + local test-only installs use the lighter `requirements-dev.txt` (no STT/TTS
+  stack — the server imports those lazily); see `tests/README.md`.
 - STT runs on **CPU int8** by default (`WES_WHISPER_MODEL=tiny.en` in the launcher).
   `WES_WHISPER_DEVICE=cuda` opts into the 1660 once cuBLAS/cuDNN are installed
   (unsupported CUDA hard-aborts).
@@ -99,6 +101,9 @@ journalctl --user -u wes-client -n 50   # logs
 # manual run (service stopped) for debugging:
 ~/wes/.venv/bin/python ~/claude/wes/pi/wes_client.py
 ```
+- deps: `~/wes/.venv/bin/python -m pip install -r pi/requirements.txt`
+  (openwakeword, pyaudio, requests, numpy, pyyaml). The Hailo/vision code runs
+  under **system** `python3` against the apt/Hailo-installed stack (not pip).
 - Mic: `MIC_DEVICE_INDEX = 0` → PulseAudio default source (the Pi exposes `pulse`/
   `default`, not the C920 directly). Adjust if the wrong input is picked up.
 - The client also starts `pi_state.py`'s read-only endpoint on `:8090`.

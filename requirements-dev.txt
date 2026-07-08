@@ -1,0 +1,15 @@
+# Test / CI deps — the minimal set to import the PC modules and run the fast,
+# hardware/API-free unit suite (tests/test_unit_*.py, tests/test_eval_harness.py).
+#
+#   python -m pip install -r requirements-dev.txt
+#
+# Deliberately does NOT pull the heavy STT/TTS stack (faster-whisper, piper-tts,
+# ctranslate2, onnxruntime, pychromecast, discord.py): those are imported lazily
+# by the server/bot, so the pure-logic tests don't need them. This keeps CI fast
+# and portable. For a full runtime install use pc/requirements.txt.
+
+pytest
+flask
+anthropic
+prometheus-client
+pyyaml

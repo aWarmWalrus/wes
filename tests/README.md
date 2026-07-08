@@ -70,6 +70,16 @@ Covers the numpy/cv2 helpers: `match` (recognition), `_position`,
 `_clothing_color`, `_distance2bbox`, `_nms`, and gallery I/O. No Hailo/camera
 needed — the model inference paths are exercised by the ad-hoc `hailo_*` scripts.
 
+## CI (GitHub Actions)
+
+`.github/workflows/ci.yml` runs the **fast unit suite** (`test_unit_server.py`,
+`test_unit_discord.py`, `test_unit_hosts.py`, `test_eval_harness.py`) on every
+push and PR, across Python 3.11/3.12. It installs only `requirements-dev.txt`
+(pytest + the light server deps — flask/anthropic/prometheus-client/pyyaml); the
+STT/TTS stack is imported lazily by the server so CI never needs it. The e2e,
+perf, and eval tiers stay out of CI — they need a live server, models, or Pi
+hardware — so keep unit tests hardware/API-free to preserve this.
+
 ## Conventions
 
 - **After changing server logic** → run `test_unit_server.py`.
