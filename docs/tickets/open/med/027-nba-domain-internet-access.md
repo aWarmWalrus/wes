@@ -20,6 +20,25 @@ gemma's NBA knowledge is frozen at its training cutoff (wrong standings, misses
 trades). The domain-expert feel MUST come from live/cached data tools, not the
 model's memory.
 
+## Owner requirements (2026-07-07)
+- Must answer LIVE in-game queries: "what's the score right now", "how many
+  points has <player> scored so far in the third quarter". Both channels.
+- Team = **Brooklyn Nets**; start with **r/GoNets** for discussion.
+- Free first — no balldontlie key yet; don't pay until we confirm we must.
+
+## DECISION (research 2026-07-07): use ESPN's free API, not balldontlie
+- **balldontlie free tier is too limited** for this: teams/players/games only;
+  **player stats + standings require PAID** — so it can't do live per-player
+  points for free anyway.
+- **ESPN hidden API (free, NO key, no signup)** covers BOTH owner queries:
+  - scoreboard `site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard`
+    → live scores + status (quarter/clock), today or `?dates=YYYYMMDD`.
+  - summary `site.web.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={id}`
+    → live box score incl. per-player points.
+  Caveat: unofficial/undocumented — can break without notice; handle failures
+  gracefully, revisit paid balldontlie only if it gets flaky. Skip balldontlie
+  for now.
+
 ## Data sources (verified 2026-07-07)
 - **BALLDONTLIE** (balldontlie.io) — teams/players/games/box_scores/standings/
   injuries. Free tier covers schedule/standings/rosters/box scores; **real-time
@@ -69,7 +88,16 @@ model's memory.
 - [ ] curated tool surface — no router-quality regression in the eval
 - [ ] nightly cache refresh runs as a scheduled task
 
-## Notes
-Phased: (P1) local cache + nightly updater + a couple of direct NBA tools to
-prove value; (P2) MCP client layer generalizing it; (P3) reddit + news via MCP
-with the injection guard. Ordering TBD by the decisions above.
+## Plan (refined 2026-07-07 — direct-first, free)
+- **P1 (build now)**: ESPN direct-REST tools (curated/wrapped so the small
+  router isn't overloaded) → live score, today's games, live player box score;
+  Nets as default team; injection guard on any fetched text. Works voice +
+  Discord. No key, no cost.
+- **P1b**: r/GoNets discussion tool (pick the reliable Reddit path — free
+  read-only app or no-auth MCP; raw *.json often 403s from servers).
+- **P2**: local nightly cache (Nets schedule/roster/standings) for instant
+  offline reference; scheduled task in the nightly slot.
+- **P3**: generalize the fetch/reddit tools onto an MCP client layer (reusable
+  for future domains) + broader news (Yahoo RSS / Brave/Fetch MCP).
+Direct-first because ESPN is a trivial REST API — MCP wrapping it adds
+complexity for no gain; MCP earns its place at P3 for reddit/news/reuse.
