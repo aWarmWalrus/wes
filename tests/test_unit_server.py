@@ -325,7 +325,7 @@ class TestSttBias:
     def test_lexicon_names_present(self):
         p = ws.stt_bias_prompt()
         for word in ("Jarvis", "Hailo", "Hue", "ecobee", "Matcha",
-                     "Charlie", "Cindy", "Kaia", "Ellis"):
+                     "Charlie", "Cindy", "Kaia", "Ellis", "Brooklyn", "NBA"):
             assert word in p
 
     def test_recent_conversation_is_appended(self):

@@ -800,7 +800,8 @@ STT_LEXICON = os.environ.get(
     "Jarvis is a voice assistant running on a Raspberry Pi with a Hailo "
     "accelerator. It can control the Hue lights and the ecobee thermostat, "
     "knows the speakers Matcha, Good gray, Stevie, and the JBL, and knows "
-    "Charlie, Cindy, Kaia, and Ellis.",
+    "Charlie, Cindy, Kaia, and Ellis. The user follows the NBA and the "
+    "Brooklyn Nets.",
 )
 
 
