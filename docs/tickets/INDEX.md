@@ -2,7 +2,7 @@
 
 The current WES work queue — **open tickets only** (closed ones live in
 `done/`, out of context). One line each; open the file for full context.
-Conventions + workflow: `README.md`. Next free id: **027** (open here;
+Conventions + workflow: `README.md`. Next free id: **028** (open here;
 001 + 014-024 shipped in `done/2026-07/`).
 
 ## High priority
@@ -16,6 +16,7 @@ Conventions + workflow: `README.md`. Next free id: **027** (open here;
 - [005](open/med/005-scheduled-actions.md) — Scheduled actions: timers, reminders, recurring routines
 - [012](open/med/012-durable-agentic-memory.md) — Unified durable memory: Phase 1 (MEMORY.md + remember/forget) shipped; remaining = nightly consolidation, temporal facts, per-person notes
 - [026](open/med/026-adaptive-thinking-budget-router.md) — Adaptive thinking budget: router allocates effort per query + verify-and-escalate net (SotA-grounded; supersedes #001's "always 12b on Discord")
+- [027](open/med/027-nba-domain-internet-access.md) — NBA domain expertise: MCP (balldontlie/reddit/fetch) + local nightly-refreshed cache + live scores/news/discussions
 
 ## Low priority / someday
 
