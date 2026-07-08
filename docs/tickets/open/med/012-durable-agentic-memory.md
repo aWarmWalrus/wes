@@ -32,8 +32,8 @@ infra — a household's facts are kilobytes and should be `cat`-able/deletable.
 ## Acceptance
 - [x] remember/forget persist facts across sessions + restarts (P1)
 - [x] a fact learned on Discord is recalled on voice — verified live (P1)
-- [ ] **the router reliably CALLS `remember` on the Discord/text channel**
-      (currently narrates without calling it — rides on #001; voice is fine)
+- [x] the router reliably CALLS `remember` on Discord — fixed via #001 (text
+      channels route through the 12b, which calls tools reliably)
 - [ ] nightly consolidation produces reviewed day-logs + candidate facts (P2)
 
 ## Notes

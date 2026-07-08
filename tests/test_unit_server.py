@@ -1005,6 +1005,34 @@ class TestDurableMemory:
         names = [t["name"] for t in ws.TOOLS]
         assert "remember" in names and "forget" in names
 
+    def test_discord_routes_through_deep_tier(self, monkeypatch):
+        # #001 / higher-thinking: text channels run ESCALATE_MODEL + thinking as
+        # their router; voice stays on the fast model. Capture the Ollama call.
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        monkeypatch.setattr(ws, "DEEP_CHANNELS", {"discord"})
+        fake, calls = TestOllamaBackend._fake_urlopen([[
+            {"message": {"content": "ok"}, "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        ws._think_local("hi", channel="discord")
+        assert calls[0]["model"] == "gemma4:12b"      # deep model
+        assert calls[0]["think"] is True              # thinking on
+
+    def test_voice_stays_on_fast_router(self, monkeypatch):
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        monkeypatch.setattr(ws, "DEEP_CHANNELS", {"discord"})
+        fake, calls = TestOllamaBackend._fake_urlopen([[
+            {"message": {"content": "ok"}, "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        ws._think_local("hi", channel="voice")
+        assert calls[0]["model"] == ws.LOCAL_LLM_MODEL   # fast e4b router
+        assert calls[0]["model"] != "gemma4:12b"
+        assert calls[0]["think"] is False
+
+    def test_channel_deep_requires_escalate_model(self, monkeypatch):
+        monkeypatch.setattr(ws, "DEEP_CHANNELS", {"discord"})
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "")
+        assert ws._channel_deep("discord") is False   # no deep model -> fast
+
     def test_tool_result_surfaced_when_model_goes_silent(self, monkeypatch):
         # round 1: call remember; round 2: model emits nothing. The turn must
         # not be silent — the tool's confirmation becomes the reply.

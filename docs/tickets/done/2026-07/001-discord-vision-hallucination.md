@@ -1,13 +1,30 @@
 ---
 id: 001
 title: Discord router answers vision questions without calling describe_scene
-status: open
+status: done
 priority: high
 created: 2026-07-05
-closed:
-tags: [router, vision, discord, prompt]
-related: [docs/observability.md, "#003"]
+closed: 2026-07-07
+tags: [router, vision, discord, prompt, memory]
+related: [docs/observability.md, "#003", "#012"]
 ---
+
+## Outcome (done 2026-07-07)
+Root cause: e4b under-calls tools on the text/Discord channel and narrates the
+action instead (hit vision AND the new `remember` tool). Fixed two ways:
+- **Route text channels through the 12b + thinking** (`WES_DEEP_CHANNELS`,
+  default `discord`; `_channel_deep`) — the 12b reliably CALLS tools. This is
+  also the "higher thinking on Discord" the owner asked for. Voice stays fast.
+- **Hardened `TEXT_CHANNEL_NOTE`**: an explicit "your tools work here; you MUST
+  call the matching tool this turn; never claim you looked/remembered/saw
+  something unless you actually called the tool."
+Verified live: Discord "what do you see" now calls `describe_scene` and returns
+a real capture (Charlie in a grey hoodie…); "remember X" calls `remember` and
+writes MEMORY.md. Surfaced + fixed a VRAM landmine along the way (the 12b's 256K
+native context evicted e4b, cratering voice latency) — bounded via `WES_NUM_CTX`
+so both models coexist; voice back to ~1.2s, eval 13/14 (math flake only).
+Note: a golden case needs the eval's X-Tools header (phase 3) to assert tool
+calls on the text channel — verified live instead for now.
 
 ## Problem
 On the Discord (text) channel, "use the camera to describe what you see" gets an

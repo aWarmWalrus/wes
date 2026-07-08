@@ -59,10 +59,28 @@ never reads, so they're never spoken. Unset, escalations go to Claude Haiku
 (needs the API key), which also remains the automatic fallback on local
 *errors* either way. The tool keeps its prompt-tuned `escalate_to_claude`
 name — its semantics ("hand off to the much smarter model") don't change with
-the target. Note this is different from 12b-as-router (rejected above): the
-12b only pays its latency on the hard tier, where the ack masks it. Verified:
-"what time is it" stays local, the multi-step train word problem logs
-`escalating to gemma4:12b` and comes back correct (~11.5s of hidden thinking).
+the target. Note this is different from 12b-as-router for VOICE (rejected
+above): on voice the 12b only pays its latency on the hard tier, where the ack
+masks it. Verified: "what time is it" stays local, the multi-step train word
+problem logs `escalating to gemma4:12b` and comes back correct (~11.5s of
+hidden thinking).
+
+**Per-channel reasoning tier** (`WES_DEEP_CHANNELS`, default `discord`,
+2026-07-07): latency-tolerant TEXT channels run the **deep tier (12b + thinking)
+as their router on every turn**, not just on escalation — `_channel_deep()`.
+Discord is async, so trading ~1s replies for ~15-25s replies buys markedly
+better reasoning AND far more reliable tool-calling: e4b tended to *narrate*
+tool actions on text ("I've remembered that" / an invented scene) without
+actually calling `remember`/`describe_scene` (bug #001); the 12b calls them.
+Voice stays on the fast e4b router (spoken latency matters). Set
+`WES_DEEP_CHANNELS=""` to put every channel back on e4b.
+
+**VRAM / context** (`WES_NUM_CTX`, default 16384): every Ollama call bounds the
+context window. Without it Ollama reserves each model's *native* context (256K
+for the 12b), whose KV cache alone eats ~14GB and **evicts the e4b router** —
+which cratered voice latency (1s → 30-60s) once Discord started using the 12b
+routinely. Bounded to 16K, the e4b (3.4GB) and 12b (8.4GB) coexist (~15GB/16GB,
+tight — lower `WES_NUM_CTX` or `WES_CONV_TURNS_DISCORD` for gaming headroom).
 
 ## STT contextual biasing (added 2026-07-04)
 

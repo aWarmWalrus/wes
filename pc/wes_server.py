@@ -93,6 +93,24 @@ ESCALATE = os.environ.get("WES_ESCALATE", "1") == "1"
 # The tool the router sees keeps its prompt-tuned name/description either
 # way — its semantics ("hand off to the much smarter model") don't change.
 ESCALATE_MODEL = os.environ.get("WES_ESCALATE_MODEL", "")
+# Channels that run the DEEP tier (ESCALATE_MODEL + thinking) as their router on
+# every turn, not just on escalation. Latency-tolerant text channels (Discord)
+# can afford to "think harder" and call tools more reliably; voice stays on the
+# fast e4b router where time-to-first-audio matters. Empty = every channel fast.
+DEEP_CHANNELS = set(
+    c.strip() for c in os.environ.get("WES_DEEP_CHANNELS", "discord").split(",")
+    if c.strip())
+
+
+def _channel_deep(channel):
+    """True if this channel routes through the deep tier by default (needs a
+    local ESCALATE_MODEL configured)."""
+    return bool(ESCALATE_MODEL) and channel in DEEP_CHANNELS
+
+
+# Ollama context window per call. Bounds KV-cache VRAM so the e4b router and the
+# 12b deep tier coexist in 16GB (the 12b's native 256K context would evict e4b).
+NUM_CTX = int(os.environ.get("WES_NUM_CTX", "16384"))
 # Spoken by the SERVER (not the model) the moment an escalation fires, so the
 # ~2-3s Claude spin-up isn't dead air. Must end with a sentence terminator +
 # space so the TTS splitter flushes it immediately. Empty string disables.
@@ -132,7 +150,13 @@ TEXT_CHANNEL_NOTE = (
     "numbers, times, IP addresses, ports, filenames, and other identifiers as "
     "ordinary digits and text (e.g. '10.0.0.168:9835'), never spelled out "
     "phonetically. Keep replies short and conversational; simple formatting is "
-    "fine in text."
+    "fine in text. Your tools work here exactly as they do in person — you still "
+    "have live access to the house's camera, status, logs, and memory. When the "
+    "user asks what you can see, asks you to remember or forget something, or "
+    "asks for live status, you MUST actually call the matching tool THIS turn "
+    "and answer from its result. Never say you looked, remembered, checked, or "
+    "saw something unless you truly called the tool — you have no memory of the "
+    "current view or of facts you did not save."
 )
 
 
@@ -482,6 +506,7 @@ def _gemma_describe(jpeg, prompt=None):
         "images": [base64.b64encode(jpeg).decode()],
         "stream": False,
         "keep_alive": -1,  # keep the model resident so it never cold-loads
+        "options": {"num_ctx": NUM_CTX},  # bound KV cache (see _ollama_chat)
     }).encode()
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/generate", data=payload,
@@ -741,7 +766,12 @@ def _ollama_chat(messages, tools=None, stream=False, max_tokens=512, timeout=120
         "stream": stream,
         "think": think,
         "keep_alive": -1,
-        "options": {"num_predict": max_tokens},
+        # Bound the context window. Without this Ollama reserves each model's
+        # FULL native context (256K for the 12b), whose KV cache eats ~14GB of
+        # VRAM and evicts the e4b router — cratering voice latency once Discord
+        # started routing through the 12b routinely. Our turns (system prompt +
+        # memory + a 40-turn window + thinking) sit well under this.
+        "options": {"num_predict": max_tokens, "num_ctx": NUM_CTX},
     }
     if tools:
         body["tools"] = tools
@@ -1088,9 +1118,12 @@ def _think_local(transcript, channel="voice"):
     """One-shot local reply — same tool loop as streaming, joined. Without tools
     gemma4 hallucinates tool output (fake times, literal '{tool_output}').
     Runs buffered: no text reaches the user until the reply is complete, so a
-    late escalation can still cleanly replace everything said before it."""
+    late escalation can still cleanly replace everything said before it.
+    Deep-tier channels (Discord) run the 12b+thinking as their router."""
+    deep = _channel_deep(channel)
     parts = []
-    for delta in _stream_local(transcript, channel=channel, buffered=True):
+    for delta in _stream_local(transcript, channel=channel, buffered=True,
+                               deep=deep):
         if delta is RESET:
             parts.clear()
         else:
@@ -1102,12 +1135,14 @@ def _stream_escalation(transcript, channel="voice"):
     """Route an escalated (hard) query to the configured deep backend:
     the local ESCALATE_MODEL with thinking, or Claude."""
     if ESCALATE_MODEL:
-        yield from _stream_local(transcript, channel=channel, deep=True)
+        yield from _stream_local(transcript, channel=channel, deep=True,
+                                 source="escalate")
     else:
         yield from _stream_claude(transcript, channel=channel)
 
 
-def _stream_local(transcript, channel="voice", deep=False, buffered=False):
+def _stream_local(transcript, channel="voice", deep=False, buffered=False,
+                  source="router"):
     """Stream a local reply with the same tool loop the Claude path runs.
     Yields text deltas; runs requested tools between rounds. deep=True is the
     escalation tier: ESCALATE_MODEL with thinking enabled (thinking streams in
@@ -1140,8 +1175,7 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False):
                 tool_calls.extend(msg.get("tool_calls") or [])
                 if chunk.get("done"):
                     # Ollama reports token usage on the final chunk.
-                    record_usage(model or LOCAL_LLM_MODEL,
-                                 "escalate" if deep else "router", channel,
+                    record_usage(model or LOCAL_LLM_MODEL, source, channel,
                                  chunk.get("prompt_eval_count"),
                                  chunk.get("eval_count"))
                     break
@@ -1835,6 +1869,7 @@ def warmup():
         try:
             payload = json.dumps({
                 "model": model, "prompt": "hi", "stream": False, "keep_alive": -1,
+                "options": {"num_ctx": NUM_CTX},  # match the runtime context size
             }).encode()
             req = urllib.request.Request(
                 f"{OLLAMA_URL}/api/generate", data=payload,
