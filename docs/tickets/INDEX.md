@@ -7,7 +7,7 @@ Conventions + workflow: `README.md`. Next free id: **030** (open here;
 
 ## High priority
 
-- [029](open/high/029-fantasy-gm-autopilot.md) — **Fantasy GM epic**: Jarvis autonomously manages Yahoo NBA teams (read → value → optimize → gated execute), per-team autonomy. Official Yahoo API abandoned (approval + no-caching ToS) → **Playwright browser automation**. **P0 DONE (2026-07-20)** — `fantasy_my_team` live (12th tool), real roster+scoring answered end-to-end, `teams.yaml` configured, eval-gated. **Next: P1 valuation** (`fantasy_player_value`). Roadmap in `docs/fantasy-gm-design.md`
+- [029](open/high/029-fantasy-gm-autopilot.md) — **Fantasy GM epic**: Jarvis autonomously manages Yahoo NBA teams (read → value → optimize → gated execute), per-team autonomy. Official Yahoo API abandoned (approval + no-caching ToS) → **Playwright browser automation**. **P0+P1 DONE (2026-07-20)** — `fantasy_my_team` (roster+scoring) and `fantasy_player_value` (real ESPN stat line vs the league's roto cats, head-to-head compare) both live + eval-gated; new `pc/wes_fantasy.py` engine. **Next: P2 daily lineup optimizer** (needs in-season eligible positions). Roadmap in `docs/fantasy-gm-design.md`
 - [028](open/high/028-planner-multistep-reasoning.md) — Planner/orchestrator for ambiguous ("when do the Nets next play") + multi-step ("who's playing… who has most pts/reb") queries; design-first, sibling to #026. **Not on #029's critical path** (design §8.1)
 
 ## Medium priority

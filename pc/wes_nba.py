@@ -349,6 +349,146 @@ def player_points(player, _events_fn=None, _summary_fn=None):
             f"they may not be playing today.")
 
 
+# --- player season stats (fantasy valuation, #029 P1) -----------------------
+# ESPN's free athlete-stats endpoint returns per-season splits: `averages`
+# (per-game PTS/REB/AST/STL/BLK/TO + shooting), `totals`, and `miscellaneous`
+# (season counting totals incl. DD2/TD3/EJECT). Offseason-safe: it returns the
+# last completed season. Name -> athlete id via the site search (filtered to NBA
+# player links so an NFL/college namesake can't slip in).
+_SEARCH = "https://site.web.api.espn.com/apis/search/v2"
+_ATHLETE_STATS = ("https://site.web.api.espn.com/apis/common/v3/sports/"
+                  "basketball/nba/athletes/{id}/stats")
+_SEASON_RE = re.compile(r"^\d{4}-\d{2}$")
+
+# Fantasy category abbrev (as Yahoo scores them) -> (ESPN category, ESPN label).
+# The 3 counting cats are SEASON TOTALS; the rest are PER-GAME averages.
+_CAT_SOURCES = {
+    "PTS": ("averages", "PTS"), "REB": ("averages", "REB"),
+    "AST": ("averages", "AST"), "ST": ("averages", "STL"),
+    "STL": ("averages", "STL"), "BLK": ("averages", "BLK"),
+    "TO": ("averages", "TO"), "TOV": ("averages", "TO"),
+    "FG%": ("averages", "FG%"), "FT%": ("averages", "FT%"),
+    "3P%": ("averages", "3P%"),
+    "DD": ("miscellaneous", "DD2"), "TD": ("miscellaneous", "TD3"),
+    "EJCT": ("miscellaneous", "EJECT"),
+}
+_COUNTING_CATS = {"DD", "TD", "EJCT"}  # season totals, not per-game
+
+
+def athlete_id(name, _get_fn=None):
+    """Resolve an NBA player name -> ESPN athlete id via site search. Filters to
+    /nba/player/ links (drops NFL/college namesakes). None on miss/failure."""
+    get = _get_fn or _get
+    try:
+        data = get(f"{_SEARCH}?" + urllib.parse.urlencode(
+            {"query": name, "limit": 8, "region": "us", "lang": "en"}))
+    except Exception:  # noqa: BLE001
+        return None
+    for grp in (data.get("results") or []) if isinstance(data, dict) else []:
+        for c in grp.get("contents", []) if isinstance(grp, dict) else []:
+            link = c.get("link") or {}
+            web = link.get("web") if isinstance(link, dict) else (link or "")
+            m = re.search(r"/nba/player/_/id/(\d+)", web or "")
+            if m:
+                return m.group(1)
+    return None
+
+
+def _category(data, name):
+    for c in data.get("categories", []):
+        if c.get("name") == name:
+            return c.get("labels", []), c.get("statistics", [])
+    return [], []
+
+
+def _season_of(row):
+    s = row.get("season")
+    return (s.get("displayName", "") if isinstance(s, dict)
+            else row.get("displayName", "")) or ""
+
+
+def _latest_season(rows):
+    seasons = [s for s in (_season_of(r) for r in rows) if _SEASON_RE.match(s)]
+    return max(seasons) if seasons else None  # "YYYY-YY" sorts chronologically
+
+
+def _row_for(labels, rows, season):
+    """The best row for `season` as {label: value}. Traded players have several
+    rows for one season; pick the max-GP one (the combined total) when GP is a
+    column, else the last matching row (ESPN lists the combined total last)."""
+    matching = [r for r in rows if _season_of(r) == season]
+    if not matching:
+        return {}
+    if "GP" in labels:
+        gp_i = labels.index("GP")
+
+        def _gp(r):
+            try:
+                return float((r.get("stats") or [])[gp_i])
+            except (ValueError, IndexError):
+                return 0.0
+        matching.sort(key=_gp)
+    chosen = matching[-1]
+    return dict(zip(labels, chosen.get("stats", [])))
+
+
+def _num(s):
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_season_stats(data, name=""):
+    """ESPN athlete-stats JSON -> normalized dict, or None if unparseable.
+      {name, season, gp, min, cats:{PTS:33.5, ..., DD:34}, counting:{...}}
+    `cats` holds whatever mapped cats were present; DD/TD/EJCT are season totals
+    (see `counting`), the rest per-game. Pure/unit-tested (no network)."""
+    avg_labels, avg_rows = _category(data, "averages")
+    season = _latest_season(avg_rows)
+    if not season:
+        return None
+    rows_by_cat = {
+        "averages": (avg_labels, _row_for(avg_labels, avg_rows, season)),
+        "miscellaneous": (lambda lr: (lr[0], _row_for(lr[0], lr[1], season)))(
+            _category(data, "miscellaneous")),
+    }
+    cats = {}
+    for cat, (src, label) in _CAT_SOURCES.items():
+        _labels, row = rows_by_cat.get(src, ([], {}))
+        val = _num(row.get(label))
+        if val is not None:
+            cats[cat] = int(val) if cat in _COUNTING_CATS else val
+    avg = rows_by_cat["averages"][1]
+    return {
+        "name": name,
+        "season": season,
+        "gp": int(_num(avg.get("GP")) or 0),
+        "min": _num(avg.get("MIN")),
+        "cats": cats,
+        "counting": set(_COUNTING_CATS),
+    }
+
+
+def player_season_stats(name, _get_fn=None):
+    """A player's latest-season fantasy stat line as a normalized dict (see
+    parse_season_stats), or a degradation STRING on any failure — never raises.
+    Offseason returns the last completed season."""
+    if not name or not name.strip():
+        return "Which player did you mean?"
+    aid = athlete_id(name, _get_fn=_get_fn)
+    if not aid:
+        return f"I couldn't find an NBA player called {name}."
+    try:
+        data = (_get_fn or _get)(_ATHLETE_STATS.format(id=aid))
+    except Exception as e:  # noqa: BLE001
+        return f"I couldn't reach the NBA stats just now ({e})."
+    parsed = parse_season_stats(data, name=name)
+    if not parsed:
+        return f"I couldn't find recent stats for {name}."
+    return parsed
+
+
 # --- subreddit discussion (r/GoNets) — UNTRUSTED external free text ----------
 #
 # This is the one NBA surface that returns user-written prose (post titles),

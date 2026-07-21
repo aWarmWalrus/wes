@@ -228,3 +228,19 @@
     temperature and/or sky conditions) or says it couldn't reach live data right
     now. Mark it INCORRECT only if it refuses on the grounds that it has no
     internet access or can't know current conditions — it CAN look this up.
+
+# Fantasy valuation (#029 P1): the reply must come from fantasy_player_value (a
+# real stat line), not invented numbers. Uses the FREE ESPN stats feed (no paid
+# API), so it runs nightly. Loose reply_regex (stat values vary); judge carries.
+- id: fantasy-value
+  say: "How good is Cam Thomas for my fantasy team this season"
+  expect:
+    reply_regex: 'point|rebound|assist|average|stat|per game|season|worth|start|couldn.?t|find'
+    max_total_ms: 50000
+    max_audio_s: 30
+  judge: >-
+    The user asked how good an NBA player is for fantasy. The assistant has a
+    fantasy_player_value tool returning the player's real stat line, so a good
+    reply cites plausible per-game stats (points/rebounds/assists) or gracefully
+    says it couldn't find them. Mark INCORRECT only if it invents a stat line
+    without looking it up, or refuses claiming it cannot know player stats.

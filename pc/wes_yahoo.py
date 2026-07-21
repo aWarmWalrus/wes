@@ -385,6 +385,17 @@ def league_scoring(league_key):
     return format_scoring(result)
 
 
+def league_categories(league_key):
+    """The league's raw scoring-category list (e.g. ['PTS','REB',...]) for the
+    valuation engine, or [] on any failure. Unlike league_scoring (a formatted
+    string for the model), this returns the structured list."""
+    result = _scrape(f"{FANTASY_HOME}/nba/{_league_of(league_key)}/settings",
+                     _extract_scoring)
+    if not isinstance(result, dict):
+        return []
+    return result.get("categories") or []
+
+
 # --- team registry (identities + policy; NO secrets) ------------------------
 # teams.yaml names the owner's leagues/teams and their autonomy policy (design
 # §4). It holds NO secrets — the live session cookies live in the browser

@@ -207,11 +207,17 @@ tickets (#030+) as they start.
   *(Delivered: roster + scoring scraped live for the owner's league and answered
   via `fantasy_my_team`. Matchup/standings scrapers not yet written — folded into
   a later phase; roster+scoring is the shipped P0 gate.)*
-- **P1 — Valuation + full stat lines.** Extend `wes_nba.py` to full box-score
+- **P1 — Valuation + full stat lines. ✅ DONE 2026-07-20.** Extend `wes_nba.py` to full box-score
   stat lines + rolling averages + injury/availability; add a projection source
   mapped to the league's scoring. Tool: `fantasy_player_value`.
   **Accept:** "is X worth starting over Y in my league?" grounded in stats +
   *this* league's scoring, no guesses.
+  *(Delivered: `wes_nba` season-stats layer (name→ESPN-id search + latest-season
+  parse) + new `pc/wes_fantasy.py` engine; `fantasy_player_value` maps a real
+  ESPN stat line to the league's roto categories, with an optional head-to-head
+  compare. Scope: category line, not a z-score ranking — z-scores need a
+  population fetch, deferred to the optimizer. Rolling averages / a dedicated
+  projection source also deferred; latest-season averages are the P1 baseline.)*
 - **P2 — Daily lineup optimizer (advise / dry-run).** The engine: today's games
   + injuries + slot eligibility → optimal active lineup, explained; recommendation
   only. **The optimizer is deterministic code (ILP/Hungarian), not an LLM** — the

@@ -44,7 +44,9 @@ confirmation tokens, idempotency, injection guard).
       wired into the live server (12th tool); real roster + scoring answered
       end-to-end from the owner's league ("Enemies of Whiffer", nba.l.114020);
       PC-local `teams.yaml` configured; eval-gated. See Notes.
-- [ ] **P1** — Valuation + full stat lines (extend `wes_nba.py`, `fantasy_player_value`)
+- [x] **P1** — Valuation + full stat lines — **DONE 2026-07-20**. `fantasy_player_value`
+      values a player (optionally vs another) in the league's roto categories from
+      real ESPN season stats; new `pc/wes_fantasy.py` engine. See Notes.
 - [ ] **P2** — Daily lineup optimizer (advise / dry-run, explained, shadow-soaked)
 - [ ] **P3** — Executor + autonomy config + rails (first real Yahoo writes)
 - [ ] **P4** — Scheduling + pre-lock monitoring / late swaps
@@ -63,7 +65,9 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 - [x] Jarvis reads a real Yahoo NBA league (roster + scoring) via a tool
       (`fantasy_my_team`, 2026-07-20). *Matchup/standings scrapers not yet
       written — folded into a later phase; not needed for the P0 gate.*
-- [ ] Player value is computed against *that league's* scoring, no hallucinated stats
+- [x] Player value is computed against *that league's* scoring, no hallucinated
+      stats (`fantasy_player_value`, 2026-07-20 — real ESPN season line, mapped
+      to the league's roto categories; live-verified Cam Thomas vs Cooper Flagg)
 - [ ] Optimizer produces a correct, explained daily lineup in dry-run
 - [ ] A `propose` team: DM'd proposal → owner approves → lineup set on Yahoo + logged
 - [ ] An `auto` team: lineup set within guardrails, after-action report sent
@@ -71,6 +75,41 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 - [ ] Daily lineup management runs on schedule per each team's mode
 
 ## Notes
+
+### 2026-07-20 — P1 DONE: `fantasy_player_value` (valuation) live + eval-gated
+Player valuation against the league's own scoring, from real stats. What landed:
+- **`wes_nba.py` season-stats layer**: `athlete_id(name)` resolves an NBA player
+  via ESPN's site search (filtered to `/nba/player/` links — drops NFL/college
+  namesakes), `player_season_stats(name)` fetches the ESPN athlete-stats endpoint
+  and `parse_season_stats()` normalizes the LATEST season into a dict —
+  `{name, season, gp, min, cats:{PTS,REB,AST,ST,BLK,TO,DD,TD,EJCT,…}, counting}`.
+  Per-game for the rate cats (`averages`), season totals for DD/TD/EJCT
+  (`miscellaneous`). Offseason-safe: the endpoint returns the last completed
+  season. Traded-in-a-season players: takes the max-GP (combined) row.
+- **`pc/wes_fantasy.py`** — the valuation/decision **engine** (design §2's
+  ingestion→valuation split; the P2 optimizer lands here too). `player_value`
+  maps a stat line through the league's categories and formats a compact line
+  the model reads; `fantasy_player_value(player, versus=)` resolves the league's
+  categories from the configured team (via `wes_yahoo.league_categories`, cached;
+  falls back to the standard roto set) and supports a head-to-head compare.
+- **Registered in `wes_server.TOOLS`** (now 14 tools) + dispatched; description
+  forbids inventing stat lines.
+- **Live-verified** (Discord): "who's the better play, Cam Thomas or Cooper
+  Flagg?" → the model called `fantasy_player_value` with both, got real 2025-26
+  lines, and reasoned from the actual numbers (REB 6.7 vs 1.7, double-doubles) —
+  no invented stats. Matches the P1 acceptance.
+- **Tests:** new `test_unit_fantasy.py` (parser + name→id resolver on a saved
+  ESPN fixture + engine formatting/degradation) + server registration/dispatch;
+  264 unit pass. Golden case `fantasy-value` (anti-hallucination; free ESPN feed,
+  runs nightly). Eval-gated.
+
+**P1 scope note / next:** valuation is the **category line**, not a z-score /
+replacement-value ranking — that needs the whole-league player pool (a population
+fetch) and belongs with the optimizer. **Next: P2** — daily lineup optimizer
+(today's games + injuries + slot eligibility → optimal active lineup, explained,
+shadow-soaked). Needs the offseason-blank *eligible positions* (P0 caveat), so
+re-verify positions in-season via the `WES_YAHOO_LIVE=1` canary before P2 relies
+on them.
 
 ### 2026-07-20 — P0 DONE: `fantasy_my_team` live + eval-gated
 The read path is now a live tool. What landed:

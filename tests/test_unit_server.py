@@ -151,6 +151,18 @@ class TestRunTool:
             == "roster for 'Dinosaurs'"
         assert ws.run_tool("fantasy_my_team", {}) == "roster for None"
 
+    def test_fantasy_player_value_is_registered(self):
+        assert "fantasy_player_value" in [t["name"] for t in ws.TOOLS]
+
+    def test_fantasy_player_value_dispatches(self, monkeypatch):
+        monkeypatch.setattr(ws.wes_fantasy, "fantasy_player_value",
+                            lambda player, versus=None: f"{player} vs {versus}")
+        assert ws.run_tool("fantasy_player_value",
+                           {"player": "Cam Thomas", "versus": "Luka"}) \
+            == "Cam Thomas vs Luka"
+        assert ws.run_tool("fantasy_player_value", {"player": "Cam Thomas"}) \
+            == "Cam Thomas vs None"
+
 
 class TestDescribeSceneCache:
     def _prime(self, desc, faces, age=0.0):

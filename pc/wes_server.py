@@ -45,6 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wes_hosts  # noqa: E402 — host registry (hosts.yaml); repo root on path
 import wes_nba  # noqa: E402 — NBA live data (ESPN free API); same dir on path
 import wes_yahoo  # noqa: E402 — Yahoo fantasy read (browser automation, #029)
+import wes_fantasy  # noqa: E402 — fantasy valuation engine (#029 P1)
 
 from flask import Flask, Response, request, jsonify
 from prometheus_client import (Counter, generate_latest,
@@ -520,6 +521,28 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "fantasy_player_value",
+        "description": (
+            "An NBA player's real latest-season stat line, mapped to the owner's "
+            "fantasy league scoring categories (points, rebounds, assists, "
+            "steals, blocks, turnovers, double-doubles…), so you can judge who's "
+            "worth starting. Use for 'is <X> worth starting over <Y>', 'how good "
+            "is <player> in my league', 'compare <X> and <Y> for fantasy'. Pass "
+            "`versus` to compare two players head-to-head. Real numbers from the "
+            "stats feed — never guess or invent a stat line."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "player": {"type": "string",
+                           "description": "the player to value, e.g. 'Cam Thomas'"},
+                "versus": {"type": "string",
+                           "description": "optional second player to compare against"},
+            },
+            "required": ["player"],
+        },
+    },
 ]
 
 
@@ -817,6 +840,9 @@ def run_tool(name, tool_input):
             return wes_nba.subreddit_discussion()
         if name == "fantasy_my_team":
             return wes_yahoo.fantasy_my_team(tool_input.get("team"))
+        if name == "fantasy_player_value":
+            return wes_fantasy.fantasy_player_value(
+                tool_input.get("player", ""), tool_input.get("versus"))
         return f"unknown tool: {name}"
     except Exception as e:  # noqa: BLE001
         return f"tool error: {e}"

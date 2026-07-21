@@ -132,8 +132,10 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   not yet built.
 - `docs/fantasy-gm-design.md` — Fantasy GM epic (#029): autonomous Yahoo NBA
   team management (read → value → optimize → gated execute), per-team autonomy
-  config + rails; phased roadmap. **P0 (Yahoo read) shipped 2026-07-20** —
-  `fantasy_my_team` tool scrapes the owner's real roster + scoring via
-  Playwright; P1 (valuation) is next. Platform pivoted from the official Yahoo
-  API to browser automation (API access now requires a no-caching DocuSign).
+  config + rails; phased roadmap. **P0 + P1 shipped 2026-07-20** —
+  `fantasy_my_team` scrapes the owner's real roster + scoring via Playwright;
+  `fantasy_player_value` (engine: `pc/wes_fantasy.py`) values players against the
+  league's roto cats from real ESPN stats. P2 (daily lineup optimizer) is next.
+  Platform pivoted from the official Yahoo API to browser automation (API access
+  now requires a no-caching DocuSign).
 - `docs/keyresults.md` — current-cycle key results, refreshed periodically.
