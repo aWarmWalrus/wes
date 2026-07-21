@@ -15,10 +15,11 @@ on-device Hailo object detection + face recognition, per-channel conversation
 memory, a Discord remote frontend, a two-host test suite with the quality-eval
 harness, host + app observability (Prometheus/Grafana, token metrics, turn log)
 with Jarvis DM-ing alerts, and a `hosts.yaml` registry. The LLM tier is a
-**router**: gemma4:e4b answers the easy tier itself and delegates — rich vision
-to the resident gemma4:12b VLM, deep reasoning to the same 12b with thinking
-(`WES_ESCALATE_MODEL`, fully local since 2026-07-05); Claude Haiku is
-error-fallback only. Details in `docs/pipeline.md`.
+**router**: **gemma4:12b** (one model since 2026-07-16, was e4b-router+12b)
+answers the easy tier itself and delegates — vision via the same 12b VLM, deep
+reasoning via the same 12b with thinking (`WES_ESCALATE_MODEL`, fully local
+since 2026-07-05); Claude Haiku is error-fallback only. Details in
+`docs/pipeline.md`.
 
 ## Current focus
 

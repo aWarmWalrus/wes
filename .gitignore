@@ -9,3 +9,6 @@ hailort.log
 tests/.pytest_cache/
 tests/eval/fixtures/
 pi/hailort*.log
+
+# Claude Code local settings (machine-specific permissions)
+.claude/settings.local.json

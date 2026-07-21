@@ -18,7 +18,9 @@ at `C:\Users\awarm\wes-pc\wes-dev.ps1`; invoke verbs like:
 ```
 
 (Other verbs: `reload [server|discord|exporters]`, `health`, `turns [n]`,
-`usage`, `log [server|discord|exporters] [n]`, `gpu`.) **Do NOT wrap these in
+`usage`, `log [server|discord|exporters] [n]`, `gpu`, and `models
+[status|check|list|load|unload|fit]` — the VRAM/model manager: pin models in
+VRAM, free them, or drift-check config vs reality.) **Do NOT wrap these in
 `$env:...;` prefixes or extra pipelines** — that breaks the prefix allowlist
 match and forces a prompt (`eval_turns.py` already defaults to `127.0.0.1:8080`,
 so no `WES_TEST_URL` is needed). The raw commands below are the equivalents the

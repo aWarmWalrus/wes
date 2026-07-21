@@ -1,0 +1,56 @@
+# Fantasy GM team registry — EXAMPLE (ticket #029; design: docs/fantasy-gm-design.md §4)
+#
+# Copy to a PC-local path (NOT the repo — it names your real leagues) and point
+# WES_FANTASY_TEAMS at it:
+#   copy fantasy\teams.example.yaml C:\Users\awarm\wes-pc\teams.yaml
+#   setx WES_FANTASY_TEAMS "C:\Users\awarm\wes-pc\teams.yaml"
+#
+# Secrets NEVER live here. Yahoo is reached via a logged-in BROWSER SESSION
+# (design §10) — the session cookies live in the browser profile dir
+# (WES_YAHOO_PROFILE_DIR), written by pc/yahoo_connect.py. There are no API
+# tokens. This file holds only identities and policy.
+#
+# Autonomy is PER TEAM, not global — Jarvis can run one team on full auto while
+# only advising on another. New teams should start at `propose`; `auto` is
+# opt-in and only after a shadow-mode soak (design §5).
+
+accounts:
+  # `profile_ref` names the env var holding that account's browser-profile dir.
+  # One account today; the shape supports several (each its own signed-in
+  # profile) for the portfolio case.
+  main:
+    profile_ref: WES_YAHOO_PROFILE_DIR
+
+teams:
+  - name: "Dinosaurs"
+    account: main
+    sport: nba
+    # Read these off the league URL (…/nba/<league>/<team>).
+    league_key: "466.l.12345"
+    team_key: "466.l.12345.t.3"
+
+    # advise  -> analyze and answer only; never touches the team
+    # propose -> DM a proposal, wait for approval, then execute
+    # auto    -> execute within guardrails, report after the fact
+    autonomy: propose
+
+    guardrails:
+      # Per-action override beats the team-level mode above. Anything not
+      # listed is NOT allowed.
+      actions_allowed: [set_lineup]
+      max_faab_bid_pct: 15      # % of FAAB budget per claim
+      max_moves_per_week: 4
+      never_drop:
+        - "Nikola Jokic"
+      # Don't act on stale/incomplete data — alert instead (design §8.8).
+      require_fresh_data_minutes: 90
+
+  # A second team on a different policy — the portfolio case.
+  - name: "Work League"
+    account: main
+    sport: nba
+    league_key: "466.l.67890"
+    team_key: "466.l.67890.t.7"
+    autonomy: advise
+    guardrails:
+      actions_allowed: []

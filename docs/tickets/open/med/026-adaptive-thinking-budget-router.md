@@ -11,10 +11,20 @@ related: [docs/pipeline.md, "#001", "#002", "#003"]
 
 ## Goal
 Let the router size the *thinking budget* per query instead of the current
-all-or-nothing tiers (voice = e4b, escalate to full 12b+thinking on demand;
-Discord = full 12b+thinking on EVERY turn — the #001 "sledgehammer"). Cheap
-queries should cost little thinking; hard ones get more. Unify the router as the
-consistent first step across channels, and make it robust to our weak router.
+all-or-nothing tiers. Cheap queries should cost little thinking; hard ones get
+more. Unify the router as the consistent first step across channels.
+
+> **Reframed 2026-07-20 for the single-model topology** (was two models). The
+> original premise — a fast weak router (`e4b`) that escalates to a bigger model
+> (`12b`) — dissolved when the e4b tag vanished and WES collapsed to **one
+> `gemma4:12b`** (2026-07-16). Router and deep tier are now the *same* model, so
+> "escalation" already means only *thinking + a bigger token budget on 12b*, not
+> a model swap. That makes this ticket **simpler and more central**: the sole
+> remaining knob IS the thinking budget, and the current state is binary —
+> voice/other = 12b thinking-OFF (plain pass), escalate = 12b thinking-ON;
+> Discord = 12b thinking-ON on EVERY turn (the #001 "sledgehammer"). The win is
+> to grade that budget by difficulty and stop Discord paying full thinking on
+> trivial turns. See the 2026-07-20 note for the full impact.
 
 ## Why this is SotA, not a bespoke hack
 This is the "adaptive/controllable test-time compute" area — survey **"Reasoning
@@ -35,20 +45,21 @@ Routing lineage to borrow from (don't rebuild):
   a budget constraint. I.e. "router chooses model AND thinking budget."
 - **GPT-5 internal router** — the productized version (hidden router → tiers).
 
-Key adaptation for WES: those papers assume a competent (often trained) router;
-ours is gemma e4b, unreliable at tool/routing decisions on text (#001). SotA
-offers two flavors — **upfront routing** (classify then allocate; only as good
-as the router) vs **cascade/verify-then-escalate** (FrugalGPT; robust to a weak
-router because it checks output, not an upfront guess). We should lean on the
-cascade's verifier so a weak router can't silently under-serve. Do NOT hand-build
-a learned router for a system this size — a prompted/heuristic router + a cheap
-verifier is the pragmatic sweet spot.
+Key adaptation for WES: those papers assume a competent (often trained) router.
+Ours is now the **12b itself** (was e4b — the collapse upgraded the router; it's
+more capable than the e4b that under-called tools on text in #001, though not
+frontier-reliable). SotA offers two flavors — **upfront routing** (classify then
+allocate; only as good as the router) vs **cascade/verify-then-escalate**
+(FrugalGPT; robust to a weak router because it checks output, not an upfront
+guess). Keep leaning on the cascade's verifier so the router can't silently
+under-serve. Do NOT hand-build a learned router for a system this size — a
+prompted/heuristic router + a cheap verifier is the pragmatic sweet spot.
 
 ## Approach
-1. **Effort→budget mapping** (L1), mirroring `reasoning_effort`:
-   `quick` → 12b, thinking off, ~512 tok · `standard` → 12b, thinking on,
-   ~1536 tok · `deep` → 12b, thinking on, ~4096 tok · (trivial → e4b answers,
-   no 12b). One mapping table; tunable via env.
+1. **Effort→budget mapping** (L1), mirroring `reasoning_effort`, all on the one
+   12b: `quick` → thinking off, ~512 tok · `standard` → thinking on, ~1536 tok ·
+   `deep` → thinking on, ~4096 tok. One mapping table; tunable via env. (No
+   separate trivial tier now that e4b is gone — `quick` IS the floor.)
 2. **Router proposes the effort** (L2): add an `effort` arg to the escalate tool
    so the router picks how hard to think when it hands off. Works cleanly on
    voice (tools reliable there).
@@ -60,20 +71,42 @@ verifier is the pragmatic sweet spot.
    "always 12b on Discord" — makes the router the first step everywhere without
    trusting its upfront classification. (Overlaps #002's promise-pattern guard.)
 4. **Unify**: revert Discord-always-deep (`WES_DEEP_CHANNELS`) once 1-3 hold, so
-   e4b triages first on every channel and easy Discord messages get ~1s replies.
+   the 12b triages `quick` (thinking off) first on every channel and easy Discord
+   messages answer fast instead of paying full thinking on every turn.
 
 ## Acceptance
 - [ ] `quick`/`standard`/`deep` effort maps to think + num_predict; tunable
 - [ ] router allocates effort on escalation; verified it varies by difficulty
 - [ ] text-channel verifier re-escalates a narrated/mis-answered turn (covers
       the #001 cases: remember + describe_scene) — verified live
-- [ ] router is the first step on all channels; easy Discord turns answer on e4b
+- [ ] router is the first step on all channels; easy Discord turns answer `quick`
+      (12b, thinking off) instead of full thinking every turn
 - [ ] full eval green; no voice-latency regression (watch the num_ctx/VRAM tie)
 
 ## Notes
+
+### 2026-07-20 — refreshed for the single-model topology
+The 2026-07-16 collapse to one `gemma4:12b` (docs/pipeline.md, CLAUDE.md) reshapes
+this ticket rather than retiring it:
+- **The budget IS the only knob left.** With one model, escalation already means
+  just thinking-on + a bigger `num_predict`. So "adaptive thinking budget" is no
+  longer *one* of several routing levers — it's the whole game. Approach step 2
+  (router proposes `effort` via an arg on the escalate tool) is the crux.
+- **The `quick`/`standard`/`deep` tiers all run on 12b** — the mapping is
+  purely think-flag + `num_predict`, exactly what gemma4 supports (it has NO
+  graded native think levels; low/med/high were identical, tested 2026-07-07).
+  A model-native effort level would need a model swap (e.g. gpt-oss) — out of
+  scope.
+- **The verifier (step 3) still earns its keep**, but the pressure is lower: the
+  #001 sledgehammer (Discord always 12b+thinking) already fixed the narrated-
+  non-tool-call bug, and the router is now the 12b (better than the e4b that
+  caused #001), so the verifier is now about *cost* (letting easy Discord turns
+  skip thinking) more than *correctness*.
+- **Adjacent, not part of this ticket:** the escalation *surface* is growing a
+  second target — `search_web` → Claude Haiku with web search for live/current
+  info (#029 followup), distinct from `escalate_to_claude` → local 12b+thinking
+  for reasoning. When both exist, the router chooses *which handoff* as well as
+  the thinking budget; keep the `effort` knob orthogonal to the handoff target.
+
 Supersedes the #001 "route Discord to 12b always" workaround with a principled
-version; keep that as the fallback until the verifier is proven. gemma4 does NOT
-support graded think levels (tested 2026-07-07: low/med/high produced identical
-output), so `effort` must be expressed via think-on/off + `num_predict`, not a
-model-native effort level. If we ever want true graded native thinking, that's a
-model swap (e.g. gpt-oss) — out of scope here.
+version; keep that as the fallback until the verifier is proven.

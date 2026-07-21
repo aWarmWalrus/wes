@@ -87,10 +87,21 @@ Backends (`--judge` flag / `WES_EVAL_JUDGE` env, default `haiku`):
 | `both` | both | periodic calibration: grades every case with both, prints per-case scores side by side + an agreement summary (mean \|diff\| on `correct`, disagreements by name). Records the haiku scores. Run after changing the judge prompt or the local model, and occasionally before trusting `local` for the nightly gate. |
 | `off`  | — | deterministic checks only (`--no-judge` is an alias). |
 
-**Never judge with `gemma4:e4b`** — it's the model under test, and
-self-judging (a model grading its own family's outputs) is the classic
-LLM-as-judge bias. Judging is easier than generating, which is why a 12b can
-grade replies that Claude wrote.
+**Judge ≠ model under test** — self-judging (a model grading its own family's
+outputs) is the classic LLM-as-judge bias. Judging is easier than generating,
+which is why a 12b can grade replies that Claude wrote.
+
+> ⚠️ **Self-judging since the 2026-07-16 single-model collapse — knowingly
+> accepted (2026-07-20).** This rule was written when the router was `gemma4:e4b`
+> and the judge `gemma4:12b` (a different, larger model — legitimately
+> independent). Now the router **is** `gemma4:12b`, so `--judge local` grades
+> replies its own model generated. **Decision: accept the bias** — `--judge
+> local` stays the nightly gate (free, key-less), traded off against its
+> generosity. Mitigations relied on: the deterministic checks gate independently
+> of the judge, `--judge haiku` is used for any decision that matters
+> (prompt/routing/model changes), and `--judge both` calibrates periodically. If
+> the local median ever drifts implausibly high, revisit (switch nightly to Haiku
+> or pull a separate small judge model).
 
 Each history row records its `judge` backend, and the score gate (§4) only
 compares runs judged by the **same** backend — haiku and local have different

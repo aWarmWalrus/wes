@@ -140,6 +140,17 @@ class TestRunTool:
         names = [t["name"] for t in ws.TOOLS]
         assert "lookup_hosts" in names
 
+    def test_fantasy_my_team_is_registered(self):
+        names = [t["name"] for t in ws.TOOLS]
+        assert "fantasy_my_team" in names
+
+    def test_fantasy_my_team_dispatches_to_yahoo(self, monkeypatch):
+        monkeypatch.setattr(ws.wes_yahoo, "fantasy_my_team",
+                            lambda team=None: f"roster for {team!r}")
+        assert ws.run_tool("fantasy_my_team", {"team": "Dinosaurs"}) \
+            == "roster for 'Dinosaurs'"
+        assert ws.run_tool("fantasy_my_team", {}) == "roster for None"
+
 
 class TestDescribeSceneCache:
     def _prime(self, desc, faces, age=0.0):
@@ -483,6 +494,221 @@ class TestEscalation:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         names = [t["function"]["name"] for t in ws._local_toolset()]
         assert "escalate_to_claude" not in names
+
+
+class TestWebSearch:
+    """search_web: the router hands a LIVE-INFO query to Haiku + web search.
+    Distinct from escalate_to_claude (hard reasoning -> local 12b+thinking)."""
+
+    def test_toolset_offers_search_web_when_available(self, monkeypatch):
+        monkeypatch.setattr(ws, "WEB_SEARCH", True)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        for deep in (False, True):
+            names = [t["function"]["name"] for t in ws._local_toolset(deep=deep)]
+            assert "search_web" in names, f"deep={deep}"
+        # the server-side web_search tool is NEVER exposed to the local router
+        assert all(t["function"]["name"] != "web_search"
+                   for t in ws._local_toolset())
+
+    def test_search_web_omitted_without_key(self, monkeypatch):
+        monkeypatch.setattr(ws, "WEB_SEARCH", True)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        names = [t["function"]["name"] for t in ws._local_toolset()]
+        assert "search_web" not in names
+
+    def test_search_web_omitted_when_disabled(self, monkeypatch):
+        monkeypatch.setattr(ws, "WEB_SEARCH", False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        names = [t["function"]["name"] for t in ws._local_toolset()]
+        assert "search_web" not in names
+
+    def test_deep_tier_gets_search_web_but_not_escalate(self, monkeypatch):
+        # The deep tier can't reach the web itself (needs Haiku), but it must NOT
+        # carry escalate_to_claude — it already IS the reasoning escalation.
+        monkeypatch.setattr(ws, "WEB_SEARCH", True)
+        monkeypatch.setattr(ws, "ESCALATE", True)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        names = [t["function"]["name"] for t in ws._local_toolset(deep=True)]
+        assert "search_web" in names
+        assert "escalate_to_claude" not in names
+
+    def test_router_hands_search_web_to_claude_with_web(self, monkeypatch):
+        monkeypatch.setattr(ws, "WEB_SEARCH", True)
+        monkeypatch.setattr(ws, "WEB_SEARCH_ACK", "")  # no ack prefix in the assert
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        fake, _ = TestOllamaBackend._fake_urlopen([
+            [{"message": {"content": "", "tool_calls": [
+                {"function": {"name": "search_web",
+                              "arguments": {"query": "weather London"}}}]},
+              "done": True}],
+        ])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        seen = {}
+
+        def fake_claude(transcript, channel="voice", web=False):
+            seen["web"] = web
+            seen["transcript"] = transcript
+            return iter(["Sunny in London."])
+
+        monkeypatch.setattr(ws, "_stream_claude", fake_claude)
+        out = "".join(ws._stream_local("what's the weather in London"))
+        assert out == "Sunny in London."
+        assert seen["web"] is True  # handed off WITH web search on
+        assert seen["transcript"] == "what's the weather in London"
+
+    def test_stream_claude_web_adds_server_side_tool(self, monkeypatch):
+        monkeypatch.setattr(ws, "WEB_SEARCH", True)
+        captured = {}
+
+        class _Usage:
+            input_tokens = 1
+            output_tokens = 1
+
+        class _Final:
+            stop_reason = "end_turn"
+            content = []
+            usage = _Usage()
+
+        class _Stream:
+            text_stream = ["Sunny."]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def get_final_message(self):
+                return _Final()
+
+        class _Msgs:
+            def stream(self, **kwargs):
+                captured.update(kwargs)
+                return _Stream()
+
+        class _Client:
+            messages = _Msgs()
+
+        monkeypatch.setattr(ws, "get_anthropic", lambda: _Client())
+        out = "".join(ws._stream_claude("weather?", web=True))
+        assert out == "Sunny."
+        types = [t.get("type") for t in captured["tools"]]
+        assert "web_search_20250305" in types  # server-side web search attached
+        assert captured["max_tokens"] == 1024
+
+    def test_stream_claude_no_web_omits_server_tool(self, monkeypatch):
+        captured = {}
+
+        class _Final:
+            stop_reason = "end_turn"
+            content = []
+
+            class usage:
+                input_tokens = 1
+                output_tokens = 1
+
+        class _Stream:
+            text_stream = ["Hi."]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def get_final_message(self):
+                return _Final()
+
+        class _Client:
+            class messages:
+                @staticmethod
+                def stream(**kwargs):
+                    captured.update(kwargs)
+                    return _Stream()
+
+        monkeypatch.setattr(ws, "get_anthropic", lambda: _Client())
+        "".join(ws._stream_claude("hi"))  # web defaults False
+        types = [t.get("type") for t in captured["tools"]]
+        assert "web_search_20250305" not in types
+
+
+class TestUnkeptPromiseGuard:
+    """#002: the router SAYS it will look into something but calls nothing, so
+    the promise is never kept. Buffered channels can silently re-run deep."""
+
+    def _notes(self, tools=(), escalated=False):
+        ws._turn_begin()
+        ws._turn_notes.tools = list(tools)
+        ws._turn_notes.escalated = escalated
+
+    def test_promise_with_no_tool_is_unkept(self, monkeypatch):
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        self._notes()
+        assert ws._is_unkept_promise("Sure — I'll look into it and get back to you.")
+
+    def test_promise_followed_by_a_real_tool_is_kept(self, monkeypatch):
+        # The regression this guard must not cause: "I'll check X" + a real tool
+        # call is a KEPT promise and must be left completely alone.
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        self._notes(tools=["get_system_status"])
+        assert not ws._is_unkept_promise(
+            "I'll check the system status for you. Nope, it's relaxed right now.")
+
+    def test_already_escalated_is_not_unkept(self, monkeypatch):
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        self._notes(escalated=True)
+        assert not ws._is_unkept_promise("I'll look into it.")
+
+    def test_plain_answer_is_not_a_promise(self, monkeypatch):
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        self._notes()
+        assert not ws._is_unkept_promise("The capital of France is Paris.")
+
+    def test_no_escalation_target_leaves_the_promise_alone(self, monkeypatch):
+        # Nowhere to retry -> a weak promise still beats no answer at all.
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        self._notes()
+        assert not ws._is_unkept_promise("I'll get back to you.")
+
+    def test_think_local_replaces_unkept_promise(self, monkeypatch):
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        monkeypatch.setattr(
+            ws, "_stream_local",
+            lambda *a, **k: iter(["I'll look into it and get back to you."]))
+        seen = {}
+
+        def fake_esc(transcript, channel="voice"):
+            seen["transcript"] = transcript
+            return iter(["Imagine a see-saw that always balances..."])
+
+        monkeypatch.setattr(ws, "_stream_escalation", fake_esc)
+        ws._turn_begin()
+        out = ws._think_local("explain the quadratic formula to a toddler")
+        assert out == "Imagine a see-saw that always balances..."
+        assert ws.NO_DEFER_FRAMING in seen["transcript"]
+        assert ws._turn_notes.escalated is True  # logged as an escalation
+
+    def test_think_local_keeps_original_when_retry_is_empty(self, monkeypatch):
+        # Never trade a weak answer for dead air.
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        monkeypatch.setattr(ws, "_stream_local",
+                            lambda *a, **k: iter(["I'll look into it."]))
+        monkeypatch.setattr(ws, "_stream_escalation", lambda *a, **k: iter([""]))
+        ws._turn_begin()
+        assert ws._think_local("hard thing") == "I'll look into it."
+
+    def test_think_local_leaves_a_good_reply_untouched(self, monkeypatch):
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        monkeypatch.setattr(ws, "_stream_local",
+                            lambda *a, **k: iter(["Paris."]))
+
+        def boom(*a, **k):
+            raise AssertionError("must not escalate a perfectly good reply")
+
+        monkeypatch.setattr(ws, "_stream_escalation", boom)
+        ws._turn_begin()
+        assert ws._think_local("capital of france?") == "Paris."
 
     def test_escalation_hands_off_to_claude(self, monkeypatch):
         fake, calls = TestOllamaBackend._fake_urlopen([

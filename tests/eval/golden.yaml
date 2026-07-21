@@ -8,6 +8,8 @@
 #                       The runner resets server conversation memory before
 #                       every case, so cases never leak into each other.
 #   requires_pi         skip unless the Pi's :8090 answers (vision/status cases)
+#   web_search          skip unless --web-search / WES_EVAL_WEB_SEARCH=1 (these
+#                       hit the PAID web-search API — run weekly, not nightly)
 #   expect:
 #     transcript_includes  substrings the STT transcript must contain (case-insens)
 #     reply_regex          must match the RE-TRANSCRIBED reply audio (case-insens);
@@ -73,7 +75,9 @@
     train catch up to the first train
   expect:
     transcript_includes: [train]
-    reply_regex: 'seven|7\s*(pm|p\.m\.|o.?clock)'
+    # '7 0 0 p.m.': whisper spells a spoken "seven o'clock / 7:00" out as digits,
+    # so allow zeros/colons/spaces between the 7 and the meridiem.
+    reply_regex: 'seven|7[\s:0]*(pm|p\.?m\.?|o.?clock)'
     max_total_ms: 60000
     max_audio_s: 60
   judge: >-
@@ -132,6 +136,38 @@
     max_audio_s: 15
   judge: "Does the reply greet Kaia and Ellis by name?"
 
+# #002: WES has NO deferred actions, so any promise to act later is a promise it
+# cannot keep. A turn must end with a real answer (or a real escalation) — never
+# "I'll look into it and get back to you". The server-side unkept-promise guard
+# re-runs such a turn at the deep tier; these cases are its regression net.
+- id: promise-not-deferred
+  say: "Explain the quadratic formula to a toddler"
+  expect:
+    transcript_includes: [quadratic]
+    reply_not_regex: "get back to (you|ya)|let you know|look into (it|that|this)|i'?ll (find out|research|investigate|dig into)|give me a (moment|second|minute|sec)"
+    max_total_ms: 60000
+    max_audio_s: 60
+  judge: >-
+    Does the reply actually attempt a toddler-level explanation of the quadratic
+    formula right now, rather than promising to look into it, find out, or get
+    back to the user later?
+
+# The multi-turn variant: an explicit "can you look into it?" is the strongest
+# pull toward a deferral, because the user's own phrasing invites one.
+- id: promise-not-deferred-followup
+  turns:
+    - "What is the Riemann hypothesis"
+    - "Can you look into it and tell me why it matters"
+  expect:
+    transcript_includes: [look into]
+    reply_not_regex: "get back to (you|ya)|let you know|i'?ll (find out|research|investigate|dig into)|give me a (moment|second|minute|sec)"
+    max_total_ms: 60000
+    max_audio_s: 90
+  judge: >-
+    The user asked the assistant to look into why the Riemann hypothesis
+    matters. Does the reply explain why it matters NOW, rather than promising to
+    investigate and report back later (which the assistant cannot actually do)?
+
 - id: memory-recall
   turns:
     - "Please remember that my favorite color is purple"
@@ -155,3 +191,40 @@
   judge: >-
     Does the reply report plausible live Pi status (temperature/memory/load)
     rather than guessing or refusing?
+
+# Fantasy read (#029 P0): the reply must come from the fantasy_my_team tool, not
+# invented players. Offseason + whatever the account state, either a real roster
+# or a graceful "needs connecting / couldn't reach Yahoo" is correct; making up
+# named players/stats is the failure this guards.
+- id: fantasy-roster
+  say: "What's on my fantasy basketball team right now"
+  expect:
+    reply_regex: 'roster|team|fantasy|yahoo|sign|connect|reach|player'
+    max_audio_s: 25
+  judge: >-
+    The assistant HAS a real tool (fantasy_my_team) that reads the user's actual
+    Yahoo fantasy roster live, so a reply listing specific players/scoring IS
+    correct and grounded — do NOT treat named players as a hallucination. A
+    graceful "I need to connect to Yahoo / couldn't reach it" is also correct.
+    Mark incorrect only if it refuses, changes the subject, or invents something
+    other than a roster (e.g. made-up stats it wasn't asked for).
+
+# Web-search handoff (search_web → Haiku, #029 followup). GATED web_search: runs
+# only with --web-search / WES_EVAL_WEB_SEARCH=1 (weekly), since it hits the paid
+# web-search API. Verifies the router escalates a live-info query to the web
+# instead of guessing from stale training data — and doesn't falsely claim it
+# can't. Content is deliberately loose (weather is volatile); the judge carries it.
+- id: web-weather
+  say: "What is the weather in London right now"
+  web_search: true
+  expect:
+    transcript_includes: [weather, london]
+    reply_regex: 'degree|°|sunny|cloud|rain|clear|temperature|weather|forecast|warm|cool|cold|mild|humid|wind|couldn.?t|reach'
+    max_total_ms: 45000
+    max_audio_s: 30
+  judge: >-
+    The user asked for London's CURRENT weather, and the assistant has a live
+    web-search tool. A good reply gives a plausible current weather report (a
+    temperature and/or sky conditions) or says it couldn't reach live data right
+    now. Mark it INCORRECT only if it refuses on the grounds that it has no
+    internet access or can't know current conditions — it CAN look this up.

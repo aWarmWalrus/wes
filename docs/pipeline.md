@@ -12,75 +12,86 @@ Pi: pipe the PCM into a single `paplay --raw` on the JBL — the first sentence 
 
 ## LLM backend (`WES_LLM`)
 
-`WES_LLM=local` (the launcher default since the 5060 Ti 16GB) runs **gemma4:e4b via
-Ollama** — streaming + the same tool loop (`_stream_local`), `think: false` so no
-thinking tokens are spoken, `keep_alive: -1` so it stays VRAM-resident. Scene
-description uses a separate resident VLM, **gemma4:12b** (`WES_VLM_MODEL`) — chat
-keeps the faster e4b for time-to-first-audio, while the 12b's extra latency hides
-behind the wake-word vision prefetch; both fit the 16GB card (11.4GB). Local errors
-before any output fall back to Claude automatically; `WES_LLM=claude` switches back
-entirely (`WES_LLM_LOCAL_MODEL` overrides the local model). Local ≈ halves LLM latency
-vs Haiku (~700ms vs ~1300ms) and has no API rate limit (speculation budget unlimited).
+`WES_LLM=local` (the launcher default since the 5060 Ti 16GB) runs **gemma4:12b via
+Ollama** — streaming + the tool loop (`_stream_local`), `keep_alive: -1` so it stays
+VRAM-resident. **One model serves everything**: the router (chat), the escalation
+deep tier (with thinking), and the `describe_scene` VLM (`WES_VLM_MODEL`). Local
+errors before any output fall back to Claude automatically; `WES_LLM=claude` switches
+back entirely (`WES_LLM_LOCAL_MODEL` overrides the local model). Local ≈ halves LLM
+latency vs Haiku and has no API rate limit (speculation budget unlimited).
 
-**Why e4b as the router, not 12b for everything — measured A/B (2026-07-04)**, same
-5-run-median probe against the live server: with 12b as the router, plain chat ttfa
-went 990→1425ms (+44%) and a tool turn (two model passes) went 1741→2833ms (+63%) —
-an extra ~0.4-1.1s of silence on *every* turn. Reply quality on the eval golden set
-was unchanged (judge correct-avg 1.78/2, inside e4b's 1.56-2.00 range across runs),
-and 12b escalated the hard-reasoning case to Claude just like e4b does. The bigger
-router buys audible latency and no measurable quality on the easy tier it would
-actually serve; 12b stays vision-only, where the prefetch hides its cost.
+> **Topology history — was TWO models, now ONE (2026-07-16).** The design was a
+> split: **gemma4:e4b** as the fast router + **gemma4:12b** for escalation/vision.
+> A measured A/B (2026-07-04) justified it: making 12b the router cost +44% chat
+> ttfa / +63% tool-turn latency for no eval-quality gain, so e4b served the easy
+> tier and 12b only paid its latency on the hard tier (where the ack masks it).
+> Then the `gemma4:e4b` tag vanished from Ollama — every router call 404'd and
+> **silently fell back to Claude for a week** (`/health` echoes config, not
+> reality). It was collapsed to **12b alone** as the project pivoted toward
+> batch/analysis (voice latency de-prioritized). `gemma3:4b` has vision but **no
+> `tools`**, so it can't be the router. Guard: **`wes-dev.ps1 models check`** after
+> any model change catches exactly this drift.
 
-**Smart routing** (`WES_ESCALATE=1`, default): the local model is effectively WES's
-**router** — every turn lands on it first, it answers the easy tier itself (zero
-routing overhead: the route decision and the reply share one forward pass), and
-delegates when needed: rich vision to the resident **gemma4:12b** VLM (via the
-`describe_scene` tool, usually a prefetch-cache hit), deep reasoning to the deep
-tier — the resident **gemma4:12b with thinking** by default (`WES_ESCALATE_MODEL`),
-Claude Haiku when that's unset.
-The local toolset additionally carries
-an `escalate_to_claude` function (never shown to the deep tier itself), so gemma
-decides per-turn when a query is beyond it — deep reasoning, hard math/code,
-specialized knowledge — and the server streams the deep tier's reply instead
-(`[route] escalating…` in the log). The moment an escalation fires the **server
-itself speaks an acknowledgment** (`WES_ESCALATE_ACK`, default "Good question —
-let me think about that.", empty disables) so the deep tier's spin-up isn't dead
-air — first audio ~1.3s instead of ~4s of silence. It's server-injected, not
-model-spoken, because if gemma has already started speaking, the handoff is
-suppressed (a tool result tells it to finish itself) so the user never hears two
-answers.
+**Smart routing** (`WES_ESCALATE=1`, default): every turn lands on the local model
+first — it answers the easy tier itself (zero routing overhead: the route decision
+and the reply share one forward pass) and delegates when needed. The local toolset
+carries an `escalate_to_claude` function (never shown to the deep tier itself), so
+the router decides per-turn when a query is beyond a plain pass — deep reasoning,
+hard math/code, specialized knowledge — and the server streams the **deep tier's**
+reply instead (`[route] escalating…` in the log). Since router and deep tier are now
+the *same* 12b, escalation buys **thinking + a bigger token budget**, not a bigger
+model. The moment an escalation fires the **server itself speaks an acknowledgment**
+(`WES_ESCALATE_ACK`, default "Good question — let me think about that.", empty
+disables) so the deep tier's spin-up isn't dead air. It's server-injected, not
+model-spoken: if the router has already started speaking, the handoff is suppressed
+(a tool result tells it to finish itself) so the user never hears two answers.
 
-**The deep tier is configurable** (`WES_ESCALATE_MODEL`, 2026-07-05): set it to
-an Ollama model — the launcher sets **`gemma4:12b` with thinking enabled** —
-and escalations are answered fully locally: same tool loop, the shared tools
-(minus the escalate function — no recursion), a 2048-token budget to cover the
-thinking, and thinking deltas arriving in `message.thinking` which the server
-never reads, so they're never spoken. Unset, escalations go to Claude Haiku
-(needs the API key), which also remains the automatic fallback on local
-*errors* either way. The tool keeps its prompt-tuned `escalate_to_claude`
-name — its semantics ("hand off to the much smarter model") don't change with
-the target. Note this is different from 12b-as-router for VOICE (rejected
-above): on voice the 12b only pays its latency on the hard tier, where the ack
-masks it. Verified: "what time is it" stays local, the multi-step train word
-problem logs `escalating to gemma4:12b` and comes back correct (~11.5s of
-hidden thinking).
+**The deep tier is configurable** (`WES_ESCALATE_MODEL`, 2026-07-05): the launcher
+sets **`gemma4:12b` with thinking enabled** — escalations answer fully locally (same
+tool loop, shared tools minus the escalate function so there's no recursion, a
+2048-token budget to cover the thinking; thinking deltas arrive in `message.thinking`
+which the server never reads, so they're never spoken). Unset, escalations go to
+Claude Haiku (needs the API key), which also remains the automatic fallback on local
+*errors* either way. The tool keeps its prompt-tuned `escalate_to_claude` name — its
+semantics ("hand off to the smarter tier") don't change with the target. Verified:
+"what time is it" stays a plain pass; the multi-step train word problem logs
+`escalating to gemma4:12b` and comes back correct after hidden thinking.
 
-**Per-channel reasoning tier** (`WES_DEEP_CHANNELS`, default `discord`,
-2026-07-07): latency-tolerant TEXT channels run the **deep tier (12b + thinking)
-as their router on every turn**, not just on escalation — `_channel_deep()`.
-Discord is async, so trading ~1s replies for ~15-25s replies buys markedly
-better reasoning AND far more reliable tool-calling: e4b tended to *narrate*
-tool actions on text ("I've remembered that" / an invented scene) without
-actually calling `remember`/`describe_scene` (bug #001); the 12b calls them.
-Voice stays on the fast e4b router (spoken latency matters). Set
-`WES_DEEP_CHANNELS=""` to put every channel back on e4b.
+**Live-info web search → Haiku** (`WES_WEB_SEARCH=1`, default on when the API key is
+present; 2026-07-20). Reasoning and *current facts* are split across two handoffs.
+Alongside `escalate_to_claude` (hard reasoning → local 12b+thinking, free), the router
+carries a **`search_web`** function for things that need the internet — today's
+weather/news/prices/scores, recent events, anything past the model's training. It
+routes to **Claude Haiku with Anthropic's server-side web search**
+(`web_search_20250305` — the basic variant Haiku 4.5 supports; Claude runs the
+searches, the server relays the streamed text). Rationale (owner, 2026-07-20):
+reasoning stays free/local, only live lookups pay for Claude. `search_web` is offered
+in BOTH the fast router and the deep tier (even the 12b can't reach the web);
+`escalate_to_claude` is fast-router-only (the deep tier already IS the reasoning
+escalation, so it must not recurse). The handoff is invisible like escalation:
+`WES_WEB_SEARCH_ACK` masks spin-up on voice, and `WES_WEB_SEARCH_NUDGE` tells Haiku to
+answer directly without narrating the search ("I'll search…"). Set `WES_WEB_SEARCH=0`
+to drop the tool. Verified live: "weather in London", "who won the last F1 race",
+"price of bitcoin" all answer from real results; math/reasoning still routes to the
+local 12b, not the web.
+
+**Per-channel reasoning tier** (`WES_DEEP_CHANNELS`, default `discord`, 2026-07-07):
+latency-tolerant TEXT channels run the **deep tier (12b + thinking) as their router
+on every turn**, not just on escalation — `_channel_deep()`. Discord is async, so
+trading fast replies for ~15-25s replies buys markedly better reasoning AND far more
+reliable tool-calling (bug #001: the router tended to *narrate* tool actions on text
+— "I've remembered that" / an invented scene — without actually calling
+`remember`/`describe_scene`; thinking mode calls them). Set `WES_DEEP_CHANNELS=""` to
+route every channel as a plain pass. (`_channel_deep()` is gated on
+`WES_ESCALATE_MODEL` being set — since router and deep tier are the same model now,
+this toggles thinking-on-by-default for the channel, not a model swap.)
 
 **VRAM / context** (`WES_NUM_CTX`, default 16384): every Ollama call bounds the
-context window. Without it Ollama reserves each model's *native* context (256K
-for the 12b), whose KV cache alone eats ~14GB and **evicts the e4b router** —
-which cratered voice latency (1s → 30-60s) once Discord started using the 12b
-routinely. Bounded to 16K, the e4b (3.4GB) and 12b (8.4GB) coexist (~15GB/16GB,
-tight — lower `WES_NUM_CTX` or `WES_CONV_TURNS_DISCORD` for gaming headroom).
+context window. Without it Ollama reserves the model's *native* 256K context, whose
+KV cache alone eats ~14GB. Bounded to 16K, the single 12b measures **7.0GB weights,
+7.8GB resident, ~6.3GB free** (~50MB KV per 1k ctx) — comfortable on the 16GB card
+(the old tight e4b+12b coexistence is gone with the second model). Lower
+`WES_NUM_CTX` or `WES_CONV_TURNS_DISCORD` for extra gaming headroom.
 
 ## STT contextual biasing (added 2026-07-04)
 

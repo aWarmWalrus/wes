@@ -2,13 +2,13 @@
 
 The current WES work queue — **open tickets only** (closed ones live in
 `done/`, out of context). One line each; open the file for full context.
-Conventions + workflow: `README.md`. Next free id: **029** (open here;
-001 + 014-024 shipped in `done/2026-07/`).
+Conventions + workflow: `README.md`. Next free id: **030** (open here;
+001-002 + 014-024 shipped in `done/2026-07/`).
 
 ## High priority
 
-- [002](open/high/002-escalation-announced-not-executed.md) — Router promises to "look into it" but never calls `escalate_to_claude` (no deferred-action support)
-- [028](open/high/028-planner-multistep-reasoning.md) — Planner/orchestrator for ambiguous ("when do the Nets next play") + multi-step ("who's playing… who has most pts/reb") queries; design-first, sibling to #026
+- [029](open/high/029-fantasy-gm-autopilot.md) — **Fantasy GM epic**: Jarvis autonomously manages Yahoo NBA teams (read → value → optimize → gated execute), per-team autonomy. Official Yahoo API abandoned (approval + no-caching ToS) → **Playwright browser automation**. **P0 DONE (2026-07-20)** — `fantasy_my_team` live (12th tool), real roster+scoring answered end-to-end, `teams.yaml` configured, eval-gated. **Next: P1 valuation** (`fantasy_player_value`). Roadmap in `docs/fantasy-gm-design.md`
+- [028](open/high/028-planner-multistep-reasoning.md) — Planner/orchestrator for ambiguous ("when do the Nets next play") + multi-step ("who's playing… who has most pts/reb") queries; design-first, sibling to #026. **Not on #029's critical path** (design §8.1)
 
 ## Medium priority
 

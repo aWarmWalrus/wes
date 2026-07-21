@@ -44,6 +44,7 @@ import anthropic
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wes_hosts  # noqa: E402 — host registry (hosts.yaml); repo root on path
 import wes_nba  # noqa: E402 — NBA live data (ESPN free API); same dir on path
+import wes_yahoo  # noqa: E402 — Yahoo fantasy read (browser automation, #029)
 
 from flask import Flask, Response, request, jsonify
 from prometheus_client import (Counter, generate_latest,
@@ -118,6 +119,33 @@ NUM_CTX = int(os.environ.get("WES_NUM_CTX", "16384"))
 ESCALATE_ACK = os.environ.get(
     "WES_ESCALATE_ACK", "Good question — let me think about that. ")
 ANTHROPIC_MODEL = os.environ.get("WES_LLM_MODEL", "claude-haiku-4-5")
+# Web search on the Claude escalation path (#029 followup): the local router
+# can hand a LIVE-INFO query to Haiku, which runs Anthropic's server-side web
+# search and answers from real results. Distinct from escalate_to_claude, which
+# stays on the local 12b deep tier for hard REASONING (owner's choice: reasoning
+# free/local, only live/web lookups pay for Claude). Haiku 4.5 uses the basic
+# web_search tool variant (the _20260209 dynamic-filtering one needs Opus/Sonnet).
+WEB_SEARCH = os.environ.get("WES_WEB_SEARCH", "1") == "1"
+WEB_SEARCH_MAX_USES = int(os.environ.get("WES_WEB_SEARCH_MAX_USES", "4"))
+WEB_SEARCH_SERVER_TOOL = {
+    "type": "web_search_20250305",
+    "name": "web_search",
+    "max_uses": WEB_SEARCH_MAX_USES,
+}
+# Spoken/typed the moment a web lookup fires, to cover Claude's spin-up (like
+# ESCALATE_ACK). Must end with a terminator + space so the TTS splitter flushes.
+WEB_SEARCH_ACK = os.environ.get("WES_WEB_SEARCH_ACK", "Let me look that up. ")
+# Appended to Claude's system prompt on a web-search handoff. The router's
+# invisible-handoff rule doesn't reach Haiku (it runs the normal Jarvis prompt),
+# so tell Haiku directly not to narrate the search — same "seamless" principle
+# as the escalation path.
+WEB_SEARCH_NUDGE = (
+    " CRITICAL OUTPUT RULE: You can look up current information on the web, but "
+    "the user must never see the lookup. Your VERY FIRST words must be the answer "
+    "itself. Do NOT write any sentence — before, during, or after the lookup — "
+    "about searching, looking, checking, finding, or the web (no \"I'll search\", "
+    "\"let me look that up\", \"I found that\", \"according to...\"). Reply exactly "
+    "as if you already knew the fact.")
 # The base persona is CHANNEL-AGNOSTIC (Jarvis is the same whether reached by
 # voice or Discord). Channel-specific presentation lives in the *_CHANNEL_NOTE
 # constants below and is appended per turn. This is also the in-code fallback
@@ -472,6 +500,26 @@ TOOLS = [
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
+    {
+        "name": "fantasy_my_team",
+        "description": (
+            "The owner's Yahoo fantasy basketball team, read live from Yahoo "
+            "(not memory): the current roster — players, positions, injury "
+            "status — plus the league's scoring settings. Use for 'what's my "
+            "fantasy team/roster', 'who's on my fantasy team', 'what are my "
+            "league's scoring categories'. Optionally name a team if the owner "
+            "runs more than one. Never invent players or stats — call this."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team": {"type": "string",
+                         "description": "which fantasy team, by name, if the "
+                                        "owner has several; omit for the default"},
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -521,12 +569,54 @@ ESCALATE_TOOL = {
 }
 
 
-def _local_toolset():
-    """Tools for the router: the shared TOOLS plus, when an escalation target
-    exists (a local deep model, or Claude with a key), the escalation function
-    for smart routing."""
+# Routing tool for the local backend only: the router calls this to answer a
+# LIVE-INFO question via Claude Haiku + web search. Distinct from
+# escalate_to_claude (hard REASONING → local 12b+thinking): this one is for
+# facts that need the internet. Never shown to Claude.
+WEB_SEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "search_web",
+        "description": (
+            "Look up CURRENT, real-world information on the web — today's news, "
+            "weather, live prices, sports results or scores your other tools "
+            "don't cover, recent events, or any fact that changed after your "
+            "training and that you can't answer from your own knowledge. Use "
+            "whenever the user asks about something current or external that your "
+            "local tools (Pi status, camera, NBA scores, memory, date/time) don't "
+            "already answer. Do NOT use for general knowledge you already know, "
+            "chit-chat, math, or anything another tool covers. Call it "
+            "IMMEDIATELY as your only output. The lookup is invisible to the "
+            "user: never mention searching, the web, or Claude."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string",
+                          "description": "what to look up, as a search phrase"},
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def _web_search_available():
+    """Web search rides the Claude handoff, so it needs a key AND the toggle."""
+    return WEB_SEARCH and bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def _local_toolset(deep=False):
+    """Tools for the router: the shared TOOLS, plus the handoff functions when
+    their targets exist. `search_web` (→ Haiku + web search, live info) is
+    offered in BOTH the fast router and the deep tier — even the 12b deep tier
+    can't reach the web itself. `escalate_to_claude` (→ local 12b+thinking, hard
+    reasoning) is offered only to the FAST router: the deep tier already IS that
+    reasoning escalation, so it must not recurse into itself."""
     tools = _ollama_tools() if TOOLS_ENABLED else []
-    if ESCALATE and (ESCALATE_MODEL or os.environ.get("ANTHROPIC_API_KEY")):
+    if _web_search_available():
+        tools = tools + [WEB_SEARCH_TOOL]
+    if not deep and ESCALATE and (ESCALATE_MODEL or os.environ.get("ANTHROPIC_API_KEY")):
         tools = tools + [ESCALATE_TOOL]
     return tools
 
@@ -725,6 +815,8 @@ def run_tool(name, tool_input):
             return wes_nba.player_points(tool_input.get("player", ""))
         if name == "nba_discussion":
             return wes_nba.subreddit_discussion()
+        if name == "fantasy_my_team":
+            return wes_yahoo.fantasy_my_team(tool_input.get("team"))
         return f"unknown tool: {name}"
     except Exception as e:  # noqa: BLE001
         return f"tool error: {e}"
@@ -1188,13 +1280,62 @@ def record_spoken_turn(transcript, reply, completed):
 # you should ask Claude...") and replace it with the deep tier's real answer.
 RESET = object()
 
+# --- Unkept-promise guard (#002) --------------------------------------------
+# The router sometimes only PROMISES to act ("I'll look into it and get back to
+# you") while making no escalate_to_claude call, so nothing happens and the user
+# is left holding a promise WES has no deferred-action machinery to keep. This
+# is distinct from the announce+call case, which the buffered RESET retraction
+# already handles (commit 5bd8cdc): here there is no call to retract.
+#
+# Precision matters more than recall. A promise followed by a real tool call
+# ("I'll check the system status for you." + get_system_status) is KEPT and must
+# not be touched — so the turn's tool notes, not the wording, are what separate
+# the two. Only fires when NOTHING ran: no tools, no escalation.
+_PROMISE_RE = re.compile(
+    r"(get back to (you|ya)"
+    r"|let you know"
+    r"|look into (it|that|this)"
+    r"|(ask|consult|check with) (claude|someone|somebody)"
+    r"|i'?ll (find out|research|investigate|dig into)"
+    r"|give me a (moment|second|minute|sec)"
+    r"|(i'?ll|let me) (get|circle) back)",
+    re.I,
+)
+# Prepended to the retry so the deep tier answers instead of deferring again.
+NO_DEFER_FRAMING = (
+    "[Your previous attempt only PROMISED to look into this later. You cannot "
+    "act later — you have no deferred actions. Answer the question directly and "
+    "completely NOW, using the tools available if they help. Do not offer to "
+    "check, ask anyone else, or get back to the user.]\n\n"
+)
+
+
+def _is_unkept_promise(reply):
+    """True when a reply defers action that will never happen. Requires an
+    escalation target, no escalation already done, and — critically — that no
+    tool ran this turn (a tool run means the promise was kept)."""
+    if not reply or not _PROMISE_RE.search(reply):
+        return False
+    if not (ESCALATE_MODEL or os.environ.get("ANTHROPIC_API_KEY")):
+        return False  # nowhere to retry — a bare promise beats no answer
+    if getattr(_turn_notes, "escalated", False):
+        return False
+    if getattr(_turn_notes, "tools", None):
+        return False
+    return True
+
 
 def _think_local(transcript, channel="voice"):
     """One-shot local reply — same tool loop as streaming, joined. Without tools
     gemma4 hallucinates tool output (fake times, literal '{tool_output}').
     Runs buffered: no text reaches the user until the reply is complete, so a
     late escalation can still cleanly replace everything said before it.
-    Deep-tier channels (Discord) run the 12b+thinking as their router."""
+    Deep-tier channels (Discord) run the 12b+thinking as their router.
+
+    Buffered means nothing has reached the user yet, so an unkept promise
+    (#002) can be silently re-run at the deep tier and replaced with a real
+    answer. Streaming voice (/respond_stream) is already speaking and cannot
+    retract, so it is out of scope here."""
     deep = _channel_deep(channel)
     parts = []
     for delta in _stream_local(transcript, channel=channel, buffered=True,
@@ -1203,7 +1344,22 @@ def _think_local(transcript, channel="voice"):
             parts.clear()
         else:
             parts.append(delta)
-    return "".join(parts).strip()
+    reply = "".join(parts).strip()
+
+    if _is_unkept_promise(reply):
+        print(f"[route] unkept promise -> re-running at deep tier: "
+              f"{reply[:60]!r}", flush=True)
+        _note_escalation()
+        retry = "".join(
+            d for d in _stream_escalation(NO_DEFER_FRAMING + transcript,
+                                          channel=channel)
+            if d is not RESET
+        ).strip()
+        # Keep the original if the retry came back empty — never trade a weak
+        # answer for dead air.
+        if retry:
+            return retry
+    return reply
 
 
 def _stream_escalation(transcript, channel="voice"):
@@ -1231,7 +1387,7 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False,
         + conversation_context(channel)
         + [{"role": "user", "content": transcript}]
     )
-    tools = (_ollama_tools() if TOOLS_ENABLED else []) if deep else _local_toolset()
+    tools = _local_toolset(deep=deep)
     model = ESCALATE_MODEL if deep else None
     max_tokens = 2048 if deep else 512
     yielded = False
@@ -1291,6 +1447,27 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False,
                     "role": "tool", "tool_name": name,
                     "content": ("Escalation unavailable mid-reply — answer the "
                                 "question yourself, concisely."),
+                })
+                continue
+            if name == "search_web":
+                # Live-info handoff → Haiku + web search. Allowed in fast OR deep
+                # (the 12b deep tier can't reach the web either), guarded only by
+                # "haven't spoken yet" so we never double-answer.
+                if not yielded or buffered:
+                    print(f"[route] web search -> Haiku: "
+                          f"{args.get('query', '?')}", flush=True)
+                    _note_tool("search_web")
+                    if buffered:
+                        if yielded:
+                            yield RESET
+                    elif WEB_SEARCH_ACK:
+                        yield WEB_SEARCH_ACK  # masks the web-search spin-up
+                    yield from _stream_claude(transcript, channel=channel, web=True)
+                    return
+                messages.append({
+                    "role": "tool", "tool_name": name,
+                    "content": ("Web lookup unavailable mid-reply — answer as best "
+                                "you can from what you know."),
                 })
                 continue
             print(f"[tool] {name}({args})", flush=True)
@@ -1398,8 +1575,10 @@ def stream_reply(transcript):
     yield from _stream_claude(transcript)
 
 
-def _stream_claude(transcript, channel="voice"):
-    """Yield the reply text in deltas as Claude streams it."""
+def _stream_claude(transcript, channel="voice", web=False):
+    """Yield the reply text in deltas as Claude streams it. web=True adds
+    Anthropic's server-side web search (for the search_web live-info handoff) —
+    Claude runs the searches itself; we just relay the streamed text."""
     client = get_anthropic()
     if client is None:
         yield f"I heard: {transcript}"
@@ -1407,15 +1586,19 @@ def _stream_claude(transcript, channel="voice"):
 
     # History rides along on escalation, so Claude sees what gemma already said
     messages = conversation_context(channel) + [{"role": "user", "content": transcript}]
-    tools = TOOLS if TOOLS_ENABLED else []
+    tools = list(TOOLS) if TOOLS_ENABLED else []
     system = system_prompt(channel)  # channel framing + who's in frame right now
+    if web and WEB_SEARCH:
+        tools = tools + [WEB_SEARCH_SERVER_TOOL]  # server-side; no client execution
+        system = system + WEB_SEARCH_NUDGE  # answer, don't narrate the search
+    max_tokens = 1024 if web else 512  # web answers + tool rounds need more room
 
     for _ in range(MAX_TOOL_ROUNDS):
         _record_llm_call()
         try:
             with client.messages.stream(
                 model=ANTHROPIC_MODEL,
-                max_tokens=512,
+                max_tokens=max_tokens,
                 system=system,
                 messages=messages,
                 tools=tools,
@@ -1434,10 +1617,16 @@ def _stream_claude(transcript, channel="voice"):
             return
 
         messages.append({"role": "assistant", "content": final.content})
+        # Server tools (web_search) can hit the per-turn loop cap and pause; the
+        # API resumes when we re-send the history unchanged (no extra user turn).
+        if final.stop_reason == "pause_turn":
+            continue
         if final.stop_reason != "tool_use":
             return  # final answer delivered
 
-        # Run the requested tools and feed results back.
+        # Run CLIENT tools and feed results back. Server-side blocks
+        # (server_tool_use / web_search_tool_result) already ran remotely and are
+        # skipped here — only block.type == "tool_use" needs local execution.
         tool_results = []
         for block in final.content:
             if block.type == "tool_use":
@@ -1449,6 +1638,8 @@ def _stream_claude(transcript, channel="voice"):
                     "tool_use_id": block.id,
                     "content": result,
                 })
+        if not tool_results:
+            return  # only server tools ran; nothing to feed back
         messages.append({"role": "user", "content": tool_results})
 
 

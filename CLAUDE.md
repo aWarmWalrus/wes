@@ -3,11 +3,18 @@
 A 3-tier local voice assistant: **Pi 5 + Hailo-8** (edge: wake word, audio, on-device
 vision) ↔ **PC / RTX 5060 Ti 16GB** (STT, LLM, TTS) ↔ **Claude API** (fallback).
 Built and working today: wake word → VAD-endpointed capture → PC Whisper STT → local
-**gemma4:e4b** via Ollama as router (`WES_LLM=local`; streaming + tools), escalating
-hard queries to the resident **gemma4:12b** with thinking (`WES_ESCALATE_MODEL`;
-also the VLM for scene description — both fit the 16GB card; Claude Haiku is the
-error-fallback/optional backend) → piper TTS streamed sentence-by-sentence to a
+**gemma4:12b** via Ollama (`WES_LLM=local`; streaming + tools) serving as router,
+escalation (thinking) and VLM in one → piper TTS streamed sentence-by-sentence to a
 Bluetooth JBL. Turns share a sliding-window conversation memory (`docs/pipeline.md`).
+Claude Haiku is the error-fallback/optional backend.
+
+> **Model topology (2026-07-16): ONE model.** Was e4b-router + 12b-escalate; the
+> e4b tag vanished from Ollama and every router call silently fell back to Claude
+> for a week (`/health` echoes config, not reality). Collapsed to 12b alone as the
+> project pivots to batch/analysis. Measured: 7.0GB weights, **7.8GB resident at
+> `num_ctx=16384`** (~50MB KV per 1k ctx), 6.3GB free. `gemma3:4b` has vision but
+> **no `tools`**, so it can never be the router. **Run `wes-dev.ps1 models check`
+> after any model change** — it catches exactly this drift.
 
 > This root file is loaded every session — keep it lean. Put subsystem detail in
 > `docs/*.md` and read those on demand. (`@import` does NOT save context; a pointer I
@@ -44,10 +51,22 @@ systemctl --user restart wes-client   # reload after editing pi/wes_client.py
 journalctl --user -u wes-client -n 30 # logs
 ```
 ```powershell
-# PC server runs as scheduled task "WES Server" (auto-starts at logon).
-Stop-ScheduledTask -TaskName "WES Server"; Start-ScheduledTask -TaskName "WES Server"  # reload after editing wes_server.py
+# PC ops go through ONE allowlisted helper (no per-command prompt):
+& C:\Users\awarm\wes-pc\wes-dev.ps1 <cmd>
+#   reload [server|discord|exporters]  restart the task + wait for /health
+#   test | eval [local|haiku] | perf   run the suites (see wes-test skill)
+#   say <channel> <text> | reset | turns | usage | health | log [svc] [n]
+#   gpu                                nvidia-smi + ollama ps
+#   models [status|check|list|load|unload|fit]   VRAM/model manager (pin, drift-check)
+# Raw equivalents (only if a flag the helper lacks is needed):
+Stop-ScheduledTask -TaskName "WES Server"; Start-ScheduledTask -TaskName "WES Server"
 Get-Content C:\Users\awarm\wes-pc\logs\server.log -Tail 20   # server log
 ```
+> **Managing what's in VRAM:** `wes-dev.ps1 models status` shows resident/pinned
+> models + config-vs-reality drift; `models load <tag>` pins a model
+> (`keep_alive=-1`), `models unload` frees it, `models fit` checks headroom.
+> Run `models check` after ANY model change — it catches the silent
+> config/reality drift that once fell back to Claude for a week.
 
 ## Key files
 
@@ -111,4 +130,10 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
 - `docs/memory-design.md` — long-term memory design (OpenClaw-style file-based
   MEMORY.md + remember/forget tools + nightly consolidation); exploration only,
   not yet built.
+- `docs/fantasy-gm-design.md` — Fantasy GM epic (#029): autonomous Yahoo NBA
+  team management (read → value → optimize → gated execute), per-team autonomy
+  config + rails; phased roadmap. **P0 (Yahoo read) shipped 2026-07-20** —
+  `fantasy_my_team` tool scrapes the owner's real roster + scoring via
+  Playwright; P1 (valuation) is next. Platform pivoted from the official Yahoo
+  API to browser automation (API access now requires a no-caching DocuSign).
 - `docs/keyresults.md` — current-cycle key results, refreshed periodically.

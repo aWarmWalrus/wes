@@ -1,8 +1,8 @@
 # On-device vision
 
 (Written when Claude was the LLM tier — read "Claude" below as "the router
-LLM"; since 2026-07-04 that's local gemma4:e4b, and the mechanics are
-backend-agnostic.)
+LLM"; since 2026-07-16 that's local **gemma4:12b**, which is also the VLM — one
+model serves chat, escalation, and vision. The mechanics are backend-agnostic.)
 
 Three vision capabilities, all fed to the LLM as tools or as prefetched context:
 **object detection** (Hailo YOLOv8s), **rich scene description** (local Gemma VLM), and
@@ -25,11 +25,13 @@ Three vision capabilities, all fed to the LLM as tools or as prefetched context:
   5060 Ti), kept resident via `keep_alive: -1` + startup warmup. **Measured warm
   inference ≈ 15s per frame** (image prefill dominates) — acceptable only because the
   wake-word prefetch hides it; an ad-hoc cache-miss `describe_scene` is slow.
-  `WES_VLM_MODEL` swaps it (launcher-set; the code default in `wes_server.py` is still
-  the old `gemma3:4b`). Chat stays on `gemma4:e4b`, which **cannot serve as the VLM**:
-  its Ollama build ignores `images` on `/api/generate` ("no image was provided" —
-  verified 2026-07-04), so the 12b isn't just richer, it's the only local gemma4
-  option that sees at all. Both models fit the 16GB card together (11.4GB).
+  `WES_VLM_MODEL` sets it (launcher points it at the same `gemma4:12b` that serves
+  chat; the code default in `wes_server.py` is still the old `gemma3:4b`). Since the
+  2026-07-16 collapse to one model, the router **is** the VLM — no separate vision
+  model to co-resident. (History: the old `gemma4:e4b` router **couldn't** serve as
+  the VLM — its Ollama build ignored `images` on `/api/generate`, "no image was
+  provided", verified 2026-07-04 — which is part of why 12b was kept for vision.)
+  `gemma3:4b` sees but has **no `tools`**, so it can never be the router.
 - Flow: Pi `capture_frame.py` (system python3 + cv2) → JPEG → PC `describe_scene` →
   Gemma → Claude relays. Single frame, **not** a video stream.
 - Claude chooses: `look` (fast object list) vs `describe_scene` (rich, Gemma).

@@ -137,9 +137,25 @@ model's memory.
 - **P1b (DONE)**: r/GoNets discussion via reddit RSS + injection guard.
 - **P1b**: r/GoNets discussion tool (pick the reliable Reddit path — free
   read-only app or no-auth MCP; raw *.json often 403s from servers).
-- **P2**: local nightly cache (Nets schedule/roster/standings) for instant
-  offline reference; scheduled task in the nightly slot.
+- **P2**: local nightly cache — **ALL 30 TEAMS, not just the Nets** (owner,
+  2026-07-16): schedule/rosters/standings/box scores for instant offline
+  reference; scheduled task in the nightly slot.
+  **Storage is a non-issue** — a full season across all teams is ~20-50MB in
+  sqlite (schedule ~250KB for 1,230 games; rosters ~250KB for ~500 players; box
+  scores ~5MB raw, ~20MB indexed). Even a decade stays under a GB.
+  **EXCLUDE play-by-play** (~1-2MB/game, ~1-2GB/season) — it buys fantasy
+  nothing. The real constraint is **fetch volume vs ESPN's unofficial API**:
+  backfill 1,230 games politely (rate-limited, resumable), then nightly deltas.
+  This cache is also the ingestion pattern the #029 GM batch job reuses.
 - **P3**: generalize the fetch/reddit tools onto an MCP client layer (reusable
   for future domains) + broader news (Yahoo RSS / Brave/Fetch MCP).
 Direct-first because ESPN is a trivial REST API — MCP wrapping it adds
 complexity for no gain; MCP earns its place at P3 for reddit/news/reuse.
+
+### 2026-07-20 — general web search shipped (partially covers P3 "news")
+The router now has a `search_web` handoff → Claude Haiku + server-side web search
+(docs/pipeline.md), for any current/live fact the curated tools don't cover. This
+delivers the ad-hoc "broader news / general internet" slice of P3 **without** an
+MCP layer — so P3 narrows to the *reusable MCP client* + *curated* NBA feeds
+(the ESPN/reddit tools stay purpose-built for reliability and the router's tool
+budget; web search is the general fallback, not a replacement for them).

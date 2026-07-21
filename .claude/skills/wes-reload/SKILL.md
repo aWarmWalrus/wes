@@ -33,8 +33,8 @@ Start-ScheduledTask -TaskName "WES Server"
   before `/health` answers. Poll with a generous deadline; do not conclude
   failure at 45s.
 - Verify: `Invoke-RestMethod http://127.0.0.1:8080/health` — the `llm` field
-  shows the router + escalation target (e.g.
-  `local (gemma4:e4b) + gemma4:12b escalation (thinking)`).
+  shows the router + escalation target (single-model topology since 2026-07-16,
+  e.g. `local (gemma4:12b) + gemma4:12b escalation (thinking)`).
 
 ## Reading the logs
 

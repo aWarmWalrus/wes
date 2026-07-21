@@ -35,6 +35,7 @@ Results append to eval_history.csv; the run FAILS (exit 1) if
     ... --judge local         # free local judge (nightly)
     ... --judge both          # judge-agreement check
     ... --no-judge            # deterministic checks only
+    ... --web-search          # also run web_search cases (paid API — weekly, not nightly)
 
 Audio goes over HTTP only; nothing is ever played on a speaker.
 """
@@ -354,7 +355,13 @@ def main():
                          "'both' also scores with local and reports agreement")
     ap.add_argument("--no-judge", action="store_true",
                     help="alias for --judge off (deterministic checks only)")
+    ap.add_argument("--web-search", action="store_true",
+                    help="include web_search-tagged cases (they hit the PAID "
+                         "Anthropic web-search API). Off by default so nightly "
+                         "runs stay free; run these weekly. Env: "
+                         "WES_EVAL_WEB_SEARCH=1. --only <id> also forces one in.")
     args = ap.parse_args()
+    run_web = args.web_search or os.environ.get("WES_EVAL_WEB_SEARCH") == "1"
 
     backend = args.judge or ("off" if args.no_judge else JUDGE_BACKEND)
     if backend in ("haiku", "both") and \
@@ -382,6 +389,12 @@ def main():
     for case in cases:
         if case.get("requires_pi") and not pi_up:
             print(f"SKIP {case['id']}  (Pi unreachable)")
+            n_skip += 1
+            continue
+        # web_search cases hit the paid API — skip unless explicitly opted in
+        # (weekly). --only <id> forces the case in (cases is already filtered).
+        if case.get("web_search") and not run_web and not args.only:
+            print(f"SKIP {case['id']}  (web-search case; use --web-search / weekly)")
             n_skip += 1
             continue
         reset_server_conversation(args.url)

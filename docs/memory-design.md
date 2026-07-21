@@ -66,8 +66,8 @@ Two families, and WES should take the cheap ideas from the heavy one.
   memory dwarfs the context window.
 
 ### Verdict for WES
-A single household's durable facts are **kilobytes** — they fit in e4b's context
-every turn with room to spare, so retrieval (vectors, pgvector, MCP services)
+A single household's durable facts are **kilobytes** — they fit in the router
+model's context every turn with room to spare, so retrieval (vectors, pgvector, MCP services)
 solves a problem WES doesn't have yet, at the cost of a new resident process
 competing for the 16GB GPU and — worse — memory a family can't `cat` or delete.
 **Stay file-based (Obsidian/Karpathy-shaped), and borrow the good ideas from the
