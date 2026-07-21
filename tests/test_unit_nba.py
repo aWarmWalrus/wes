@@ -322,6 +322,41 @@ class TestDiscussion:
         wes_nba._text_cache.clear()
 
 
+class TestTeamSubreddit:
+    """nba_discussion now works for ANY NBA team, not just the Nets."""
+
+    def test_nickname_city_and_default(self):
+        assert wes_nba.team_subreddit("Lakers") == "lakers"
+        assert wes_nba.team_subreddit("Boston") == "bostonceltics"   # city alias
+        assert wes_nba.team_subreddit("nets") == "GoNets"
+
+    def test_substring_and_normalization(self):
+        assert wes_nba.team_subreddit("the Brooklyn Nets") == "GoNets"
+        assert wes_nba.team_subreddit("how are my Lakers") == "lakers"
+        assert wes_nba.team_subreddit("Trail Blazers") == "ripcity"
+
+    def test_all_30_teams_map_to_a_sub(self):
+        # every nickname resolves; no dangling entries
+        assert len(set(wes_nba._TEAM_SUBREDDITS.values())) >= 30
+        assert all(wes_nba.team_subreddit(n) for n in wes_nba._TEAM_SUBREDDITS)
+
+    def test_unknown_team(self):
+        assert wes_nba.team_subreddit("Manchester United") is None
+
+    def test_discussion_resolves_team_to_sub(self):
+        out = wes_nba.subreddit_discussion(
+            team="Lakers", _fetch=lambda: _RSS, now=_NOW)
+        assert "r/lakers" in out and "UNTRUSTED" in out  # guard names the sub
+
+    def test_discussion_unknown_team_is_soft(self):
+        out = wes_nba.subreddit_discussion(team="Cricket FC")
+        assert "don't know which subreddit" in out
+
+    def test_discussion_defaults_to_nets(self):
+        out = wes_nba.subreddit_discussion(_fetch=lambda: _RSS, now=_NOW)
+        assert "GoNets" in out
+
+
 # --- opt-in live smoke test (schema drift canary) ---------------------------
 
 @pytest.mark.skipif(os.environ.get("WES_NBA_LIVE") != "1",

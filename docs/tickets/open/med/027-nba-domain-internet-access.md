@@ -134,7 +134,11 @@ model's memory.
 - **P1 (DONE)**: ESPN direct-REST tools (curated/wrapped so the small
   router isn't overloaded) → live score, today's games, live player box score;
   Nets as default team. Works voice + Discord. No key, no cost.
-- **P1b (DONE)**: r/GoNets discussion via reddit RSS + injection guard.
+- **P1b (DONE)**: team-subreddit discussion via reddit RSS + injection guard.
+  Generalized 2026-07-20 beyond the Nets: `nba_discussion` takes an optional
+  `team` (name/nickname/city) resolved to that team's subreddit via a static
+  30-team map (`team_subreddit`), defaulting to the Nets (r/GoNets). Works
+  offseason (static map, unlike the games-dependent scores resolver).
 - **P1b**: r/GoNets discussion tool (pick the reliable Reddit path — free
   read-only app or no-auth MCP; raw *.json often 403s from servers).
 - **P2**: local nightly cache — **ALL 30 TEAMS, not just the Nets** (owner,

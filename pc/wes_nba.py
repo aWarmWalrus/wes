@@ -571,10 +571,74 @@ def format_discussion(posts, sub=DEFAULT_SUBREDDIT):
     return "\n".join(lines)
 
 
-def subreddit_discussion(sub=None, limit=6, _fetch=None, now=None):
-    """Recent discussion from the Nets subreddit (default r/GoNets), wrapped in
-    an untrusted-data guard. _fetch injectable for tests."""
-    sub = sub or DEFAULT_SUBREDDIT
+# Each NBA team's fan subreddit, keyed by nickname (how people refer to a team).
+# A static map so it resolves OFFSEASON too (the live-scores team resolver needs
+# games in the scoreboard; this must work year-round). A wrong/renamed sub just
+# degrades to "couldn't reach r/X", never raises.
+_TEAM_SUBREDDITS = {
+    "hawks": "AtlantaHawks", "celtics": "bostonceltics", "nets": "GoNets",
+    "hornets": "CharlotteHornets", "bulls": "chicagobulls",
+    "cavaliers": "clevelandcavs", "cavs": "clevelandcavs", "mavericks": "Mavericks",
+    "mavs": "Mavericks", "nuggets": "denvernuggets", "pistons": "DetroitPistons",
+    "warriors": "warriors", "rockets": "rockets", "pacers": "pacers",
+    "clippers": "LAClippers", "lakers": "lakers", "grizzlies": "memphisgrizzlies",
+    "heat": "heat", "bucks": "MkeBucks", "timberwolves": "timberwolves",
+    "wolves": "timberwolves", "pelicans": "NOLAPelicans", "knicks": "NYKnicks",
+    "thunder": "Thunder", "magic": "OrlandoMagic", "76ers": "sixers",
+    "sixers": "sixers", "suns": "suns", "trail blazers": "ripcity",
+    "blazers": "ripcity", "kings": "kings", "spurs": "NBASpurs",
+    "raptors": "torontoraptors", "jazz": "UtahJazz", "wizards": "washingtonwizards",
+}
+# City/market names people use instead of the nickname -> nickname key above.
+_CITY_ALIASES = {
+    "atlanta": "hawks", "boston": "celtics", "brooklyn": "nets",
+    "charlotte": "hornets", "chicago": "bulls", "cleveland": "cavaliers",
+    "dallas": "mavericks", "denver": "nuggets", "detroit": "pistons",
+    "golden state": "warriors", "houston": "rockets", "indiana": "pacers",
+    "memphis": "grizzlies", "miami": "heat", "milwaukee": "bucks",
+    "minnesota": "timberwolves", "new orleans": "pelicans", "new york": "knicks",
+    "oklahoma city": "thunder", "okc": "thunder", "orlando": "magic",
+    "philadelphia": "76ers", "philly": "76ers", "phoenix": "suns",
+    "portland": "blazers", "sacramento": "kings", "toronto": "raptors",
+    "utah": "jazz", "washington": "wizards", "san antonio": "spurs",
+    # LA is ambiguous (Lakers vs Clippers); default to the Lakers.
+    "la": "lakers", "los angeles": "lakers",
+}
+
+
+def team_subreddit(team):
+    """An NBA team name / nickname / city -> its fan subreddit, or None if not
+    recognized. Matches exact nickname/city first, then a substring (so 'the
+    Brooklyn Nets' or 'how are my Lakers' still resolve)."""
+    q = _norm(team or "")
+    if not q:
+        return None
+    if q in _TEAM_SUBREDDITS:
+        return _TEAM_SUBREDDITS[q]
+    if q in _CITY_ALIASES:
+        return _TEAM_SUBREDDITS[_CITY_ALIASES[q]]
+    for nick, sub in _TEAM_SUBREDDITS.items():
+        if nick in q:
+            return sub
+    for city, nick in _CITY_ALIASES.items():
+        if city in q:
+            return _TEAM_SUBREDDITS[nick]
+    return None
+
+
+def subreddit_discussion(team=None, sub=None, limit=6, _fetch=None, now=None):
+    """Recent fan discussion from an NBA team's subreddit, wrapped in an
+    untrusted-data guard. `team` (name/nickname/city) resolves to that team's
+    subreddit; `sub` names one directly; neither = the owner's Nets (r/GoNets).
+    _fetch injectable for tests."""
+    if sub is None:
+        if team:
+            sub = team_subreddit(team)
+            if not sub:
+                return (f"I don't know which subreddit follows {team} — "
+                        "try a different NBA team.")
+        else:
+            sub = DEFAULT_SUBREDDIT
     url = f"https://www.reddit.com/r/{urllib.parse.quote(sub)}/.rss"
     try:
         xml_text = (_fetch or (lambda: _get_text(url, _REDDIT_UA)))()
