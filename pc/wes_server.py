@@ -111,9 +111,24 @@ def _channel_deep(channel):
     return bool(ESCALATE_MODEL) and channel in DEEP_CHANNELS
 
 
-# Ollama context window per call. Bounds KV-cache VRAM so the e4b router and the
-# 12b deep tier coexist in 16GB (the 12b's native 256K context would evict e4b).
+# Ollama context window per call. Bounds KV-cache VRAM — without it Ollama would
+# reserve the 12b's native 256K context (~14GB of KV alone). This is THE VRAM
+# knob (input + generated tokens share it).
 NUM_CTX = int(os.environ.get("WES_NUM_CTX", "16384"))
+# Deep-tier (12b + thinking) OUTPUT cap = Ollama num_predict. This is NOT a VRAM
+# limit (that's NUM_CTX); it caps how many tokens the model may GENERATE, and
+# thinking + the visible answer share it. A hard problem that spends the whole
+# budget thinking emits no content -> the Claude fallback in _stream_local. With
+# NUM_CTX=16384 and a short prompt there's ~14k of headroom, so raising this is
+# time-bound, not memory-bound. But MORE isn't better: measured 2026-07-21, a
+# genuinely hard question (Jacobian counterexample) thinks past ANY budget and
+# emits no content, so a bigger budget just delays the Claude fallback (54s@2048
+# vs 102s@4096) — and Claude answers hard questions better AND faster than the
+# 12b grinding. So the default stays MODEST: fail fast to the fallback; give the
+# knob more only for a workload where the 12b routinely *finishes* at 2-4k tokens.
+# Real fix for proportional effort is the adaptive budget (#026). Normal turns
+# stop early and are unaffected; the fast router keeps a tight 512.
+DEEP_NUM_PREDICT = int(os.environ.get("WES_DEEP_NUM_PREDICT", "2048"))
 # Spoken by the SERVER (not the model) the moment an escalation fires, so the
 # ~2-3s Claude spin-up isn't dead air. Must end with a sentence terminator +
 # space so the TTS splitter flushes it immediately. Empty string disables.
@@ -1084,13 +1099,17 @@ def conversation_context(channel="voice"):
         return list(conv)
 
 
-def record_turn(transcript, reply, channel="voice"):
-    """Append one exchange, keeping the last (per-channel) exchanges and
-    persisting the window. Empty transcripts (silence) and empty replies are
-    not memory."""
-    if not (transcript and transcript.strip() and reply and reply.strip()):
-        return
-    log_turn(transcript, reply, channel)
+def record_turn(transcript, reply, channel="voice", error=None):
+    """Record one exchange. ALWAYS logs the turn for observability — even a
+    failed or empty reply, which is exactly what you need to SEE to debug (the
+    turn log is the observability record, not just a memory of what worked).
+    Only a NON-empty reply becomes conversation memory: a blank assistant turn
+    would just pollute the model's context."""
+    if not (transcript and transcript.strip()):
+        return  # no request actually happened (true silence) — nothing to record
+    log_turn(transcript, reply, channel, error=error)
+    if not (reply and reply.strip()):
+        return  # logged as a failed turn above, but an empty reply isn't memory
     max_turns, ttl = _conv_policy(channel)
     with _conv_lock:
         conv = _convs.setdefault(channel, [])
@@ -1251,9 +1270,11 @@ def _note_escalation():
         _turn_notes.escalated = True
 
 
-def log_turn(transcript, reply, channel="voice"):
-    """Append one exchange (+ this thread's notes) to the turn log. Consumes
-    the notes; trims the file to TURNS_MAX lines; never breaks a turn."""
+def log_turn(transcript, reply, channel="voice", error=None):
+    """Append one exchange (+ this thread's notes) to the turn log. Consumes the
+    notes; trims the file to TURNS_MAX lines; never breaks a turn. `error` (or an
+    empty reply) tags the record `error` so failed turns are visible in /turns
+    and the Grafana table — every request is logged, success or not."""
     rec = {
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         "channel": channel,
@@ -1262,6 +1283,8 @@ def log_turn(transcript, reply, channel="voice"):
         "tools": list(getattr(_turn_notes, "tools", None) or []),
         "escalated": bool(getattr(_turn_notes, "escalated", False)),
     }
+    if error or not (reply and reply.strip()):
+        rec["error"] = error or "empty_reply"
     _turn_begin()  # notes are per-turn — never leak into this thread's next one
     try:
         with _turns_lock:
@@ -1425,7 +1448,7 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False,
     )
     tools = _local_toolset(deep=deep)
     model = ESCALATE_MODEL if deep else None
-    max_tokens = 2048 if deep else 512
+    max_tokens = DEEP_NUM_PREDICT if deep else 512
     yielded = False
     last_tool_result = None
     for _ in range(MAX_TOOL_ROUNDS):
@@ -1453,6 +1476,17 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False,
             # "Got it — I'll remember that ...") rather than dead air.
             if not yielded and last_tool_result:
                 yield last_tool_result
+            elif not yielded and deep:
+                # The deep tier (thinking ON) can spend its ENTIRE token budget on
+                # message.thinking and emit NO visible content on a hard problem —
+                # an empty reply, which the Discord bot shows as "(no reply)".
+                # Nothing has reached the user yet, so fall back to Claude, which
+                # can actually answer. (Repro: a Jacobian-conjecture counterexample
+                # verification thought for 54s and returned "".)
+                print("[route] deep tier emitted no content -> Claude fallback",
+                      flush=True)
+                _note_escalation()
+                yield from _stream_claude(transcript, channel=channel)
             return
         messages.append({
             "role": "assistant",
@@ -1920,10 +1954,18 @@ def respond_text():
 
     print(f"[respond_text] ({channel}) {text!r}", flush=True)
     t0 = time.perf_counter()
-    reply = think(text, channel=channel)
+    err = None
+    try:
+        reply = think(text, channel=channel)
+    except Exception as e:  # noqa: BLE001 — never let a crash go unlogged
+        err, reply = f"{type(e).__name__}: {e}", ""
+        print(f"[respond_text] think failed: {e!r}", flush=True)
     llm_ms = round((time.perf_counter() - t0) * 1000)
-    print(f"[respond_text] reply: {reply!r} ({llm_ms}ms)", flush=True)
-    record_turn(text, reply, channel=channel)
+    print(f"[respond_text] reply: {reply!r} ({llm_ms}ms)"
+          + (f" [ERROR {err}]" if err else ""), flush=True)
+    record_turn(text, reply, channel=channel, error=err)  # logs even on failure
+    if err:
+        reply = "Sorry, I ran into an error and couldn't answer that."
     return jsonify(reply=reply, timing={"llm_ms": llm_ms})
 
 
@@ -1964,10 +2006,17 @@ def respond():
     transcript = transcribe(wav_bytes)
     t_stt = time.perf_counter()
     print(f"[respond] transcript: {transcript!r}", flush=True)
-    reply = think(transcript)
+    err = None
+    try:
+        reply = think(transcript)
+    except Exception as e:  # noqa: BLE001 — log the failed turn, don't 500 silently
+        err, reply = f"{type(e).__name__}: {e}", ""
+        print(f"[respond] think failed: {e!r}", flush=True)
     t_llm = time.perf_counter()
-    print(f"[respond] reply: {reply!r}", flush=True)
-    record_turn(transcript, reply)
+    print(f"[respond] reply: {reply!r}" + (f" [ERROR {err}]" if err else ""), flush=True)
+    record_turn(transcript, reply, error=err)  # logs even on failure
+    if err:
+        reply = "Sorry, I ran into an error."
 
     stt_ms = round((t_stt - t0) * 1000)
     llm_ms = round((t_llm - t_stt) * 1000)
@@ -2050,6 +2099,7 @@ def respond_stream():
         full = []
         t_first = None
         completed = False
+        err = None
         try:
             for piece in source:
                 buf += piece
@@ -2072,11 +2122,19 @@ def respond_stream():
                         t_first = time.perf_counter()
                     yield ac.audio_int16_bytes
             completed = True
+        except Exception as e:  # noqa: BLE001 — a mid-stream failure must still log
+            err = f"{type(e).__name__}: {e}"
+            print(f"[stream] generation failed: {e!r}", flush=True)
         finally:
-            # A client abort (barge-in) lands here with completed=False: the
-            # partial reply is what the user heard — record it, tagged.
-            record_spoken_turn(transcript, "".join(full), completed)
             reply = "".join(full)
+            if err:
+                # Errored mid-stream: log it as a failure (not a barge-in, which
+                # is what completed=False would otherwise be tagged as).
+                record_turn(transcript, reply, error=err)
+            else:
+                # A client abort (barge-in) lands here with completed=False: the
+                # partial reply is what the user heard — record it, tagged.
+                record_spoken_turn(transcript, reply, completed)
             ttfa = round((t_first - t_stt) * 1000) if t_first else None
             total = round((time.perf_counter() - t0) * 1000)
             print(f"[stream] reply: {reply!r}", flush=True)

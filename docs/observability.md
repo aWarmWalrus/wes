@@ -97,11 +97,19 @@ cached 2026-06-24) — if `wes_server.py`'s pricing constants change, update the
 The dashboard's "Recent turns" table shows the last exchanges verbatim: query,
 reply, which tools ran, escalated y/n, per channel. Pipeline:
 
-- `wes_server` logs one JSONL record per completed exchange to
-  `C:\Users\awarm\wes-pc\logs\turns.jsonl` (env `WES_TURNS_LOG`), from the same
-  `record_turn()` choke point as conversation memory — voice, Discord, and
-  text all flow through it. Tool calls and escalations are captured via a
-  thread-local notepad (`_turn_begin`/`_note_tool`/`_note_escalation`).
+- `wes_server` logs one JSONL record per exchange to
+  `C:\Users\awarm\wes-pc\logs\turns.jsonl` (env `WES_TURNS_LOG`), from the
+  `record_turn()` choke point — voice, Discord, and text all flow through it.
+  Tool calls and escalations are captured via a thread-local notepad
+  (`_turn_begin`/`_note_tool`/`_note_escalation`).
+- **Every REQUEST is logged, success or not** (2026-07-21): logging is decoupled
+  from memory, so a turn with an empty/failed reply is still recorded — tagged
+  with an `error` field (`"empty_reply"`, or the exception on a crash) so failed
+  turns are visible in `/turns` and the table. Only a *non-empty* reply becomes
+  conversation memory. (Before this, an empty reply — the "(no reply)" bug — was
+  invisible in the log, which is exactly when you most need to see it. The
+  request handlers also wrap `think()` so a crash logs the turn + returns a
+  graceful reply instead of a silent 500.)
 - **This file stores content** — transcripts of everything said in the house —
   so unlike `usage.csv` it is a rolling window, not append-forever: past ~4MB
   it trims itself to the last `WES_TURNS_MAX` (default 2000) exchanges.

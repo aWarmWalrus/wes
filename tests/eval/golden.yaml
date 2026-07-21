@@ -75,9 +75,11 @@
     train catch up to the first train
   expect:
     transcript_includes: [train]
-    # '7 0 0 p.m.': whisper spells a spoken "seven o'clock / 7:00" out as digits,
-    # so allow zeros/colons/spaces between the 7 and the meridiem.
-    reply_regex: 'seven|7[\s:0]*(pm|p\.?m\.?|o.?clock)'
+    # whisper mangles a spoken "7:00 PM" wildly across runs: '7 0 0 p.m.',
+    # '7-0-0-BM', 'seven'. Allow digits/colons/dots/hyphens between the 7 and the
+    # meridiem, and accept the 'bm' mis-hearing of 'pm'. The judge confirms 7pm;
+    # this just keeps the deterministic check from flaking on STT noise.
+    reply_regex: 'seven|7[\s:0.\-]*(p\.?m\.?|pm|bm|o.?clock)'
     max_total_ms: 60000
     max_audio_s: 60
   judge: >-

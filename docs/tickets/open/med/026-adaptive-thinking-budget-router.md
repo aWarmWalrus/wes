@@ -85,6 +85,18 @@ prompted/heuristic router + a cheap verifier is the pragmatic sweet spot.
 
 ## Notes
 
+### 2026-07-21 — motivating bug: deep tier thinks past its budget → empty reply
+Live evidence for why the budget needs to be adaptive. A hard Discord question (a
+Jacobian-conjecture counterexample verification) made the 12b+thinking deep tier
+spend its **entire 2048-token budget on `message.thinking`**, emitting **zero
+visible content** — `reply: '' (54099ms)` — which the Discord bot showed as
+"(no reply)". **Shipped fix (correctness):** `_stream_local` now falls back to
+Claude when the deep tier yields no content (`not yielded and deep`), so a hard
+problem gets a real answer instead of dead air. **Still open here (latency):** the
+turn still burns ~54s thinking before the fallback fires — an *adaptive* budget /
+verify-and-escalate would cap the wasted thinking or route "too hard for 12b"
+straight to Claude. This bug is the concrete case the ticket should fix.
+
 ### 2026-07-20 — refreshed for the single-model topology
 The 2026-07-16 collapse to one `gemma4:12b` (docs/pipeline.md, CLAUDE.md) reshapes
 this ticket rather than retiring it:

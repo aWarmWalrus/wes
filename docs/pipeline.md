@@ -49,11 +49,21 @@ model-spoken: if the router has already started speaking, the handoff is suppres
 **The deep tier is configurable** (`WES_ESCALATE_MODEL`, 2026-07-05): the launcher
 sets **`gemma4:12b` with thinking enabled** — escalations answer fully locally (same
 tool loop, shared tools minus the escalate function so there's no recursion, a
-2048-token budget to cover the thinking; thinking deltas arrive in `message.thinking`
+`WES_DEEP_NUM_PREDICT`-token output budget (default 2048) to cover the thinking +
+answer — this is `num_predict`, an OUTPUT cap, NOT the VRAM knob `num_ctx`, so it's
+time-bound not memory-bound. Kept modest deliberately: a genuinely hard question
+thinks past any budget and emits nothing, so a bigger budget just delays the Claude
+fallback (measured 54s@2048 vs 102s@4096) — fail fast to the better+faster tier
+(#026 is the adaptive fix). Thinking deltas arrive in `message.thinking`
 which the server never reads, so they're never spoken). Unset, escalations go to
 Claude Haiku (needs the API key), which also remains the automatic fallback on local
 *errors* either way. The tool keeps its prompt-tuned `escalate_to_claude` name — its
-semantics ("hand off to the smarter tier") don't change with the target. Verified:
+semantics ("hand off to the smarter tier") don't change with the target. **Empty-reply
+guard (2026-07-21):** a hard problem can make the deep tier spend its whole budget on
+`message.thinking` and emit NO visible content (an empty reply → "(no reply)" on
+Discord); `_stream_local` detects `not yielded and deep` and **falls back to Claude**
+so the turn gets a real answer instead of dead air (it still costs the wasted thinking
+time first — an adaptive budget is #026). Verified:
 "what time is it" stays a plain pass; the multi-step train word problem logs
 `escalating to gemma4:12b` and comes back correct after hidden thinking.
 

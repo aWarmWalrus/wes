@@ -449,6 +449,26 @@ class TestOllamaBackend:
         roles = [m["role"] for m in calls[1]["messages"]]
         assert "tool" in roles
 
+    def test_deep_tier_empty_falls_back_to_claude(self, monkeypatch):
+        # a hard problem can make the 12b+thinking tier spend its whole budget on
+        # thinking and emit NO content -> empty reply ("(no reply)" on Discord).
+        # It must fall back to Claude rather than return "". (Jacobian repro.)
+        fake, _ = self._fake_urlopen([[{"message": {}, "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        monkeypatch.setattr(ws, "_stream_claude",
+                            lambda t, channel="voice": iter(["Verified for you."]))
+        assert "".join(ws._stream_local("hard", deep=True)) == "Verified for you."
+
+    def test_fast_tier_empty_does_not_fall_back(self, monkeypatch):
+        # the fallback is scoped to the deep (thinking) tier; a fast-router empty
+        # reply is a different, rare case and must stay unchanged (no Claude cost)
+        fake, _ = self._fake_urlopen([[{"message": {}, "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        monkeypatch.setattr(
+            ws, "_stream_claude",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not fall back")))
+        assert "".join(ws._stream_local("x", deep=False)) == ""
+
     def test_local_failure_falls_back_to_claude(self, monkeypatch):
         monkeypatch.setattr(ws, "LLM_BACKEND", "local")
 
@@ -1156,10 +1176,30 @@ class TestTurnLog:
         ws.record_turn("q", "r")
         assert ws.recent_turns()[0]["tools"] == []
 
-    def test_empty_turns_are_not_logged(self):
+    def test_no_request_is_not_logged(self):
+        # a true no-request (silence / empty transcript) isn't a turn at all
         ws.record_turn("", "Sorry, I didn't catch that.")
-        ws.record_turn("hello", "  ")
+        ws.record_turn("   ", "reply")
         assert ws.recent_turns() == []
+
+    def test_empty_reply_is_logged_as_a_failed_turn(self):
+        # a REQUEST that produced no reply MUST still be logged for observability
+        # (the "(no reply)" case) — tagged error, but NOT kept as memory
+        ws.reset_conversation("discord")  # isolate from other tests' memory
+        ws.record_turn("hard question", "", channel="discord")
+        recs = ws.recent_turns()
+        assert len(recs) == 1
+        assert recs[0]["transcript"] == "hard question"
+        assert recs[0]["error"] == "empty_reply"
+        assert ws.conversation_context("discord") == []  # logged, not remembered
+
+    def test_error_param_tags_the_logged_turn(self):
+        ws.record_turn("q", "", error="RuntimeError: boom")
+        assert ws.recent_turns()[0]["error"] == "RuntimeError: boom"
+
+    def test_successful_turn_has_no_error_field(self):
+        ws.record_turn("q", "a real answer")
+        assert "error" not in ws.recent_turns()[0]
 
     def test_stream_local_tool_call_is_captured(self, monkeypatch):
         fake, _ = TestOllamaBackend._fake_urlopen([
