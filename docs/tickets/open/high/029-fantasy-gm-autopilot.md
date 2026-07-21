@@ -47,7 +47,9 @@ confirmation tokens, idempotency, injection guard).
 - [x] **P1** — Valuation + full stat lines — **DONE 2026-07-20**. `fantasy_player_value`
       values a player (optionally vs another) in the league's roto categories from
       real ESPN season stats; new `pc/wes_fantasy.py` engine. See Notes.
-- [ ] **P2** — Daily lineup optimizer (advise / dry-run, explained, shadow-soaked)
+- [~] **P2** — Daily lineup optimizer (advise / dry-run) — **ENGINE DONE 2026-07-21**,
+      exact + property-tested; tool registration DEFERRED to in-season (offseason
+      it can only say "no games / positions blank"). See Notes.
 - [ ] **P3** — Executor + autonomy config + rails (first real Yahoo writes)
 - [ ] **P4** — Scheduling + pre-lock monitoring / late swaps
 - [ ] **P5** — Waiver / FAAB engine
@@ -75,6 +77,42 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 - [ ] Daily lineup management runs on schedule per each team's mode
 
 ## Notes
+
+### 2026-07-21 — P2 optimizer ENGINE done (advise/dry-run); tool deferred to in-season
+The deterministic daily-lineup optimizer + its assembly are built and validated;
+what's held back is only the live tool registration (offseason it can't produce a
+real lineup). What landed in `pc/wes_fantasy.py`:
+- **`optimize_lineup(players, slots)`** — EXACT max-value assignment of startable
+  players to the active slots respecting position eligibility (§8.2 "solve it
+  exactly, never ask a 12B"). Dependency-free (no scipy): a capacity-DP over slot
+  TYPES (state = player index × remaining per-type capacity), tiny for an NBA
+  roster. **Property-tested against brute force: 1500 random cases, 0 mismatch**
+  (unit test) + 3000 in dev. Slot eligibility = the standard Yahoo map
+  (G=PG/SG, F=SF/PF, UTIL=any); active slots are read off the roster itself
+  (no settings scrape). Injured/OUT and no-game-today players are benched;
+  reports empty slots. `format_lineup` renders it (~one line per starter).
+- **`roto_scalar`** — INTERIM per-player value: each league category
+  spread-normalized (so points don't dominate) and summed, TO negative,
+  percentages skipped. Placeholder for real per-league **z-scores** (deferred
+  with the population fetch, P1 scope note) — the optimizer is value-agnostic, so
+  z-scores drop in without touching it.
+- **`fantasy_optimize_lineup(team=)`** — the assembly: roster
+  (`wes_yahoo.roster_players`, new raw-dict accessor) → per-player `playing`
+  (`wes_nba.team_playing_today`, new) + `value` → `optimize_lineup` → explained
+  lineup. **ADVISE/DRY-RUN only — never writes** (that's P3). Fail-safe (§8.8):
+  degrades to a string on any problem, and specifically on the **offseason**
+  (blank positions → "can't build a lineup yet"; no games → "no lineup to set").
+  Fully unit-tested from fixtures (design §9 dry-run-from-a-read).
+- **Tests:** `TestOptimizeLineup` (known-optimal cases + the brute-force property
+  test), `TestRotoScalar`, `TestOptimizeAssembly` (all degradations + happy path).
+  284 unit pass. No eval-gate this turn — nothing touches the live router.
+
+**To finish P2 in-season (October):** (1) confirm the `WES_YAHOO_LIVE=1` canary
+shows eligible positions populate; (2) register `fantasy_optimize_lineup` in
+`wes_server.TOOLS` + dispatch (a ~5-line change; gate behind an eval run for the
+tool-count budget); (3) add a golden case; (4) shadow-soak (compare its picks to
+hand-set lineups) before P3 lets it write. Optional refinement: swap
+`roto_scalar` for real z-scores.
 
 ### 2026-07-20 — P1 DONE: `fantasy_player_value` (valuation) live + eval-gated
 Player valuation against the league's own scoring, from real stats. What landed:

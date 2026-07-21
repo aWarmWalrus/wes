@@ -218,12 +218,18 @@ tickets (#030+) as they start.
   compare. Scope: category line, not a z-score ranking — z-scores need a
   population fetch, deferred to the optimizer. Rolling averages / a dedicated
   projection source also deferred; latest-season averages are the P1 baseline.)*
-- **P2 — Daily lineup optimizer (advise / dry-run).** The engine: today's games
+- **P2 — Daily lineup optimizer (advise / dry-run). ~ ENGINE DONE 2026-07-21.** The engine: today's games
   + injuries + slot eligibility → optimal active lineup, explained; recommendation
   only. **The optimizer is deterministic code (ILP/Hungarian), not an LLM** — the
   model only explains the result and handles edge-case judgment (§8.1-8.2), so
   **#028 is not a blocker**. **Accept:** pre-lock, "set my optimal lineup" returns
   a correct, explained lineup with zero writes. Soak in shadow mode.
+  *(Delivered: `wes_fantasy.optimize_lineup` — exact capacity-DP assignment,
+  dependency-free, property-tested vs brute force — + `roto_scalar` interim value
+  + `fantasy_optimize_lineup` assembly (advise/dry-run, degrades offseason). Tool
+  registration + golden case + shadow soak DEFERRED to in-season, when Yahoo shows
+  eligible positions and games exist. Real z-scores still deferred; the interim
+  spread-normalized scalar orders players for now.)*
 - **P3 — Executor + autonomy config + rails.** The gated executor (§5), Yahoo
   `set_lineup` write **via scripted Playwright clicks** (the optimizer decides the
   move; the script replays it — the LLM never free-drives the page, §10), per-team

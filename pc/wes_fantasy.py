@@ -61,6 +61,153 @@ def player_value(player, categories=None, versus=None, _stats_fn=None):
     return "\n".join(lines)
 
 
+# --- scalar value (interim, pre-z-score) ------------------------------------
+# The optimizer needs ONE number per player. Proper roto value is per-league
+# z-scores (each category normalized by the league pool's spread) — that needs a
+# population fetch and is deferred (see P1 scope note). INTERIM: normalize each
+# category by a rough league-wide per-game spread so no single stat (points)
+# dominates, sum them, TO negative. Good enough to ORDER players for the
+# optimizer; swap in real z-scores when the population fetch lands.
+_CAT_SPREAD = {
+    "PTS": 6.0, "REB": 3.0, "AST": 2.0, "ST": 0.6, "STL": 0.6, "BLK": 0.6,
+    "TO": 1.2, "TOV": 1.2, "3PM": 0.9, "DD": 15.0, "TD": 5.0, "EJCT": 3.0,
+}
+_NEGATIVE_CATS = {"TO", "TOV"}  # fewer is better
+
+
+def roto_scalar(stats, categories=None):
+    """A single interim value for a player, summed over the league's categories,
+    each spread-normalized; TO counts negative. Percentage cats are skipped (a
+    ratio's value depends on volume — a z-score refinement, not this sum)."""
+    cats = stats.get("cats", {})
+    total = 0.0
+    for c in (categories or DEFAULT_CATEGORIES):
+        if c.endswith("%"):
+            continue
+        v = cats.get(c)
+        if v is None:
+            continue
+        z = v / _CAT_SPREAD.get(c, 1.0)
+        total += -z if c in _NEGATIVE_CATS else z
+    return round(total, 2)
+
+
+# --- daily lineup optimizer (P2) --------------------------------------------
+# Yahoo NBA daily-lineup slots -> the positions that satisfy them (None = any).
+# The active-slot STRUCTURE is read off the roster itself (each roster carries
+# exactly the league's slots), so no separate settings scrape is needed.
+_SLOT_ELIGIBILITY = {
+    "PG": {"PG"}, "SG": {"SG"}, "G": {"PG", "SG"},
+    "SF": {"SF"}, "PF": {"PF"}, "F": {"SF", "PF"},
+    "C": {"C"}, "UTIL": None, "UTL": None,
+}
+_BENCH_SLOTS = {"BN", "BE", "IL", "IL+", "IR", "NA"}  # not part of the active lineup
+_SLOT_ORDER = ["PG", "SG", "G", "SF", "PF", "F", "C", "UTIL"]
+# Injury/availability statuses that mean "do not start" (Yahoo abbreviations).
+_OUT_STATUS = {"O", "OUT", "INJ", "SUSP", "NA", "IL"}
+
+
+def _startable(p):
+    """Can this player be started today? They must have a game AND not be ruled
+    out. Absent `playing` (offseason / unknown schedule) counts as not playing."""
+    return bool(p.get("playing")) and \
+        (p.get("status") or "").upper() not in _OUT_STATUS
+
+
+def _slot_type(slot):
+    """Normalize a roster slot label to a known active-slot type, or None if it's
+    a bench/IL slot. Unknown *active* labels fall back to UTIL (any-eligible)."""
+    s = (slot or "").upper()
+    if s in _BENCH_SLOTS:
+        return None
+    return s if s in _SLOT_ELIGIBILITY else "UTIL"
+
+
+def optimize_lineup(players, slots):
+    """Exact optimal daily lineup: assign startable players to the active slots
+    to MAXIMIZE total value, respecting position eligibility. Pure/deterministic
+    (§8.2) — no LLM, no network.
+
+      players: [{name, positions:[...], value:float, playing:bool, status}]
+      slots:   the roster's slot labels (e.g. ['PG','SG',...,'UTIL','BN','IL'])
+
+    Returns {starters:[{slot,name,value}], bench:[name], empty_slots:[type],
+             total:float}. Players without a game / ruled out are benched; a
+    startable player left out (lineup full or no eligible open slot) is benched
+    too. Same-type slots are interchangeable, so a starter's `slot` is its type.
+
+    Method: capacity DP over slot types — state = (player index, remaining
+    capacity per type). Optimal by construction; state space is tiny for an NBA
+    roster (≤ ~15 players, ≤ 8 slot types)."""
+    order = [t for t in _SLOT_ORDER
+             if any(_slot_type(s) == t for s in slots)]
+    cap0 = tuple(sum(1 for s in slots if _slot_type(s) == t) for t in order)
+
+    startable, benched = [], []
+    for p in players:
+        (startable if _startable(p) else benched).append(p)
+
+    def _elig(p):
+        pos = set(p.get("positions") or [])
+        return tuple((_SLOT_ELIGIBILITY[t] is None or bool(pos & _SLOT_ELIGIBILITY[t]))
+                     for t in order)
+    elig = [_elig(p) for p in startable]
+    val = [float(p.get("value") or 0.0) for p in startable]
+
+    import functools
+
+    @functools.lru_cache(maxsize=None)
+    def best(i, caps):
+        """(max value, assignment tuple) for players i.. given remaining caps.
+        assignment[k] = slot-type index for player i+k, or None if benched."""
+        if i == len(startable):
+            return 0.0, ()
+        bv, ba = best(i + 1, caps)          # option A: bench player i
+        best_v, best_a = bv, (None,) + ba
+        for ti in range(len(order)):        # option B: start in an eligible open slot
+            if caps[ti] > 0 and elig[i][ti]:
+                nxt = caps[:ti] + (caps[ti] - 1,) + caps[ti + 1:]
+                v, a = best(i + 1, nxt)
+                if val[i] + v > best_v:
+                    best_v, best_a = val[i] + v, (ti,) + a
+        return best_v, best_a
+
+    total, assign = best(0, cap0)
+    best.cache_clear()  # closure cache — drop it so nothing lingers between calls
+
+    starters, used = [], list(cap0)
+    for idx, (p, ti) in enumerate(zip(startable, assign)):
+        if ti is None:
+            benched.append(p)
+        else:
+            starters.append({"slot": order[ti], "name": p["name"], "value": val[idx]})
+            used[ti] -= 1
+    empty = [order[ti] for ti in range(len(order)) for _ in range(used[ti])]
+    return {
+        "starters": starters,
+        "bench": [p["name"] for p in benched],
+        "empty_slots": empty,
+        "total": round(total, 2),
+    }
+
+
+def format_lineup(result, team_name=""):
+    """Compact, spoken/typed-friendly optimal lineup for the model to relay."""
+    if not result["starters"] and not result["empty_slots"]:
+        return "No startable players today — nobody on the roster has a game."
+    head = f"Optimal lineup{f' — {team_name}' if team_name else ''}:"
+    lines = [head]
+    for s in result["starters"]:
+        lines.append(f"  {s['slot']}: {s['name']}  ({s['value']:g})")
+    if result["empty_slots"]:
+        lines.append("  Empty (no eligible startable player): "
+                     + ", ".join(result["empty_slots"]))
+    if result["bench"]:
+        lines.append("  Bench: " + ", ".join(result["bench"]))
+    lines.append(f"Projected value total: {result['total']:g}.")
+    return "\n".join(lines)
+
+
 def _league_categories():
     """The configured default team's scoring categories (cached in-process, since
     they ~never change), or the standard roto set if nothing's configured or the
@@ -78,3 +225,52 @@ def fantasy_player_value(player, versus=None):
     """Tool entry: value a player (optionally vs another) in the owner's league's
     scoring. Resolves the league's categories from the configured team."""
     return player_value(player, categories=_league_categories(), versus=versus)
+
+
+def _playing_today(player):
+    """Does this rostered player's NBA team have a game today? Offseason (no
+    games, blank team) -> False."""
+    return wes_nba.team_playing_today(player.get("team", ""))
+
+
+def _player_scalar(player, categories):
+    """Fetch a rostered player's season stats and reduce to the interim scalar.
+    0.0 if stats can't be fetched (so a lookup miss just benches them, no crash)."""
+    stats = wes_nba.player_season_stats(player.get("name", ""))
+    return roto_scalar(stats, categories) if isinstance(stats, dict) else 0.0
+
+
+def fantasy_optimize_lineup(team=None, _players_fn=None, _playing_fn=None,
+                            _value_fn=None):
+    """P2 tool entry: recommend today's optimal starting lineup for a configured
+    team. ADVISE / DRY-RUN only — it NEVER writes to Yahoo (that's P3's gated
+    executor). Degrades to a string on any problem, including the offseason:
+    Yahoo hides eligible positions and there are no games until October, so
+    there's nothing to optimize yet (re-verify in-season via WES_YAHOO_LIVE=1).
+
+    Injectables (_players_fn/_playing_fn/_value_fn) let the whole pipeline be
+    unit-tested from fixtures without the network (design §9)."""
+    chosen, err = wes_yahoo._resolve_team(team)
+    if err:
+        return err
+    if chosen is None:
+        return "No fantasy team is configured yet — set up teams.yaml first."
+    team_key, name = chosen.get("team_key", ""), chosen.get("name", "")
+    players = (_players_fn or wes_yahoo.roster_players)(team_key)
+    if not isinstance(players, list):
+        return players  # degradation string from the scraper
+    if not players:
+        return "That roster came back empty."
+    # No eligible positions => can't respect slot eligibility. This is the
+    # offseason state (Yahoo blanks them); fail safe rather than guess (§8.8).
+    if not any(p.get("positions") for p in players):
+        return ("I can't build a lineup yet — Yahoo isn't showing player "
+                "positions (they stay blank until the season starts).")
+    cats = _league_categories()
+    playing = _playing_fn or _playing_today
+    value = _value_fn or (lambda p: _player_scalar(p, cats))
+    enriched = [{**p, "playing": playing(p), "value": value(p)} for p in players]
+    if not any(e["playing"] for e in enriched):
+        return "No games on your roster today — there's no lineup to set."
+    result = optimize_lineup(enriched, [p.get("slot", "") for p in players])
+    return format_lineup(result, team_name=name)

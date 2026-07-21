@@ -376,6 +376,15 @@ def roster(team_key):
     return format_roster(result)
 
 
+def roster_players(team_key):
+    """A team's roster as RAW normalized player dicts (list), or a degradation
+    string on failure — for the optimizer/valuation engine, which needs the
+    structured players, not the formatted string `roster()` returns."""
+    return _scrape(
+        f"{FANTASY_HOME}/nba/{_league_of(team_key)}/{_team_of(team_key)}",
+        _extract_roster)
+
+
 def league_scoring(league_key):
     """The league's scoring format — what 'value' means in THIS league."""
     result = _scrape(f"{FANTASY_HOME}/nba/{_league_of(league_key)}/settings",

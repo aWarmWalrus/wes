@@ -120,6 +120,24 @@ def team_matches(query, competitor):
     return any(tok in haystack for tok in q.split())
 
 
+def team_playing_today(team, _events_fn=None):
+    """Does `team` (an NBA team abbreviation like 'BKN', or a name) have a game
+    today? False on failure or no games (offseason). Feeds the lineup optimizer
+    (P2): a player only produces on days their team plays. _events_fn for tests."""
+    if not team or not str(team).strip():
+        return False
+    try:
+        events = (_events_fn or _events)()
+    except Exception:  # noqa: BLE001
+        return False
+    for e in events:
+        for c in (e.get("competitions") or [{}])[0].get("competitors", []):
+            abbr = str(c.get("team", {}).get("abbreviation", ""))
+            if (abbr and abbr.upper() == str(team).upper()) or team_matches(team, c):
+                return True
+    return False
+
+
 def _norm(s):
     return "".join(ch for ch in (s or "").lower() if ch.isalnum() or ch == " ").strip()
 

@@ -137,3 +137,138 @@ class TestPlayerValue:
     def test_default_categories_when_none(self):
         out = fan.player_value("A", _stats_fn=lambda n: self.STATS)
         assert "PTS 20" in out  # falls back to DEFAULT_CATEGORIES
+
+
+class TestRotoScalar:
+    def _s(self, **cats):
+        return {"cats": cats}
+
+    def test_turnovers_are_negative(self):
+        clean = fan.roto_scalar(self._s(PTS=20.0, TO=0.0), ["PTS", "TO"])
+        turnovers = fan.roto_scalar(self._s(PTS=20.0, TO=6.0), ["PTS", "TO"])
+        assert turnovers < clean
+
+    def test_spread_normalization_balances_cats(self):
+        # 6 REB (spread 3 -> z=2) beats 6 PTS (spread 6 -> z=1) despite equal raw
+        pts = fan.roto_scalar(self._s(PTS=6.0), ["PTS"])
+        reb = fan.roto_scalar(self._s(REB=6.0), ["REB"])
+        assert reb > pts
+
+    def test_percentage_and_missing_cats_skipped(self):
+        # FG% is skipped; a missing cat contributes nothing (no crash)
+        assert fan.roto_scalar(self._s(PTS=6.0), ["PTS", "FG%", "BLK"]) == 1.0
+
+
+class TestOptimizeLineup:
+    def _p(self, name, pos, val, playing=True, status=""):
+        return {"name": name, "positions": pos, "value": val,
+                "playing": playing, "status": status}
+
+    def test_fills_eligible_slots_maximizing_value(self):
+        players = [self._p("A", ["PG"], 10), self._p("B", ["PG", "SG"], 8),
+                   self._p("C", ["C"], 6)]
+        r = fan.optimize_lineup(players, ["PG", "G", "C", "BN"])
+        got = {s["name"]: s["slot"] for s in r["starters"]}
+        assert got == {"A": "PG", "B": "G", "C": "C"}   # A->PG, B->flex G, C->C
+        assert r["total"] == 24.0
+
+    def test_benches_injured_and_non_playing(self):
+        players = [self._p("Hurt", ["PG"], 99, status="OUT"),
+                   self._p("Away", ["PG"], 99, playing=False),
+                   self._p("Go", ["PG"], 5)]
+        r = fan.optimize_lineup(players, ["PG", "IL"])
+        assert [s["name"] for s in r["starters"]] == ["Go"]
+        assert set(r["bench"]) == {"Hurt", "Away"}
+
+    def test_greedy_would_be_suboptimal(self):
+        # greedy-by-value puts the 10 in the only PG slot and strands nobody for
+        # G; the optimum routes the flex player to G so BOTH high scorers start
+        players = [self._p("PGonly", ["PG"], 10),
+                   self._p("Flex", ["PG", "SG"], 9),
+                   self._p("SGonly", ["SG"], 1)]
+        r = fan.optimize_lineup(players, ["PG", "G"])
+        assert r["total"] == 19.0  # 10 + 9, not 10 + 1
+
+    def test_reports_empty_slots_when_short(self):
+        r = fan.optimize_lineup([self._p("A", ["PG"], 5)], ["PG", "C"])
+        assert r["empty_slots"] == ["C"]
+
+    def test_matches_brute_force(self):
+        import itertools
+        import random
+        pos_pool = ["PG", "SG", "SF", "PF", "C"]
+        slot_pool = ["PG", "SG", "G", "SF", "PF", "F", "C", "UTIL"]
+
+        def brute(players, slots):
+            active = [s for s in slots if fan._slot_type(s)]
+            start = [p for p in players if fan._startable(p)]
+
+            def elig(p, s):
+                e = fan._SLOT_ELIGIBILITY[fan._slot_type(s)]
+                return e is None or bool(set(p["positions"]) & e)
+            best = [0.0]
+
+            def rec(si, used, tot):
+                if si == len(active):
+                    best[0] = max(best[0], tot)
+                    return
+                rec(si + 1, used, tot)
+                for j, p in enumerate(start):
+                    if j not in used and elig(p, active[si]):
+                        rec(si + 1, used | {j}, tot + float(p["value"]))
+            rec(0, set(), 0.0)
+            return round(best[0], 2)
+
+        rng = random.Random(7)
+        for _ in range(1500):
+            n = rng.randint(1, 6)
+            players = [self._p(f"P{i}", rng.sample(pos_pool, rng.randint(1, 2)),
+                               round(rng.uniform(0, 20), 1),
+                               playing=rng.random() > 0.2,
+                               status=rng.choice(["", "", "O"])) for i in range(n)]
+            slots = rng.sample(slot_pool, rng.randint(1, 5)) + ["BN"]
+            assert fan.optimize_lineup(players, slots)["total"] == brute(players, slots)
+
+
+class TestOptimizeAssembly:
+    ROSTER = [{"name": "Jokic", "positions": ["C"], "slot": "C", "status": "",
+               "team": "DEN"},
+              {"name": "Curry", "positions": ["PG"], "slot": "PG", "status": "",
+               "team": "GS"}]
+
+    def _cfg(self, monkeypatch, team=("t", "Test", "l")):
+        key, name, league = team
+        monkeypatch.setattr(fan.wes_yahoo, "_resolve_team",
+                            lambda t=None: ({"team_key": key, "name": name,
+                                             "league_key": league}, None))
+        monkeypatch.setattr(fan, "_league_categories", lambda: fan.DEFAULT_CATEGORIES)
+
+    def test_happy_path(self, monkeypatch):
+        self._cfg(monkeypatch)
+        out = fan.fantasy_optimize_lineup(
+            _players_fn=lambda k: self.ROSTER,
+            _playing_fn=lambda p: True,
+            _value_fn=lambda p: 10.0)
+        assert "Optimal lineup" in out and "Jokic" in out and "Curry" in out
+
+    def test_offseason_blank_positions_degrades(self, monkeypatch):
+        self._cfg(monkeypatch)
+        blank = [{"name": "X", "positions": [], "slot": "PG", "team": ""}]
+        out = fan.fantasy_optimize_lineup(_players_fn=lambda k: blank)
+        assert "positions" in out and "lineup" in out.lower()
+
+    def test_no_games_today_degrades(self, monkeypatch):
+        self._cfg(monkeypatch)
+        out = fan.fantasy_optimize_lineup(
+            _players_fn=lambda k: self.ROSTER, _playing_fn=lambda p: False)
+        assert "no lineup to set" in out.lower() or "no games" in out.lower()
+
+    def test_roster_error_passes_through(self, monkeypatch):
+        self._cfg(monkeypatch)
+        out = fan.fantasy_optimize_lineup(
+            _players_fn=lambda k: "I couldn't reach Yahoo just now.")
+        assert out == "I couldn't reach Yahoo just now."
+
+    def test_no_team_configured(self, monkeypatch):
+        monkeypatch.setattr(fan.wes_yahoo, "_resolve_team", lambda t=None: (None, None))
+        assert "configured" in fan.fantasy_optimize_lineup()
