@@ -282,7 +282,11 @@ because the batch phase already did the work.
 - **Lineup optimization is an assignment problem** — solve it *exactly* in Python
   (ILP / Hungarian), never by asking a 12B to eyeball a table.
 - **Valuation is arithmetic** (z-scores against league scoring). **Projections are
-  statistics.** Both are code.
+  statistics.** Both are code. *(UPDATE 2026-07-21: real per-league z-scores
+  landed — `wes_fantasy.rank_by_zscore`, normalizing each category by the actual
+  player pool's spread. The population fetch this needed, deferred throughout P1/P2
+  above, is solved by ESPN's `byathlete` bulk endpoint, built for #030's draft
+  engine. The daily optimizer can now swap its interim `roto_scalar` for these.)*
 - The model's real job: **judgment at the margins** (is this streamer worth the
   roster churn?), ambiguity, and **explanation in English**.
 

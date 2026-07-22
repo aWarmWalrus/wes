@@ -74,9 +74,10 @@ static roster/scoring scrape #029 P0 already does.
 ## Acceptance
 - [ ] Runs a complete mock draft unattended, start to finish, submitting a
       real pick every turn before the clock expires
-- [ ] Picks are ranked from real population-wide valuation (z-scores) in the
+- [~] Picks are ranked from real population-wide valuation (z-scores) in the
       league's scoring, not hallucinated and not pure best-player-available —
-      accounts for roster construction/positional need
+      accounts for roster construction/positional need. **ENGINE DONE
+      2026-07-21** (offline; not yet driving a live draft — see Notes)
 - [ ] Survives a simulated disruption (browser hiccup / reconnect) mid-draft
       without missing or double-submitting a pick
 - [ ] Deadline fallback verified: forcing the full pipeline to run slow still
@@ -90,6 +91,46 @@ static roster/scoring scrape #029 P0 already does.
       since the live room can't be unit-tested directly
 
 ## Notes
+
+### 2026-07-21 — DECISION ENGINE done (offline); live-room automation still to come
+Built the decision half (owner chose "engine first" — it's solo-buildable and
+reusable regardless of how the live-room automation lands). What shipped:
+- **Real per-league z-scores** in `pc/wes_fantasy.py` — `category_baselines`
+  (per-cat mean + stdev over a pool) + `rank_by_zscore`. This is the
+  population-based valuation #029 P1/P2 explicitly deferred ("a z-score needs
+  the whole league player pool"); it replaces the guessed `_CAT_SPREAD` in
+  `roto_scalar` with the pool's actual spread, so value = std-devs above an
+  average draftable player and no raw scale (points ~30 vs steals ~1)
+  dominates. TO negated; % cats skipped (owner league has none; volume-weighting
+  is the refinement). Pure/deterministic.
+- **The population fetch, finally solved cheaply.** ESPN's `byathlete` bulk
+  endpoint returns hundreds of players' season lines + position in ONE call
+  (578 players, paginated) — no per-player fan-out. New `pc/wes_draft.py`:
+  `parse_byathlete` (positional value arrays → our stat-line dicts),
+  `draftable_pool(limit)` (live fetch, degrades to []).
+- **`best_available(ranked, drafted, my_roster, need_weight)`** — the
+  recommender: drops everyone taken, applies a positional-need bump (coarse
+  G/F/C targets; ESPN only gives coarse position) so a roster thin at a slot
+  isn't handed another player it can't use. `recommend_pick` is the end-to-end
+  advise entry. All pure except the fetch.
+- **Tests:** `test_unit_draft.py` (parser, best_available incl. need-bump,
+  recommend_pick degradation) + `TestZScore` in `test_unit_fantasy.py` +
+  a `WES_NBA_LIVE=1` canary on the byathlete schema. 332 unit pass.
+- **Live-verified** on real 2025-26 data: top z-scores = Jokić, Wembanyama,
+  Jalen Johnson, Luka (sane); best_available correctly promoted centers over a
+  higher-z guard once 5 guards were rostered (roster construction works).
+
+**What's NOT done (the hard half, needs the owner):** the live Yahoo draft-room
+automation — read the live board (on the clock, picks so far, timer, available
+pool), submit a pick via scripted Playwright, the deadline fallback, resilience,
+and the mock-draft test harness. That's blocked on a recon session against a
+real draft-room DOM. **Refinements deferred:** minutes-based / larger pool
+(top-scorers pool slightly inflates baselines but not the ranking); real
+PG/SG/SF/PF eligibility (ESPN bulk feed is coarse G/F/C only — Yahoo's draft
+board would give the fine positions); percentage-category volume-weighting;
+snake-vs-auction; wiring an advisory `draft_help` tool into the router. Not yet
+committed.
+
 ### 2026-07-21 — filed, then rescoped same day
 Originally filed as an `advise`-only recommender (pre-draft rankings + "who
 should I pick" suggestions for a human drafting manually). **Rescoped per

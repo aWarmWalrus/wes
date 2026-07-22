@@ -15,6 +15,8 @@ ranking. A z-score needs the whole league player pool (a population fetch) and
 belongs with the optimizer (P2). The line + this league's categories is enough to
 answer "is X worth starting over Y" from real stats, no guesses.
 """
+import statistics
+
 import wes_nba  # noqa: E402 — same dir on path (added by the server/tests)
 import wes_yahoo  # noqa: E402
 
@@ -90,6 +92,58 @@ def roto_scalar(stats, categories=None):
         z = v / _CAT_SPREAD.get(c, 1.0)
         total += -z if c in _NEGATIVE_CATS else z
     return round(total, 2)
+
+
+# --- real per-league z-scores (draft valuation, #030) -----------------------
+# roto_scalar normalizes by GUESSED per-category spreads. A real player-rater
+# z-score normalizes each category by the ACTUAL pool's mean + standard
+# deviation, so "value" = standard deviations above an average draftable player,
+# and no category's raw scale (points ~30 vs steals ~1) dominates. This is the
+# population-based valuation #029 P1/P2 deferred ("a z-score needs the whole
+# league player pool"); wes_draft supplies the pool. Pure: value is relative to
+# exactly the players passed in. Percentages skipped (a rate's value is
+# volume-weighted — a further refinement); TO negative.
+
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def category_baselines(pool, categories=None):
+    """(mean, stdev) per scored counting category across a pool of stat-line
+    dicts. Skips % cats, and any cat fewer than 2 players expose (no spread to
+    normalize by). stdev floored at a tiny epsilon so a degenerate cat can't
+    divide-by-zero. Pure."""
+    out = {}
+    for c in (categories or DEFAULT_CATEGORIES):
+        if c.endswith("%"):
+            continue
+        vals = [p["cats"][c] for p in pool
+                if _num((p.get("cats") or {}).get(c))]
+        if len(vals) >= 2:
+            out[c] = (statistics.fmean(vals), statistics.pstdev(vals) or 1e-9)
+    return out
+
+
+def rank_by_zscore(pool, categories=None):
+    """Rank a player pool by real per-league z-score value (highest first).
+    Each returned dict is the input player plus `value` (summed z-score) and
+    `zs` (per-category z). The population IS `pool`, so this is only meaningful
+    over a realistic draftable set, not two players. Pure/deterministic."""
+    cats = categories or DEFAULT_CATEGORIES
+    base = category_baselines(pool, cats)
+    ranked = []
+    for p in pool:
+        zs = {}
+        for c in cats:
+            b = base.get(c)
+            v = (p.get("cats") or {}).get(c)
+            if b and _num(v):
+                mean, sd = b
+                zc = (v - mean) / sd
+                zs[c] = round(-zc if c in _NEGATIVE_CATS else zc, 2)
+        ranked.append({**p, "value": round(sum(zs.values()), 2), "zs": zs})
+    ranked.sort(key=lambda x: x["value"], reverse=True)
+    return ranked
 
 
 # --- daily lineup optimizer (P2) --------------------------------------------

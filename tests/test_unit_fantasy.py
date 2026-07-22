@@ -159,6 +159,45 @@ class TestRotoScalar:
         assert fan.roto_scalar(self._s(PTS=6.0), ["PTS", "FG%", "BLK"]) == 1.0
 
 
+class TestZScore:
+    """Real per-league z-scores (#030) — value relative to the actual pool."""
+
+    def _pool(self):
+        return [
+            {"name": "Star", "cats": {"PTS": 30.0, "AST": 8.0}, "positions": ["G"]},
+            {"name": "Avg", "cats": {"PTS": 20.0, "AST": 5.0}, "positions": ["F"]},
+            {"name": "Low", "cats": {"PTS": 10.0, "AST": 2.0}, "positions": ["C"]},
+        ]
+
+    def test_ranks_best_player_first(self):
+        r = fan.rank_by_zscore(self._pool(), ["PTS", "AST"])
+        assert [p["name"] for p in r] == ["Star", "Avg", "Low"]
+
+    def test_mean_player_scores_zero(self):
+        # the pool-average player is 0 std devs from the mean in every cat
+        r = fan.rank_by_zscore(self._pool(), ["PTS", "AST"])
+        avg = next(p for p in r if p["name"] == "Avg")
+        assert abs(avg["value"]) < 1e-6
+
+    def test_turnovers_negated(self):
+        pool = [{"name": "Clean", "cats": {"PTS": 20.0, "TO": 1.0}},
+                {"name": "Sloppy", "cats": {"PTS": 20.0, "TO": 5.0}}]
+        r = fan.rank_by_zscore(pool, ["PTS", "TO"])
+        assert r[0]["name"] == "Clean"  # fewer turnovers wins the TO category
+
+    def test_scale_free_across_cats(self):
+        # a +2σ steals player beats a +1σ points player despite tiny raw steals
+        pool = [{"name": "Scorer", "cats": {"PTS": 26.0, "ST": 1.0}},
+                {"name": "Thief", "cats": {"PTS": 20.0, "ST": 3.0}},
+                {"name": "Base", "cats": {"PTS": 14.0, "ST": 1.0}}]
+        r = fan.rank_by_zscore(pool, ["PTS", "ST"])
+        assert r[0]["name"] == "Thief"
+
+    def test_baselines_skip_pct_and_thin_cats(self):
+        base = fan.category_baselines(self._pool(), ["PTS", "FG%", "BLK"])
+        assert "PTS" in base and "FG%" not in base and "BLK" not in base
+
+
 class TestOptimizeLineup:
     def _p(self, name, pos, val, playing=True, status=""):
         return {"name": name, "positions": pos, "value": val,

@@ -142,4 +142,11 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   Next: wire the tool + shadow-soak once the season opens, then P3 executor.
   Platform pivoted from the official Yahoo API to browser automation (API access
   now requires a no-caching DocuSign).
+- `docs/tickets/open/med/030-fantasy-draft-tool.md` — Fantasy DRAFT epic (#030):
+  autonomous end-to-end Yahoo draft agent for AI-agent-run leagues. **Decision
+  engine done 2026-07-21** — real per-league z-scores (`wes_fantasy.rank_by_zscore`,
+  the population fetch #029 deferred, via ESPN's `byathlete` bulk endpoint) +
+  `best_available` positional-need recommender in new `pc/wes_draft.py`,
+  live-verified. Remaining: the live Yahoo draft-room automation (read the board,
+  submit picks on the clock) — needs a recon session vs a real draft-room DOM.
 - `docs/keyresults.md` — current-cycle key results, refreshed periodically.

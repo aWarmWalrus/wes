@@ -12,7 +12,7 @@ Conventions + workflow: `README.md`. Next free id: **032** (open here;
 
 ## Medium priority
 
-- [030](open/med/030-fantasy-draft-tool.md) — Fantasy draft tool: **autonomous** end-to-end Yahoo draft agent (reads the live draft board, picks, submits) for AI-agent-run for-fun leagues; test harness = Yahoo mock drafts; sibling to #029, shares its engine + eventual gated-executor plumbing but not on its critical path
+- [030](open/med/030-fantasy-draft-tool.md) — Fantasy draft tool: **autonomous** end-to-end Yahoo draft agent for AI-agent-run leagues. **Decision engine DONE 2026-07-21** — real per-league z-scores (`rank_by_zscore` in `wes_fantasy`, the deferred population fetch, via ESPN byathlete) + `best_available` positional-need recommender in new `wes_draft.py`, live-verified. **Remaining: the live Yahoo draft-room automation** (read board, submit picks on the clock, deadline fallback) — needs a recon session vs a real draft-room DOM; + mock-draft test harness
 - [004](open/med/004-smart-home-controls.md) — Smart home tools: Hue-direct first, Home Assistant later (feasibility confirmed)
 - [005](open/med/005-scheduled-actions.md) — Scheduled actions: timers, reminders, recurring routines
 - [012](open/med/012-durable-agentic-memory.md) — Unified durable memory: Phase 1 (MEMORY.md + remember/forget) shipped; remaining = nightly consolidation, temporal facts, per-person notes
