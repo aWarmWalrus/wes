@@ -163,6 +163,26 @@ class TestRunTool:
         assert ws.run_tool("fantasy_player_value", {"player": "Cam Thomas"}) \
             == "Cam Thomas vs None"
 
+    def test_nba_schedule_is_registered(self):
+        assert "nba_schedule" in [t["name"] for t in ws.TOOLS]
+
+    def test_nba_schedule_dispatches(self, monkeypatch):
+        monkeypatch.setattr(ws.wes_nba, "next_game",
+                            lambda team=None: f"next game for {team!r}")
+        assert ws.run_tool("nba_schedule", {"team": "Celtics"}) \
+            == "next game for 'Celtics'"
+        assert ws.run_tool("nba_schedule", {}) == "next game for None"
+
+    def test_nba_top_performers_is_registered(self):
+        assert "nba_top_performers" in [t["name"] for t in ws.TOOLS]
+
+    def test_nba_top_performers_dispatches(self, monkeypatch):
+        monkeypatch.setattr(ws.wes_nba, "top_performers",
+                            lambda team=None: f"leaders for {team!r}")
+        assert ws.run_tool("nba_top_performers", {"team": "Nets"}) \
+            == "leaders for 'Nets'"
+        assert ws.run_tool("nba_top_performers", {}) == "leaders for None"
+
 
 class TestDescribeSceneCache:
     def _prime(self, desc, faces, age=0.0):
@@ -469,6 +489,78 @@ class TestOllamaBackend:
             lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not fall back")))
         assert "".join(ws._stream_local("x", deep=False)) == ""
 
+    def test_deep_default_effort_uses_full_budget(self, monkeypatch):
+        # deep tier with no explicit effort (the Discord-router path) keeps the
+        # full "deep" budget so #026 never changes deep-by-default behavior.
+        fake, calls = self._fake_urlopen([[{"message": {"content": "ok"},
+                                            "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        "".join(ws._stream_local("hard", deep=True))
+        assert calls[0]["think"] is True
+        assert calls[0]["options"]["num_predict"] == ws.EFFORT_BUDGET["deep"][1]
+
+    def test_deep_standard_effort_uses_modest_budget(self, monkeypatch):
+        # an escalation the router marked "standard" gets the cheaper rung, not
+        # the full deep allowance.
+        fake, calls = self._fake_urlopen([[{"message": {"content": "ok"},
+                                            "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        "".join(ws._stream_local("q", deep=True, effort="standard"))
+        assert calls[0]["think"] is True
+        assert calls[0]["options"]["num_predict"] == ws.EFFORT_BUDGET["standard"][1]
+        assert ws.EFFORT_BUDGET["standard"][1] < ws.EFFORT_BUDGET["deep"][1]
+
+    def test_unknown_effort_falls_back_to_default(self, monkeypatch):
+        fake, calls = self._fake_urlopen([[{"message": {"content": "ok"},
+                                            "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        "".join(ws._stream_local("q", deep=True, effort="bogus"))
+        want = ws.EFFORT_BUDGET[ws.DEFAULT_EFFORT][1]
+        assert calls[0]["options"]["num_predict"] == want
+
+    def test_fast_tier_ignores_effort(self, monkeypatch):
+        # the fast router is a fixed thinking-off / 512 regardless of effort.
+        fake, calls = self._fake_urlopen([[{"message": {"content": "ok"},
+                                            "done": True}]])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        "".join(ws._stream_local("q", deep=False, effort="deep"))
+        assert calls[0]["think"] is False
+        assert calls[0]["options"]["num_predict"] == 512
+
+    def test_router_effort_flows_to_deep_tier(self, monkeypatch):
+        # the router escalates WITH an effort arg; that effort must size the
+        # deep tier's budget (end-to-end: fast round -> escalate -> deep round).
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        monkeypatch.setattr(ws, "ESCALATE_ACK", "")  # no ack text to strip
+        fake, calls = self._fake_urlopen([
+            [{"message": {"content": "", "tool_calls": [{"function": {
+                "name": "escalate_hard",
+                "arguments": {"reason": "hard", "effort": "deep"}}}]},
+              "done": True}],
+            [{"message": {"content": "Deep answer."}, "done": True}],
+        ])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        out = "".join(ws._stream_local("prove it", deep=False, buffered=True))
+        assert "Deep answer." in out
+        # calls[1] is the deep round; it must carry the "deep" budget + thinking.
+        assert calls[1]["think"] is True
+        assert calls[1]["options"]["num_predict"] == ws.EFFORT_BUDGET["deep"][1]
+
+    def test_router_standard_effort_flows_to_deep_tier(self, monkeypatch):
+        monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
+        monkeypatch.setattr(ws, "ESCALATE_ACK", "")
+        fake, calls = self._fake_urlopen([
+            [{"message": {"content": "", "tool_calls": [{"function": {
+                "name": "escalate_hard",
+                "arguments": {"reason": "meh", "effort": "standard"}}}]},
+              "done": True}],
+            [{"message": {"content": "Standard answer."}, "done": True}],
+        ])
+        monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
+        out = "".join(ws._stream_local("q", deep=False, buffered=True))
+        assert "Standard answer." in out
+        assert calls[1]["options"]["num_predict"] == ws.EFFORT_BUDGET["standard"][1]
+
     def test_local_failure_falls_back_to_claude(self, monkeypatch):
         monkeypatch.setattr(ws, "LLM_BACKEND", "local")
 
@@ -506,31 +598,39 @@ class TestOllamaBackend:
 
 
 class TestEscalation:
-    """Smart routing: the local model calls escalate_to_claude to hand off."""
+    """Smart routing: the local model calls escalate_hard to hand off."""
 
     def test_toolset_includes_escalation_when_claude_available(self, monkeypatch):
         monkeypatch.setattr(ws, "ESCALATE", True)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         names = [t["function"]["name"] for t in ws._local_toolset()]
-        assert "escalate_to_claude" in names
+        assert "escalate_hard" in names
         # ...but never in the shared TOOLS Claude itself sees.
-        assert all(t["name"] != "escalate_to_claude" for t in ws.TOOLS)
+        assert all(t["name"] != "escalate_hard" for t in ws.TOOLS)
 
     def test_toolset_omits_escalation_without_key(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         names = [t["function"]["name"] for t in ws._local_toolset()]
-        assert "escalate_to_claude" not in names
+        assert "escalate_hard" not in names
 
     def test_toolset_omits_escalation_when_disabled(self, monkeypatch):
         monkeypatch.setattr(ws, "ESCALATE", False)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         names = [t["function"]["name"] for t in ws._local_toolset()]
-        assert "escalate_to_claude" not in names
+        assert "escalate_hard" not in names
+
+    def test_escalate_tool_exposes_effort_knob(self):
+        # #026: the router can size the thinking budget when it hands off.
+        props = ws.ESCALATE_TOOL["function"]["parameters"]["properties"]
+        assert "effort" in props
+        assert set(props["effort"]["enum"]) == {"standard", "deep"}
+        # every offered effort must be a real budget entry
+        assert set(props["effort"]["enum"]) <= set(ws.EFFORT_BUDGET)
 
 
 class TestWebSearch:
     """search_web: the router hands a LIVE-INFO query to Haiku + web search.
-    Distinct from escalate_to_claude (hard reasoning -> local 12b+thinking)."""
+    Distinct from escalate_hard (hard reasoning -> local 12b+thinking)."""
 
     def test_toolset_offers_search_web_when_available(self, monkeypatch):
         monkeypatch.setattr(ws, "WEB_SEARCH", True)
@@ -556,13 +656,13 @@ class TestWebSearch:
 
     def test_deep_tier_gets_search_web_but_not_escalate(self, monkeypatch):
         # The deep tier can't reach the web itself (needs Haiku), but it must NOT
-        # carry escalate_to_claude — it already IS the reasoning escalation.
+        # carry escalate_hard — it already IS the reasoning escalation.
         monkeypatch.setattr(ws, "WEB_SEARCH", True)
         monkeypatch.setattr(ws, "ESCALATE", True)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         names = [t["function"]["name"] for t in ws._local_toolset(deep=True)]
         assert "search_web" in names
-        assert "escalate_to_claude" not in names
+        assert "escalate_hard" not in names
 
     def test_router_hands_search_web_to_claude_with_web(self, monkeypatch):
         monkeypatch.setattr(ws, "WEB_SEARCH", True)
@@ -745,7 +845,7 @@ class TestUnkeptPromiseGuard:
     def test_escalation_hands_off_to_claude(self, monkeypatch):
         fake, calls = TestOllamaBackend._fake_urlopen([
             [{"message": {"content": "", "tool_calls": [
-                {"function": {"name": "escalate_to_claude",
+                {"function": {"name": "escalate_hard",
                               "arguments": {"reason": "hard math"}}}]},
               "done": True}],
         ])
@@ -767,7 +867,7 @@ class TestUnkeptPromiseGuard:
     def test_escalation_ack_disabled_by_empty_string(self, monkeypatch):
         fake, _ = TestOllamaBackend._fake_urlopen([
             [{"message": {"content": "", "tool_calls": [
-                {"function": {"name": "escalate_to_claude", "arguments": {}}}]},
+                {"function": {"name": "escalate_hard", "arguments": {}}}]},
               "done": True}],
         ])
         monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
@@ -782,12 +882,12 @@ class TestUnkeptPromiseGuard:
         monkeypatch.setattr(ws, "ESCALATE_MODEL", "gemma4:12b")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         names = [t["function"]["name"] for t in ws._local_toolset()]
-        assert "escalate_to_claude" in names
+        assert "escalate_hard" in names
 
     def test_escalation_hands_off_to_local_deep_model(self, monkeypatch):
         fake, calls = TestOllamaBackend._fake_urlopen([
             [{"message": {"content": "", "tool_calls": [
-                {"function": {"name": "escalate_to_claude",
+                {"function": {"name": "escalate_hard",
                               "arguments": {"reason": "hard math"}}}]},
               "done": True}],
             [{"message": {"thinking": "let me reason...", "content": ""},
@@ -809,7 +909,7 @@ class TestUnkeptPromiseGuard:
         assert deep["options"]["num_predict"] > 512  # room for thinking
         # The deep tier must not see the escalate tool (no recursion).
         names = [t["function"]["name"] for t in deep.get("tools") or []]
-        assert "escalate_to_claude" not in names and "describe_scene" in names
+        assert "escalate_hard" not in names and "describe_scene" in names
         # Router call is unchanged: default model, no thinking.
         assert calls[0]["model"] == ws.LOCAL_LLM_MODEL
         assert calls[0]["think"] is False
@@ -839,7 +939,7 @@ class TestUnkeptPromiseGuard:
             [{"message": {"content": "You should ask Claude about that. "},
               "done": False},
              {"message": {"content": "", "tool_calls": [
-                 {"function": {"name": "escalate_to_claude", "arguments": {}}}]},
+                 {"function": {"name": "escalate_hard", "arguments": {}}}]},
               "done": True}],
         ])
         monkeypatch.setattr(ws, "ESCALATE_MODEL", "")  # Claude target
@@ -854,7 +954,7 @@ class TestUnkeptPromiseGuard:
         # reply arrives whole, so it must not be prepended there.
         fake, _ = TestOllamaBackend._fake_urlopen([
             [{"message": {"content": "", "tool_calls": [
-                {"function": {"name": "escalate_to_claude", "arguments": {}}}]},
+                {"function": {"name": "escalate_hard", "arguments": {}}}]},
               "done": True}],
         ])
         monkeypatch.setattr(ws, "ESCALATE_MODEL", "")
@@ -867,7 +967,7 @@ class TestUnkeptPromiseGuard:
         fake, calls = TestOllamaBackend._fake_urlopen([
             [{"message": {"content": "Well, "}, "done": False},
              {"message": {"content": "", "tool_calls": [
-                 {"function": {"name": "escalate_to_claude", "arguments": {}}}]},
+                 {"function": {"name": "escalate_hard", "arguments": {}}}]},
               "done": True}],
             [{"message": {"content": "here is my answer."}, "done": True}],
         ])

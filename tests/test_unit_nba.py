@@ -6,7 +6,7 @@ test hits ESPN to catch upstream schema drift; it's skipped unless
 WES_NBA_LIVE=1 so CI/offline runs stay deterministic and fast.
 """
 import os
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -237,6 +237,133 @@ class TestDegrade:
         assert "couldn't find" in out  # one bad game doesn't crash the turn
 
 
+# --- team schedule / next_game (#028 option A) -------------------------------
+
+def _team(tid, abbr, name, city):
+    return {"id": tid, "abbreviation": abbr, "displayName": f"{city} {name}",
+            "shortDisplayName": name, "location": city, "name": name}
+
+
+_TEAMS = [_team("17", "BKN", "Nets", "Brooklyn"),
+          _team("2", "CELTICS", "Celtics", "Boston")]  # abbr deliberately odd
+
+
+def _sched_event(away, home, iso_date, state="pre", eid="S1"):
+    return {
+        "id": eid,
+        "competitions": [{
+            "date": iso_date,
+            "status": {"type": {"state": state}},
+            "competitors": [
+                {"homeAway": "away", "team": {"displayName": away, "location": away,
+                 "name": away, "abbreviation": away[:3].upper()}},
+                {"homeAway": "home", "team": {"displayName": home, "location": home,
+                 "name": home, "abbreviation": home[:3].upper()}},
+            ],
+        }],
+    }
+
+
+class TestTeamIdFor:
+    def test_matches_by_name_or_location(self):
+        assert wes_nba._team_id_for("Nets", _teams_fn=lambda: _TEAMS) == "17"
+        assert wes_nba._team_id_for("Brooklyn", _teams_fn=lambda: _TEAMS) == "17"
+
+    def test_no_match(self):
+        assert wes_nba._team_id_for("Lakers", _teams_fn=lambda: _TEAMS) is None
+
+    def test_empty_query(self):
+        assert wes_nba._team_id_for("", _teams_fn=lambda: _TEAMS) is None
+
+    def test_lookup_failure_is_soft(self):
+        def boom():
+            raise RuntimeError("network")
+        assert wes_nba._team_id_for("Nets", _teams_fn=boom) is None
+
+
+class TestNextGame:
+    NOW = datetime(2026, 7, 7, tzinfo=timezone.utc)
+
+    def test_finds_nearest_upcoming_game(self):
+        # afternoon UTC so local-time conversion can't roll it to a different
+        # calendar day for any real-world US timezone
+        events = [_sched_event("Nets", "Knicks", "2026-07-20T23:00Z"),
+                  _sched_event("Celtics", "Nets", "2026-07-10T18:00Z")]
+        out = wes_nba.next_game(
+            "Nets", _teams_fn=lambda: _TEAMS,
+            _schedule_fn=lambda: events, _now=self.NOW)
+        assert "Celtics" in out and "July 10" in out
+
+    def test_skips_past_games(self):
+        events = [_sched_event("Celtics", "Nets", "2026-07-01T00:00Z", state="post"),
+                  _sched_event("Nets", "Knicks", "2026-07-20T23:00Z")]
+        out = wes_nba.next_game(
+            "Nets", _teams_fn=lambda: _TEAMS,
+            _schedule_fn=lambda: events, _now=self.NOW)
+        assert "Knicks" in out
+
+    def test_unrecognized_team(self):
+        out = wes_nba.next_game("Not A Team", _teams_fn=lambda: _TEAMS)
+        assert "don't recognize" in out
+
+    def test_no_upcoming_games(self):
+        events = [_sched_event("Celtics", "Nets", "2026-07-01T00:00Z", state="post")]
+        out = wes_nba.next_game(
+            "Nets", _teams_fn=lambda: _TEAMS,
+            _schedule_fn=lambda: events, _now=self.NOW)
+        assert "don't see a scheduled game" in out
+
+    def test_schedule_fetch_failure_is_soft(self):
+        def boom():
+            raise RuntimeError("dns fail")
+        out = wes_nba.next_game("Nets", _teams_fn=lambda: _TEAMS, _schedule_fn=boom)
+        assert "couldn't reach the NBA schedule" in out
+
+    def test_defaults_to_nets(self):
+        events = [_sched_event("Celtics", "Brooklyn Nets", "2026-07-10T00:00Z")]
+        out = wes_nba.next_game(
+            None, _teams_fn=lambda: _TEAMS,
+            _schedule_fn=lambda: events, _now=self.NOW)
+        assert "Brooklyn Nets" in out
+
+
+# --- box score leaders / top_performers (#028 option A) ----------------------
+
+class TestTopPerformers:
+    def _evs(self):
+        return [_event("in", "Nets", "Celtics", "54", "60", period=3,
+                       clock="4:12", eid="G1")]
+
+    def test_leaders_across_both_teams(self):
+        summ = lambda _id: _summary("BKN", [
+            ("Cam Thomas", ["28", "22", "8-15", "3-6", "3-4", "4"]),
+            ("Nic Claxton", ["30", "6", "3-4", "0-0", "0-0", "12"]),
+        ]) if _id == "G1" else _summary("BOS", [])
+        out = wes_nba.top_performers("Nets", _events_fn=self._evs, _summary_fn=summ)
+        assert "Cam Thomas leads with 22 points" in out
+        assert "Nic Claxton leads with 12 rebounds" in out
+
+    def test_no_game_today(self):
+        out = wes_nba.top_performers("Nets", _events_fn=lambda: [])
+        assert "don't have a game today" in out
+
+    def test_summary_failure_is_soft(self):
+        def boom(_id):
+            raise RuntimeError("500")
+        out = wes_nba.top_performers("Nets", _events_fn=self._evs, _summary_fn=boom)
+        assert "couldn't pull the box score" in out
+
+    def test_events_failure_is_soft(self):
+        def boom():
+            raise RuntimeError("dns fail")
+        out = wes_nba.top_performers("Nets", _events_fn=boom)
+        assert "couldn't reach the NBA data" in out
+
+    def test_defaults_to_nets(self):
+        out = wes_nba.top_performers(_events_fn=lambda: [])
+        assert "Nets" in out
+
+
 # --- subreddit discussion (untrusted external text) -------------------------
 
 _RSS = """<?xml version="1.0" encoding="UTF-8"?>
@@ -372,3 +499,12 @@ class TestLiveESPN:
         out = wes_nba.subreddit_discussion()
         assert isinstance(out, str) and out
         assert "couldn't reach" not in out  # must actually fetch, not degrade
+
+    def test_schedule_reachable(self):
+        # #028 option A: teams list + team schedule endpoints, unverified
+        # against a real payload until this runs — the canary this file's
+        # docstring promises for exactly that risk.
+        out = wes_nba.next_game()
+        assert isinstance(out, str) and out
+        assert "couldn't reach" not in out
+        assert "don't recognize" not in out  # team resolution must succeed

@@ -35,7 +35,7 @@ latency vs Haiku and has no API rate limit (speculation budget unlimited).
 **Smart routing** (`WES_ESCALATE=1`, default): every turn lands on the local model
 first — it answers the easy tier itself (zero routing overhead: the route decision
 and the reply share one forward pass) and delegates when needed. The local toolset
-carries an `escalate_to_claude` function (never shown to the deep tier itself), so
+carries an `escalate_hard` function (never shown to the deep tier itself), so
 the router decides per-turn when a query is beyond a plain pass — deep reasoning,
 hard math/code, specialized knowledge — and the server streams the **deep tier's**
 reply instead (`[route] escalating…` in the log). Since router and deep tier are now
@@ -57,8 +57,12 @@ fallback (measured 54s@2048 vs 102s@4096) — fail fast to the better+faster tie
 (#026 is the adaptive fix). Thinking deltas arrive in `message.thinking`
 which the server never reads, so they're never spoken). Unset, escalations go to
 Claude Haiku (needs the API key), which also remains the automatic fallback on local
-*errors* either way. The tool keeps its prompt-tuned `escalate_to_claude` name — its
-semantics ("hand off to the smarter tier") don't change with the target. **Empty-reply
+*errors* either way. The tool is named `escalate_hard` for what it *does* (hand a
+hard question up), not for a backend — it routes wherever `WES_ESCALATE_MODEL`
+points, so the name doesn't claim "Claude" when the target is the local 12b. Its
+prompt framing ("a much more capable model") is what gets the small router to hand
+off and is unchanged by the target. *(Renamed from `escalate_to_claude` 2026-07-21 —
+it was misleading: with the local deep tier configured it never reached Claude.)* **Empty-reply
 guard (2026-07-21):** a hard problem can make the deep tier spend its whole budget on
 `message.thinking` and emit NO visible content (an empty reply → "(no reply)" on
 Discord); `_stream_local` detects `not yielded and deep` and **falls back to Claude**
@@ -69,7 +73,7 @@ time first — an adaptive budget is #026). Verified:
 
 **Live-info web search → Haiku** (`WES_WEB_SEARCH=1`, default on when the API key is
 present; 2026-07-20). Reasoning and *current facts* are split across two handoffs.
-Alongside `escalate_to_claude` (hard reasoning → local 12b+thinking, free), the router
+Alongside `escalate_hard` (hard reasoning → local 12b+thinking, free), the router
 carries a **`search_web`** function for things that need the internet — today's
 weather/news/prices/scores, recent events, anything past the model's training. It
 routes to **Claude Haiku with Anthropic's server-side web search**
@@ -77,7 +81,7 @@ routes to **Claude Haiku with Anthropic's server-side web search**
 searches, the server relays the streamed text). Rationale (owner, 2026-07-20):
 reasoning stays free/local, only live lookups pay for Claude. `search_web` is offered
 in BOTH the fast router and the deep tier (even the 12b can't reach the web);
-`escalate_to_claude` is fast-router-only (the deep tier already IS the reasoning
+`escalate_hard` is fast-router-only (the deep tier already IS the reasoning
 escalation, so it must not recurse). The handoff is invisible like escalation:
 `WES_WEB_SEARCH_ACK` masks spin-up on voice, and `WES_WEB_SEARCH_NUDGE` tells Haiku to
 answer directly without narrating the search ("I'll search…"). Set `WES_WEB_SEARCH=0`

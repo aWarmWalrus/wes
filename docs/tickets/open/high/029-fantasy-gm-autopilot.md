@@ -6,7 +6,7 @@ priority: high
 created: 2026-07-16
 closed:
 tags: [nba, fantasy, yahoo, oauth, tools, agentic, actions, scheduling, rails, epic]
-related: [docs/fantasy-gm-design.md, "#027", "#028", "#026", "#005", "#012", "#004", "#002"]
+related: [docs/fantasy-gm-design.md, "#027", "#028", "#026", "#005", "#012", "#004", "#002", "#030"]
 ---
 
 ## Problem / Goal

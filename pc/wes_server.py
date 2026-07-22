@@ -88,7 +88,7 @@ CAST_VOLUME = float(os.environ.get("WES_CAST_VOLUME", "0.5"))  # 5/10
 # "claude" = Anthropic API. Local errors fall back to Claude when a key exists.
 LLM_BACKEND = os.environ.get("WES_LLM", "claude")
 LOCAL_LLM_MODEL = os.environ.get("WES_LLM_LOCAL_MODEL", "gemma4:e4b")
-# Smart routing: give the local model an escalate_to_claude function so IT
+# Smart routing: give the local model an escalate_hard function so IT
 # decides when a query is beyond it (WES_ESCALATE=0 disables).
 ESCALATE = os.environ.get("WES_ESCALATE", "1") == "1"
 # Where escalations go: an Ollama model name (e.g. "gemma4:12b" — answered
@@ -129,6 +129,33 @@ NUM_CTX = int(os.environ.get("WES_NUM_CTX", "16384"))
 # Real fix for proportional effort is the adaptive budget (#026). Normal turns
 # stop early and are unaffected; the fast router keeps a tight 512.
 DEEP_NUM_PREDICT = int(os.environ.get("WES_DEEP_NUM_PREDICT", "2048"))
+
+# Adaptive thinking budget (#026 L1/L2): when the fast router escalates, it can
+# say HOW hard to think, and we size the deep-tier generation to match instead
+# of always spending the full DEEP_NUM_PREDICT. Mirrors the frontier
+# `reasoning_effort` vocabulary (OpenAI low/med/high, Anthropic budget_tokens);
+# all tiers run on the ONE 12b, so the only real knob is the think flag +
+# num_predict (gemma4 has no graded NATIVE think levels — low/med/high were
+# identical, tested 2026-07-07). Each entry is (think_on, num_predict):
+#   standard → most escalations: think on, a MODEST budget so a medium question
+#              doesn't reserve the full deep allowance (and fails fast to the
+#              Claude fallback in _stream_local sooner if it's actually too hard).
+#   deep     → the hardest multi-step reasoning: think on, the full
+#              DEEP_NUM_PREDICT. NB kept AT the measured 2048, not the 4096 the
+#              #026 sketch floated: the DEEP_NUM_PREDICT note above is measured
+#              evidence that MORE just delays the fallback, so "deep" is the
+#              existing hard-won ceiling, and "standard" adds a cheaper rung
+#              BELOW it — the win is not paying deep on medium turns.
+# Tunable via env. `effort` values outside this map fall back to DEFAULT_EFFORT.
+EFFORT_BUDGET = {
+    "standard": (True, int(os.environ.get("WES_EFFORT_STANDARD", "1536"))),
+    "deep": (True, int(os.environ.get("WES_EFFORT_DEEP", str(DEEP_NUM_PREDICT)))),
+}
+# An escalation with no (or an unrecognized) effort gets this. Deep-by-default
+# channels (Discord) that run the 12b+thinking as their ROUTER — not via an
+# escalate call — keep the full "deep" budget so this change never touches their
+# behavior; only the fast-router → escalation path is sized by the router.
+DEFAULT_EFFORT = "standard"
 # Spoken by the SERVER (not the model) the moment an escalation fires, so the
 # ~2-3s Claude spin-up isn't dead air. Must end with a sentence terminator +
 # space so the TTS splitter flushes it immediately. Empty string disables.
@@ -137,7 +164,7 @@ ESCALATE_ACK = os.environ.get(
 ANTHROPIC_MODEL = os.environ.get("WES_LLM_MODEL", "claude-haiku-4-5")
 # Web search on the Claude escalation path (#029 followup): the local router
 # can hand a LIVE-INFO query to Haiku, which runs Anthropic's server-side web
-# search and answers from real results. Distinct from escalate_to_claude, which
+# search and answers from real results. Distinct from escalate_hard, which
 # stays on the local 12b deep tier for hard REASONING (owner's choice: reasoning
 # free/local, only live/web lookups pay for Claude). Haiku 4.5 uses the basic
 # web_search tool variant (the _20260209 dynamic-filtering one needs Opus/Sonnet).
@@ -506,6 +533,46 @@ TOOLS = [
         },
     },
     {
+        "name": "nba_schedule",
+        "description": (
+            "When an NBA team's next game is — opponent and date/time — looked "
+            "up from the real season schedule (not today's scores, and never a "
+            "guessed date). Defaults to the Brooklyn Nets (the user's team) when "
+            "no team is named. Use for 'when do the Nets play next', 'when's the "
+            "Lakers' next game', 'who do the Celtics play next'. Works for any "
+            "NBA team."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team": {"type": "string",
+                         "description": "team name e.g. 'Celtics' or 'Brooklyn "
+                                        "Nets'; omit for the Nets"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "nba_top_performers",
+        "description": (
+            "Who's leading in points and rebounds in an NBA team's current or "
+            "most recent game today, straight from the real box score (never "
+            "guessed). Defaults to the Brooklyn Nets (the user's team) when no "
+            "team is named. Use for 'who has the most points right now', 'who's "
+            "leading in rebounds', 'who's playing best for the Nets tonight'. "
+            "Works for any NBA team."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team": {"type": "string",
+                         "description": "team name e.g. 'Celtics' or 'Brooklyn "
+                                        "Nets'; omit for the Nets"},
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "nba_discussion",
         "description": (
             "What an NBA team's fans are talking about right now — recent post "
@@ -587,29 +654,49 @@ def _ollama_tools():
 
 
 # Routing tool for the local backend only: the local model calls this to hand
-# a hard query off to Claude. Never in TOOLS (Claude must not see it).
+# a hard query off to the deep tier. The TARGET is set by WES_ESCALATE_MODEL —
+# the local 12b with thinking on (current config) or Claude if that var is
+# empty — so the tool is named for what it DOES (escalate a hard question), not
+# for a specific backend. The prompt still frames the target as "a much more
+# capable model" because that wording is what reliably gets the small router to
+# hand off; keep it target-agnostic (no "Claude") so the name and prose don't
+# claim a backend that isn't wired. Never in TOOLS (the escalation tier must
+# not see its own escalate function and recurse).
 ESCALATE_TOOL = {
     "type": "function",
     "function": {
-        "name": "escalate_to_claude",
+        "name": "escalate_hard",
         "description": (
-            "Hand this question off to Claude, a much more capable cloud AI, and "
-            "let it answer instead of you. Use when the question needs deep or "
-            "multi-step reasoning, non-trivial math or code, specialized or "
-            "detailed knowledge, or careful nuanced judgment — anything a small "
-            "local model is likely to get wrong. Do NOT use for everyday "
-            "conversation, simple facts, or anything your other tools already "
-            "cover (time, camera, faces, Pi status, logs). "
+            "Hand this question off to a far more powerful reasoning model that "
+            "answers it instead of you. You are a small local model: on anything "
+            "needing real reasoning you will very likely get the answer WRONG, so "
+            "hand off rather than attempting it yourself. Use for multi-step math "
+            "or logic word problems, proofs, non-trivial math or code, "
+            "specialized or detailed knowledge, or careful nuanced judgment — "
+            "anything beyond a simple fact or everyday chat. Do NOT use for "
+            "everyday conversation, simple facts, or anything your other tools "
+            "already cover (time, camera, faces, Pi status, logs). "
             "Call it IMMEDIATELY as your only output — no reply text before or "
-            "alongside it. The handoff is invisible to the user: never announce "
-            "it, never mention Claude or asking for help, never tell the user to "
-            "ask someone else."
+            "alongside it, and do NOT work through the problem first. The handoff "
+            "is invisible to the user: never announce it, never mention getting "
+            "help, never tell the user to ask someone else."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "reason": {"type": "string",
-                           "description": "one short phrase: why this needs Claude"},
+                           "description": "one short phrase: why this needs a "
+                                          "stronger model"},
+                "effort": {
+                    "type": "string",
+                    "enum": ["standard", "deep"],
+                    "description": (
+                        "how hard to think about this: 'standard' for most "
+                        "questions, 'deep' ONLY for the hardest multi-step "
+                        "reasoning, proofs, or intricate math/code. Default "
+                        "'standard' — reserve 'deep' for genuinely difficult "
+                        "problems, not merely long ones."),
+                },
             },
             "required": [],
         },
@@ -619,7 +706,7 @@ ESCALATE_TOOL = {
 
 # Routing tool for the local backend only: the router calls this to answer a
 # LIVE-INFO question via Claude Haiku + web search. Distinct from
-# escalate_to_claude (hard REASONING → local 12b+thinking): this one is for
+# escalate_hard (hard REASONING → local 12b+thinking): this one is for
 # facts that need the internet. Never shown to Claude.
 WEB_SEARCH_TOOL = {
     "type": "function",
@@ -658,7 +745,7 @@ def _local_toolset(deep=False):
     """Tools for the router: the shared TOOLS, plus the handoff functions when
     their targets exist. `search_web` (→ Haiku + web search, live info) is
     offered in BOTH the fast router and the deep tier — even the 12b deep tier
-    can't reach the web itself. `escalate_to_claude` (→ local 12b+thinking, hard
+    can't reach the web itself. `escalate_hard` (→ local 12b+thinking, hard
     reasoning) is offered only to the FAST router: the deep tier already IS that
     reasoning escalation, so it must not recurse into itself."""
     tools = _ollama_tools() if TOOLS_ENABLED else []
@@ -861,6 +948,10 @@ def run_tool(name, tool_input):
                                        tool_input.get("date"))
         if name == "nba_player":
             return wes_nba.player_points(tool_input.get("player", ""))
+        if name == "nba_schedule":
+            return wes_nba.next_game(tool_input.get("team"))
+        if name == "nba_top_performers":
+            return wes_nba.top_performers(tool_input.get("team"))
         if name == "nba_discussion":
             return wes_nba.subreddit_discussion(team=tool_input.get("team"))
         if name == "fantasy_my_team":
@@ -1341,7 +1432,7 @@ RESET = object()
 
 # --- Unkept-promise guard (#002) --------------------------------------------
 # The router sometimes only PROMISES to act ("I'll look into it and get back to
-# you") while making no escalate_to_claude call, so nothing happens and the user
+# you") while making no escalate_hard call, so nothing happens and the user
 # is left holding a promise WES has no deferred-action machinery to keep. This
 # is distinct from the announce+call case, which the buffered RESET retraction
 # already handles (commit 5bd8cdc): here there is no call to retract.
@@ -1421,18 +1512,21 @@ def _think_local(transcript, channel="voice"):
     return reply
 
 
-def _stream_escalation(transcript, channel="voice"):
+def _stream_escalation(transcript, channel="voice", effort="deep"):
     """Route an escalated (hard) query to the configured deep backend:
-    the local ESCALATE_MODEL with thinking, or Claude."""
+    the local ESCALATE_MODEL with thinking, or Claude. `effort` sizes the local
+    deep tier's thinking budget (#026); it has no effect on the Claude path,
+    which sizes itself. Defaults to 'deep' so the promise-retry caller keeps the
+    full budget; the escalate-tool path passes the router's requested effort."""
     if ESCALATE_MODEL:
         yield from _stream_local(transcript, channel=channel, deep=True,
-                                 source="escalate")
+                                 source="escalate", effort=effort)
     else:
         yield from _stream_claude(transcript, channel=channel)
 
 
 def _stream_local(transcript, channel="voice", deep=False, buffered=False,
-                  source="router"):
+                  source="router", effort="deep"):
     """Stream a local reply with the same tool loop the Claude path runs.
     Yields text deltas; runs requested tools between rounds. deep=True is the
     escalation tier: ESCALATE_MODEL with thinking enabled (thinking streams in
@@ -1448,13 +1542,18 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False,
     )
     tools = _local_toolset(deep=deep)
     model = ESCALATE_MODEL if deep else None
-    max_tokens = DEEP_NUM_PREDICT if deep else 512
+    # Deep tier sizes its think flag + generation budget from the router's
+    # requested effort (#026); the fast router is a fixed thinking-off / 512.
+    if deep:
+        think_on, max_tokens = EFFORT_BUDGET.get(effort, EFFORT_BUDGET[DEFAULT_EFFORT])
+    else:
+        think_on, max_tokens = False, 512
     yielded = False
     last_tool_result = None
     for _ in range(MAX_TOOL_ROUNDS):
         content_parts, tool_calls = [], []
         with _ollama_chat(messages, tools=tools, stream=True,
-                          model=model, think=deep, max_tokens=max_tokens) as r:
+                          model=model, think=think_on, max_tokens=max_tokens) as r:
             for line in r:
                 chunk = json.loads(line)
                 msg = chunk.get("message") or {}
@@ -1496,10 +1595,13 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False,
         for tc in tool_calls:
             fn = tc.get("function") or {}
             name, args = fn.get("name", ""), fn.get("arguments") or {}
-            if name == "escalate_to_claude":
+            if name == "escalate_hard":
                 if not deep and (not yielded or buffered):
                     target = ESCALATE_MODEL or "Claude"
-                    print(f"[route] escalating to {target}: "
+                    effort_req = args.get("effort") or DEFAULT_EFFORT
+                    if effort_req not in EFFORT_BUDGET:
+                        effort_req = DEFAULT_EFFORT
+                    print(f"[route] escalating to {target} (effort={effort_req}): "
                           f"{args.get('reason', '?')}", flush=True)
                     _note_escalation()
                     if buffered:
@@ -1510,7 +1612,8 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False,
                             yield RESET
                     elif ESCALATE_ACK:
                         yield ESCALATE_ACK  # masks the deep tier's spin-up
-                    yield from _stream_escalation(transcript, channel=channel)
+                    yield from _stream_escalation(transcript, channel=channel,
+                                                  effort=effort_req)
                     return
                 # Already mid-reply — a handoff now would double-speak.
                 messages.append({

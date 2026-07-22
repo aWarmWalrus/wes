@@ -367,6 +367,181 @@ def player_points(player, _events_fn=None, _summary_fn=None):
             f"they may not be playing today.")
 
 
+# --- team schedule (next game, #028 option A) --------------------------------
+# `live_scores`/`_events` only look at today (or one named date). "When do the
+# Nets next play" needs the whole-season schedule, forward-looking — a
+# different ESPN endpoint (team schedule, not the day's scoreboard).
+
+_TEAMS_URL = f"{_SITE}/teams"
+
+
+def _teams(_get_fn=None):
+    """All 30 NBA teams: [{'id', 'abbreviation', 'displayName', ...}, ...]."""
+    get = _get_fn or _get
+    data = get(_TEAMS_URL)
+    out = []
+    for league in data.get("sports", [{}])[0].get("leagues", [{}]):
+        for t in league.get("teams", []):
+            team = t.get("team")
+            if team:
+                out.append(team)
+    return out
+
+
+def _team_id_for(query, _teams_fn=None):
+    """Loose-match `query` against the 30 teams -> ESPN team id, or None."""
+    if not query or not str(query).strip():
+        return None
+    try:
+        teams = (_teams_fn or _teams)()
+    except Exception:  # noqa: BLE001
+        return None
+    q = query.strip().lower().split()
+    for t in teams:
+        haystack = " ".join(str(t.get(k, "")) for k in (
+            "displayName", "shortDisplayName", "name", "location",
+            "abbreviation", "nickname")).lower()
+        if any(tok in haystack for tok in q):
+            return t.get("id")
+    return None
+
+
+def _schedule_events(team_id, _get_fn=None):
+    get = _get_fn or _get
+    url = f"{_SITE}/teams/{team_id}/schedule"
+    return get(url).get("events", []) or []
+
+
+def _event_date(event):
+    """Parse an event's date (competition-level, falling back to event-level)
+    into an aware UTC datetime. Tolerant of ESPN's with/without-seconds forms;
+    None on anything unparseable (never raises into a turn)."""
+    raw = (event.get("competitions", [{}])[0].get("date") or event.get("date"))
+    if not raw:
+        return None
+    raw = raw.rstrip("Z")
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+        try:
+            return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _spoken_datetime(dt):
+    return dt.astimezone().strftime("%A, %B %d, %I:%M %p").replace(" 0", " ")
+
+
+def next_game(team=None, _teams_fn=None, _schedule_fn=None, _now=None):
+    """The next scheduled game for `team` (default the Nets): opponent + when.
+    Looks FORWARD across the season schedule — distinct from `live_scores`,
+    which only covers today or one named date. Feeds #028's 'when do the Nets
+    next play' (ticket's example 1: ambiguous/missing-tool query)."""
+    team = team or DEFAULT_TEAM
+    team_id = _team_id_for(team, _teams_fn)
+    if not team_id:
+        return f"I don't recognize the team \"{team}\"."
+    try:
+        events = (_schedule_fn or (lambda: _schedule_events(team_id)))()
+    except Exception as e:  # noqa: BLE001
+        return f"I couldn't reach the NBA schedule just now ({e})."
+    now = _now or datetime.now(timezone.utc)
+    upcoming = []
+    for e in events:
+        dt = _event_date(e)
+        state = (e.get("competitions", [{}])[0].get("status", {})
+                 .get("type", {}).get("state", ""))
+        if dt and state != "post" and dt >= now:
+            upcoming.append((dt, e))
+    if not upcoming:
+        return f"I don't see a scheduled game for the {team} right now."
+    dt, e = min(upcoming, key=lambda pair: pair[0])
+    comp = e.get("competitions", [{}])[0]
+    away, home = _sides(comp)
+    opp = _name(home) if team_matches(team, away) else _name(away)
+    return f"The {team} next play the {opp} on {_spoken_datetime(dt)}."
+
+
+# --- box score leaders (top performers, #028 option A) -----------------------
+# The second #028 example ("who's playing right now... who has the most points
+# and rebounds") is a CHAIN: find the live game, then aggregate its box score.
+# Doing the aggregation here (not in the model) keeps it a single tool call
+# and grounds the answer in real numbers (#029 §8.2's "arithmetic is code").
+
+def _game_for_team(team, _events_fn=None):
+    """The most relevant (in-progress, else final) event for `team` today;
+    None if they have no game or it hasn't tipped off yet."""
+    events = (_events_fn or _events)()
+    matched = [e for e in events
+               if any(team_matches(team, c)
+                      for c in e.get("competitions", [{}])[0].get("competitors", []))]
+    if not matched:
+        return None
+
+    def rank(e):
+        state = (e.get("competitions", [{}])[0].get("status", {})
+                 .get("type", {}).get("state", ""))
+        return {"in": 0, "post": 1}.get(state, 2)
+
+    matched.sort(key=rank)
+    return matched[0] if rank(matched[0]) < 2 else None
+
+
+_LEADER_CATS = ("points", "rebounds")
+
+
+def _leaders_from_summary(summary, cats=_LEADER_CATS):
+    """Max value + player name per stat key, across BOTH teams' box scores."""
+    box = summary.get("boxscore", {})
+    leaders = {}
+    for team in box.get("players", []):
+        stats_blocks = team.get("statistics", [])
+        if not stats_blocks:
+            continue
+        block = stats_blocks[0]
+        keys = block.get("keys", [])
+        for a in block.get("athletes", []):
+            name = a.get("athlete", {}).get("displayName", "")
+            row = a.get("stats", [])
+            if not row:
+                continue
+            for cat in cats:
+                if cat not in keys:
+                    continue
+                i = keys.index(cat)
+                if i >= len(row):
+                    continue
+                try:
+                    val = int(row[i])
+                except (TypeError, ValueError):
+                    continue
+                cur = leaders.get(cat)
+                if cur is None or val > cur[1]:
+                    leaders[cat] = (name, val)
+    return leaders
+
+
+def top_performers(team=None, _events_fn=None, _summary_fn=None):
+    """Who's leading in points/rebounds in `team`'s current or most recent
+    game today (default the Nets). Real box-score numbers, never guessed."""
+    team = team or DEFAULT_TEAM
+    try:
+        game = _game_for_team(team, _events_fn)
+    except Exception as e:  # noqa: BLE001
+        return f"I couldn't reach the NBA data just now ({e})."
+    if not game:
+        return f"The {team} don't have a game today, so there's nothing to check."
+    summ = _summary_fn or _summary
+    try:
+        leaders = _leaders_from_summary(summ(game["id"]))
+    except Exception:  # noqa: BLE001
+        return "I couldn't pull the box score for that game right now."
+    if not leaders:
+        return f"No stats yet for the {team}'s game."
+    parts = [f"{name} leads with {val} {cat}" for cat, (name, val) in leaders.items()]
+    return f"{format_game(game)} {'; '.join(parts)}."
+
+
 # --- player season stats (fantasy valuation, #029 P1) -----------------------
 # ESPN's free athlete-stats endpoint returns per-season splits: `averages`
 # (per-game PTS/REB/AST/STL/BLK/TO + shooting), `totals`, and `miscellaneous`

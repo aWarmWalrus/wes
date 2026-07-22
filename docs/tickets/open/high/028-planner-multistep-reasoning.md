@@ -91,7 +91,45 @@ Cross-cutting design questions:
 - [ ] no-hallucination guarantee preserved (reason over fetched data only)
 
 ## Notes
-- 2026-07-07: filed at owner request while shipping #027 P1. The two example
+
+### 2026-07-21 — Option A (widen tools) shipped for the two named queries
+Design decision: **stage this rather than build the full planner now.**
+Options B (ReAct loop) and C (explicit plan-and-execute) both depend on #026's
+routing decision (who decides a query needs multi-step handling, and at what
+thinking budget) — and #026 is itself still open/unresolved (2026-07-21 notes
+there: the deep tier can burn its whole budget on `thinking` and yield empty
+content, a live bug). Building a multi-round tool loop before that lands would
+mean guessing at the budget/step-cap policy twice. Option A has no such
+dependency — it's just more tools — so it ships now; B/C stay open pending #026.
+
+**Shipped in `pc/wes_nba.py`** (both closing this ticket's named examples):
+- **`next_game(team=None)`** — new ESPN team-schedule lookup (teams list +
+  per-team schedule endpoints, distinct from `live_scores`'s today/dated-only
+  scoreboard). Answers "when do the Nets next play" with a real opponent +
+  date, forward-looking across the season. Tool: `nba_schedule`.
+- **`top_performers(team=None)`** — finds the team's live/most-recent game,
+  then aggregates the box score server-side (max points, max rebounds across
+  both teams) — the "find the game → read the box score → find the max" CHAIN
+  from this ticket's example 2, done as ONE tool call/deterministic code
+  instead of asking the model to plan multiple rounds. Tool:
+  `nba_top_performers`.
+- Both registered in `wes_server.TOOLS` + dispatched (16 tools now); both
+  degrade to a plain string on any failure (unresolved team, no game, ESPN
+  error) — never guess. Unit-tested (fixture-based, no network) in
+  `test_unit_nba.py`/`test_unit_server.py`; live canary
+  (`WES_NBA_LIVE=1 pytest -k TestLiveESPN`) verified the schedule-endpoint
+  schema assumptions against the real API (offseason data: e.g. "The Brooklyn
+  Nets next play the Miami Heat on Wednesday, October 14"). Golden cases
+  `nba-next-game` / `nba-top-performers` added; full local-judge eval run
+  green (only pre-existing `lexicon-names` flake, tracked separately as #011 —
+  unrelated to this change).
+- **This does NOT close the ticket.** It answers the two named example
+  queries, which is exactly what the 2026-07-07 note flagged as the doable
+  stopgap; it does not give WES a general decompose-plan-execute capability
+  for arbitrary new multi-step intents (smart home #004, scheduling #005 will
+  hit the same wall with their own tools). B/C remain open, blocked on #026.
+
+### 2026-07-07: filed at owner request while shipping #027 P1. The two example
   queries are NBA but the capability is general; #026 (adaptive thinking budget)
   is the sibling ticket — the fast router deciding "this needs the planner" is
   #026's job, executing the plan is this ticket's. Consider designing them as

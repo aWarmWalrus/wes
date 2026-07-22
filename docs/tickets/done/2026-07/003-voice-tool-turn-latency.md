@@ -1,10 +1,10 @@
 ---
 id: 003
 title: Speak a filler before slow tool turns
-status: open
+status: done
 priority: med
 created: 2026-07-05
-closed:
+closed: 2026-07-21
 tags: [latency, voice, tools, vision]
 related: [docs/pipeline.md, "#001"]
 ---
@@ -35,3 +35,20 @@ VLM). `SCENE_TTL=20s` means misses are common.
 ## Notes
 Filler must respect the house audio rule implicitly — it's part of the normal
 reply path on the JBL, not unprompted playback.
+
+### 2026-07-21 — closed as OBSOLETE, superseded without implementing either fix
+Both proposed fixes are moot:
+- **Filler:** `docs/pipeline.md` ("Single-stream playback") now explicitly
+  states "No filler/'thinking word' — it was removed as clunky." The one
+  surviving filler (`ESCALATE_ACK`) is narrowly scoped to escalation
+  spin-up, not generalized to tool turns as this ticket proposed.
+- **Prefetch/TTL:** a **wake-word vision prefetch** (`docs/vision.md`,
+  "Wake-word vision prefetch (latency hiding)") now fires `/prefetch_scene`
+  at wake-word detection time, ahead of the user finishing their utterance,
+  populating the `SCENE_TTL=20s` cache before the turn even starts. Per that
+  doc: "wake-word prefetch hides it; an ad-hoc cache-miss `describe_scene` is
+  slow" — i.e. the miss case this ticket targeted is now the rare path, not
+  the common one, without a filler or TTL change.
+Both landed via separate feature work (vision prefetch) after this ticket
+was filed 2026-07-05; nothing here needs building. Closing rather than
+reopening scope-creep into vision.

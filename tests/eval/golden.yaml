@@ -246,3 +246,38 @@
     reply cites plausible per-game stats (points/rebounds/assists) or gracefully
     says it couldn't find them. Mark INCORRECT only if it invents a stat line
     without looking it up, or refuses claiming it cannot know player stats.
+
+# Schedule lookup (#028 option A): a forward-looking query no other NBA tool
+# answers (nba_scores is today/dated only) — must come from nba_schedule
+# (real season schedule), never a guessed date.
+- id: nba-next-game
+  say: "When do the Nets play next"
+  expect:
+    reply_regex: 'play|game|next|vs|against|couldn.?t|schedule|recognize'
+    max_total_ms: 50000
+    max_audio_s: 25
+  judge: >-
+    The user asked when the Brooklyn Nets next play. The assistant has an
+    nba_schedule tool that reads the real season schedule, so a good reply
+    names a real-sounding opponent and date/time, or gracefully says it
+    couldn't find one (e.g. offseason with no schedule posted yet). Mark
+    INCORRECT only if it invents a date without the tool, or refuses claiming
+    it cannot know future games.
+
+# Box-score aggregation (#028 option A, example 2): the "find the live game,
+# then find the max stat" chain, done server-side in one tool call instead of
+# needing the model to plan multiple steps.
+- id: nba-top-performers
+  say: "Who has the most points and rebounds in the Nets game right now"
+  expect:
+    # loose on-topic net only — the offseason "no game" reply is heavily
+    # paraphrased run-to-run, so the JUDGE carries correctness, not the regex.
+    reply_regex: 'point|rebound|lead|net|game|stat|play'
+    max_total_ms: 50000
+    max_audio_s: 25
+  judge: >-
+    The user asked who's leading in points/rebounds in the Nets' current game.
+    The assistant has an nba_top_performers tool that reads the real box
+    score, so a good reply names a player + a stat total for each category, or
+    gracefully says the Nets have no game today (true in the NBA offseason).
+    Mark INCORRECT only if it invents player names/stats without the tool.

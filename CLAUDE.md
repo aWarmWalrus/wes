@@ -135,7 +135,11 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   config + rails; phased roadmap. **P0 + P1 shipped 2026-07-20** —
   `fantasy_my_team` scrapes the owner's real roster + scoring via Playwright;
   `fantasy_player_value` (engine: `pc/wes_fantasy.py`) values players against the
-  league's roto cats from real ESPN stats. P2 (daily lineup optimizer) is next.
+  league's roto cats from real ESPN stats. **P2 optimizer ENGINE done
+  2026-07-21** (`wes_fantasy.optimize_lineup`, exact + property-tested) but
+  **tool registration deferred to in-season** — offseason Yahoo leaves eligible
+  positions blank, so `fantasy_optimize_lineup` can't produce a real lineup yet.
+  Next: wire the tool + shadow-soak once the season opens, then P3 executor.
   Platform pivoted from the official Yahoo API to browser automation (API access
   now requires a no-caching DocuSign).
 - `docs/keyresults.md` — current-cycle key results, refreshed periodically.
