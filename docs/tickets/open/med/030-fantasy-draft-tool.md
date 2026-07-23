@@ -19,8 +19,9 @@ so the whole premise is unattended, real-time, autonomous drafting, not a
 human-approved assist tool.
 
 Must work in two modes against the same code path:
-1. **Mock drafts** — Yahoo's mock draft rooms (available year-round, not
-   tied to a real league) — the test/soak harness.
+1. **Mock drafts** — Yahoo's mock draft rooms (not tied to a real league) — the
+   test/soak harness. **NB (verified 2026-07-22): NOT available in the NBA
+   offseason** — they appear preseason (~October); see Notes.
 2. **Real drafts** — an actual league's live draft room, same adapter.
 
 ## Approach
@@ -91,6 +92,40 @@ static roster/scoring scrape #029 P0 already does.
       since the live room can't be unit-tested directly
 
 ## Notes
+
+### 2026-07-22 — live-room recon: session works, but NO offseason mock drafts
+Ran a recon session against Yahoo with the persisted Playwright profile. Findings:
+- **Session is live** (A1/T/Y auth cookies present) — the #029 P0 login still holds.
+- **The "mock drafts available year-round" assumption (below) is WRONG for NBA.**
+  Zero "mock" elements on the fantasy home; guessed URLs
+  (`/nba/mockdraftlobby`, `/nba/mock`, `/nba/draftcenter`) all 404. Yahoo offers
+  no NBA mock drafts in July — real/mock drafts are a preseason thing (~October).
+  **So the live-room DOM (on-the-clock, countdown, pick button, available pool)
+  can't be captured until preseason.** This is the critical-path blocker for the
+  ingest + submit halves; it's a calendar block, not a technical one.
+- **But we captured Yahoo's draft-RENDER structure** from the owner's league
+  Draft Results page (`/2025/nba/114020/draftresults`), which IS reachable:
+  one `<table class="Table Table-interactive …">` per round (header "Round N");
+  each pick row = `td.first` (pick #) + `td.player a.name` (the player, with the
+  Yahoo id in `href="…/nba/players/<id>"`) + `td.last` (drafting team). The live
+  board's picked-list very likely reuses this pattern. NB the id is a **Yahoo**
+  player id (Jokić=5352), a different id space from ESPN's (the engine's stats
+  source) — a name/id crosswalk will be needed to join a Yahoo-drafted player to
+  its ESPN z-score.
+- **Built `pc/yahoo_draft_recon.py`** — an owner-drivable capture tool (run on
+  the PC like `yahoo_connect.py`): opens the logged-in browser, the owner
+  navigates to any draft page, and it dumps that page's DOM + a structured probe
+  digest (tables/buttons/clock-candidates/lists/player refs) to timestamped
+  files under `wes-pc\draft_recon\`. Validated by capturing the results page.
+  **This is the tool that turns the preseason live-room recon into a 5-minute
+  owner task** — the moment a mock/real draft room is open, one run captures the
+  board + on-the-clock + pick-button DOM so the selectors can be written.
+
+**Next (preseason, when Yahoo enables drafts):** owner opens a mock draft →
+`python pc\yahoo_draft_recon.py`, capture the lobby / board / on-the-clock
+screens → write the live-board scraper (reusing the round-table pattern above) +
+the pick-submit click + the Yahoo↔ESPN player-id crosswalk. Until then the
+decision engine (done) is the finished half.
 
 ### 2026-07-21 — DECISION ENGINE done (offline); live-room automation still to come
 Built the decision half (owner chose "engine first" — it's solo-buildable and
