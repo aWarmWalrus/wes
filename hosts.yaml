@@ -8,7 +8,7 @@
 # docs. CLAUDE.md's machines table and docs/observability.md point back to this.
 hosts:
   pc:
-    ip: 10.0.0.168
+    ip: 10.0.0.91          # 2026-07-22: new Wi-Fi adapter (was 10.0.0.168)
     hostname: DESKTOP-R2PFF9T
     role: PC (RTX 5060 Ti 16GB) — Whisper STT, Gemma LLM/VLM via Ollama, piper TTS
     ports:

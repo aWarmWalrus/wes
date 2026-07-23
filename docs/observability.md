@@ -38,8 +38,8 @@ two lightweight exporters so gaming headroom is unaffected.
   ever go down after an exporter update/rename, check for reborn block rules:
   `Get-NetFirewallApplicationFilter | ? Program -match exporter | Get-NetFirewallRule`.
 - Prometheus scrape jobs (`/etc/prometheus/prometheus.yml` on the Pi):
-  `node` (localhost:9100), `pc_windows` (10.0.0.168:9182), `pc_gpu`
-  (10.0.0.168:9835). Validate + apply:
+  `node` (localhost:9100), `pc_windows` (10.0.0.91:9182), `pc_gpu`
+  (10.0.0.91:9835). Validate + apply:
   `promtool check config /etc/prometheus/prometheus.yml && sudo systemctl reload prometheus`.
   Target health: <http://10.0.0.79:9090/targets>.
 
@@ -119,7 +119,7 @@ reply, which tools ran, escalated y/n, per channel. Pipeline:
   (`yesoreyeram-infinity-datasource`, installed with
   `sudo grafana cli --homepath /usr/share/grafana plugins install ...` +
   restart; provisioned in `/etc/grafana/provisioning/datasources/infinity.yaml`).
-  The table panel polls `http://10.0.0.168:8080/turns?n=15` — it shows the
+  The table panel polls `http://10.0.0.91:8080/turns?n=15` — it shows the
   *current* tail regardless of the dashboard's time range.
 
 ## Alerting — Jarvis DMs the owner (built 2026-07-05)

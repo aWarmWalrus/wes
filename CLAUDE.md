@@ -25,7 +25,7 @@ Claude Haiku is the error-fallback/optional backend.
 | Tier | Host | LAN IP | Role |
 |------|------|--------|------|
 | 1 | `raspberrypi` (alias `walrus-pi`) | 10.0.0.79 | Pi 5 + Hailo-8 — wake word, audio, vision |
-| 2 | `DESKTOP-R2PFF9T` | 10.0.0.168 | PC (RTX 5060 Ti 16GB) — STT, LLM, TTS |
+| 2 | `DESKTOP-R2PFF9T` | 10.0.0.91 | PC (RTX 5060 Ti 16GB) — STT, LLM, TTS |
 
 > **`hosts.yaml` (repo root) is the single source of truth** for IPs and service
 > ports — read at runtime via `wes_hosts.py` by the server, bot, and Pi client

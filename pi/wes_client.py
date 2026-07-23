@@ -6,7 +6,7 @@ casting the spoken reply to the Kitchen Display. The Pi just prints the
 transcript and reply for logging.
 
 Wake-word detection and audio capture stay on the Pi; everything heavier runs
-on the PC (10.0.0.168).
+on the PC (10.0.0.91).
 
 Run on the Pi:
     ~/wes/.venv/bin/python ~/wes/pi/wes_client.py
@@ -43,7 +43,7 @@ import wes_hosts  # host registry (hosts.yaml); repo root on path
 # The PC server's base URL comes from the host registry (single source of
 # truth); if the registry can't be read (no PyYAML / missing file) we fall back
 # to the known LAN address so the voice loop is never bricked by a config issue.
-_PC = wes_hosts.url("pc", "server", default="http://10.0.0.168:8080")
+_PC = wes_hosts.url("pc", "server", default="http://10.0.0.91:8080")
 PC_URL = f"{_PC}/respond"              # non-streaming (returns full WAV)
 HEALTH_URL = f"{_PC}/health"           # server readiness probe
 STREAM_URL = f"{_PC}/respond_stream"   # streams raw PCM as generated
