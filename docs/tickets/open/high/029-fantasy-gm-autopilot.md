@@ -78,6 +78,49 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 
 ## Notes
 
+### 2026-07-29 — NFL leagues' REAL scoring + slots now read from settings
+`league_scoring` used to answer "categories: unknown" for an H2H-points league —
+correct-but-useless, and it *read* like a scrape failure. Now the settings page is
+parsed properly, so NFL valuation means "value in THIS league" (design §1) rather
+than an assumed preset.
+
+**The seam** (keeps both sides unit-testable, no browser in the tests):
+`wes_yahoo._extract_settings_lines` + `league_settings_lines()` return the
+settings tables as flat text and know **no football**; `wes_nfl.parse_scoring()` /
+`parse_roster_slots()` know football and touch **no browser**;
+`wes_fantasy.nfl_league_scoring()` / `nfl_league_slots()` wire them (cached per
+league, degrading to `wes_nfl`'s defaults — never to zeros, which would value
+every player at 0).
+
+**Section awareness turned out to be mandatory, not tidiness.** Yahoo reuses
+labels across sections with *opposite* meanings: `Interceptions -1` under Offense
+is a QB throwing one; `Interception 2` under Defense/Special Teams is a defence
+catching one. Same for a bare `Touchdown 6` (defensive TD). A flat label→key map
+scores one as the other, silently.
+
+**Verified live on both leagues, nothing unparsed:**
+- `nfl.l.957011` — every weight matches what the page shows, and it **confirms
+  the half-PPR preset was right** (`Rec 0.5`). The presets were educated guesses;
+  now they're a fallback rather than an assumption. Reception value is the single
+  most valuation-critical number — the same stat line scores 16.5 here vs 19.0 at
+  full PPR, which reorders every RB and WR.
+- `nfl.l.424494` (**pre-draft**) parses fine too, which is the point of reading
+  slots from *settings* rather than from a scraped roster. And it justifies the
+  whole approach: its roster shape is **nothing like** the other league's —
+  `QB,QB,WR,WR,WR,RB,RB,RB,TE,TE,W/R/T×4,K,DEF` = **16 active slots including
+  two QBs and four flex**, versus 9 slots in `957011`. Any hardcoded "standard
+  lineup" assumption would have been wrong for one of the owner's two leagues.
+
+Also fixed a conflation `format_scoring` had: no categories means two different
+things. A **rotisserie** league always has categories, so their absence is a real
+failure worth saying "unknown" about; a **points** league has none by design.
+Reporting both as "unknown" hid the former behind the latter.
+
+**Still to do for NFL:** the player POOL (ESPN NFL feed) so there are real stat
+lines to run through these weights — the scoring path is proven end to end but
+currently has only roster names, no stats. Then weekly cadence + P2 tool
+registration.
+
 ### 2026-07-29 — `wes_yahoo` IS sport-parameterized; NFL read path VERIFIED LIVE
 The last structural blocker is done, and it landed smaller than expected because
 **the sport is already encoded in the Yahoo key** (`nfl.l.957011.t.4`). Deriving

@@ -18,6 +18,7 @@ answer "is X worth starting over Y" from real stats, no guesses.
 import statistics
 
 import wes_nba  # noqa: E402 — same dir on path (added by the server/tests)
+import wes_nfl  # noqa: E402 — NFL points valuation (sport-specific, pure)
 import wes_yahoo  # noqa: E402
 
 # The owner's league (roto) categories, used when the live scoring scrape isn't
@@ -362,6 +363,43 @@ def fantasy_player_value(player, versus=None):
     """Tool entry: value a player (optionally vs another) in the owner's league's
     scoring. Resolves the league's categories from the configured team."""
     return player_value(player, categories=_league_categories(), versus=versus)
+
+
+# --- NFL: the league's REAL points scoring (#029 P7) -------------------------
+# The composition seam. wes_yahoo scrapes text and knows no football; wes_nfl
+# knows football and touches no browser; this module already imports both, so
+# the wiring belongs here and both sides stay unit-testable in isolation.
+_nfl_scoring_cache = {}   # league_key -> parsed scoring dict
+
+
+def nfl_league_scoring(league_key, _lines_fn=None):
+    """This NFL league's real scoring: {"weights", "tiers", "parsed", "unknown"}.
+
+    Falls back to wes_nfl's defaults (half-PPR + Yahoo's standard ladder) when the
+    scrape fails, so valuation degrades to a sane guess instead of to zeros.
+    Cached per league — scoring settings essentially never change mid-season."""
+    if league_key in _nfl_scoring_cache:
+        return _nfl_scoring_cache[league_key]
+    fetch = _lines_fn or wes_yahoo.league_settings_lines
+    lines = fetch(league_key)
+    parsed = wes_nfl.parse_scoring(lines if isinstance(lines, list) else [])
+    if not isinstance(lines, list):
+        # Degradation string from the scrape layer — note it, don't raise.
+        print(f"[fantasy] nfl scoring scrape failed for {league_key}: "
+              f"{lines!r:.120}", flush=True)
+    _nfl_scoring_cache[league_key] = parsed
+    return parsed
+
+
+def nfl_league_slots(league_key, _lines_fn=None):
+    """The league's authoritative roster slots from settings, e.g.
+    ['QB','WR','WR','RB','RB','TE','W/R/T','K','DEF','BN',...,'IR'].
+
+    Preferred over deriving slots from a scraped roster: it works PRE-DRAFT (no
+    roster yet) and includes slots no player currently occupies."""
+    fetch = _lines_fn or wes_yahoo.league_settings_lines
+    lines = fetch(league_key)
+    return wes_nfl.parse_roster_slots(lines if isinstance(lines, list) else [])
 
 
 def _playing_today(player):

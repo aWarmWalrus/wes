@@ -390,6 +390,22 @@ def _extract_scoring(page):
     return {"scoring_type": stype, "categories": cats}
 
 
+def _extract_settings_lines(page):
+    """The settings page's tables as flat text lines.
+
+    Deliberately semantics-FREE: this module stays a scraper, and the meaning of
+    'Passing Yards 25 yards per point' belongs to the sport that has passing
+    yards (wes_nfl.parse_scoring / parse_roster_slots). Scoped to <table> so the
+    surrounding news/nav text doesn't come along."""
+    lines = []
+    for table in page.query_selector_all("table"):
+        for raw in (table.inner_text() or "").split("\n"):
+            text = " ".join(raw.split())
+            if text:
+                lines.append(text)
+    return lines
+
+
 def _my_team_key(page, sport):
     """The signed-in owner's team key for the league page currently loaded, read
     from Yahoo's own "My Team" nav link.
@@ -478,8 +494,17 @@ def format_scoring(scoring):
     kind = {"head": "head-to-head", "headone": "H2H points",
             "roto": "rotisserie", "point": "points"}.get(
                 scoring.get("scoring_type", ""), scoring.get("scoring_type", "?"))
-    cats = ", ".join(scoring.get("categories") or []) or "unknown"
-    return f"Scoring: {kind}. Categories that count: {cats}."
+    cats = ", ".join(scoring.get("categories") or [])
+    if cats:
+        return f"Scoring: {kind}. Categories that count: {cats}."
+    # No categories means two DIFFERENT things and conflating them hides a bug:
+    # a rotisserie league always has categories, so their absence is a scrape
+    # failure worth saying "unknown" about; a POINTS league has none by design,
+    # and calling that unknown reads as breakage when nothing broke.
+    if scoring.get("scoring_type") == "roto":
+        return f"Scoring: {kind}, but the categories came back unknown."
+    return (f"Scoring: {kind}, points-based (per-stat weights rather than "
+            f"categories).")
 
 
 # --- entry points (degrade to a string, never raise) ------------------------
@@ -562,6 +587,13 @@ def league_scoring(league_key):
     if not isinstance(result, dict):
         return result
     return format_scoring(result)
+
+
+def league_settings_lines(league_key):
+    """The league settings page as flat text lines (list), or a degradation
+    string. Raw material for the sport-specific parsers — NFL points weights and
+    the authoritative roster-slot list both live in this text."""
+    return _scrape(_league_url(league_key, "settings"), _extract_settings_lines)
 
 
 def league_categories(league_key):

@@ -59,8 +59,20 @@ class TestFormatScoring:
         assert "head-to-head" in out
         assert "PTS" in out and "REB" in out
 
-    def test_unknown_categories_do_not_crash(self):
+    def test_missing_categories_in_a_ROTO_league_is_reported_as_unknown(self):
+        """Rotisserie always has categories, so their absence is a real scrape
+        failure and must still read as 'unknown'."""
         assert "unknown" in wy.format_scoring({"scoring_type": "roto"})
+
+    def test_a_POINTS_league_having_no_categories_is_not_called_unknown(self):
+        """The NFL H2H-points case: no categories BY DESIGN. Calling that
+        'unknown' reported breakage where nothing was broken."""
+        out = wy.format_scoring({"scoring_type": "head", "categories": []})
+        assert "points-based" in out
+        assert "unknown" not in out
+
+    def test_empty_scoring_dict_does_not_crash(self):
+        assert isinstance(wy.format_scoring({}), str)
 
 
 class TestDegradation:

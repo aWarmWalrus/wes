@@ -157,6 +157,164 @@ class TestInterfaceParity:
         assert isinstance(ranked[0]["value"], float)
 
 
+SETTINGS = os.path.join(os.path.dirname(__file__), "fixtures",
+                        "yahoo_nfl_settings.txt")
+with open(SETTINGS, encoding="utf-8") as _f:
+    SETTINGS_LINES = [ln.strip() for ln in _f if ln.strip()]
+
+
+class TestParseScoring:
+    """Parsed from the REAL settings page of nfl.l.957011 (captured 2026-07-29)."""
+
+    @classmethod
+    def setup_class(cls):
+        cls.s = nfl.parse_scoring(SETTINGS_LINES)
+
+    def test_yards_per_point_becomes_a_rate(self):
+        # "Passing Yards 25 yards per point" -> 1/25 of a point per yard.
+        assert self.s["weights"]["PassYds"] == 0.04
+        assert self.s["weights"]["RushYds"] == 0.1
+        assert self.s["weights"]["RecYds"] == 0.1
+
+    def test_reads_the_reception_setting(self):
+        """The single most valuation-critical number — it decides every RB/WR
+        ranking, and this league is half-PPR."""
+        assert self.s["weights"]["Rec"] == 0.5
+
+    def test_offense_and_defense_interceptions_do_not_collide(self):
+        """Yahoo reuses the label with OPPOSITE meanings across sections:
+        'Interceptions -1' (a QB throwing one) vs 'Interception 2' (a defence
+        catching one). A flat label map scores one as the other."""
+        assert self.s["weights"]["Int"] == -1.0
+        assert self.s["weights"]["DefInt"] == 2.0
+
+    def test_defense_touchdown_is_not_confused_with_offense_ones(self):
+        assert self.s["weights"]["DefTD"] == 6.0
+        assert self.s["weights"]["PassTD"] == 4.0
+        assert self.s["weights"]["RushTD"] == 6.0
+
+    def test_field_goals_by_distance(self):
+        w = self.s["weights"]
+        assert (w["FG0_19"], w["FG20_29"], w["FG30_39"]) == (3.0, 3.0, 3.0)
+        assert (w["FG40_49"], w["FG50"]) == (4.0, 5.0)
+        assert w["XP"] == 1.0
+
+    def test_negative_and_fractional_values(self):
+        assert self.s["weights"]["FumLost"] == -2.0
+        assert self.s["weights"]["Rec"] == 0.5
+
+    def test_points_allowed_ladder(self):
+        assert self.s["tiers"] == [(0, 10.0), (6, 7.0), (13, 4.0), (20, 1.0),
+                                   (27, 0.0), (34, -1.0), (10**6, -4.0)]
+
+    def test_ladder_is_used_by_the_valuer(self):
+        assert nfl.points_allowed_value(3, self.s["tiers"]) == 7.0
+        assert nfl.points_allowed_value(40, self.s["tiers"]) == -4.0
+
+    def test_this_league_matches_the_half_ppr_preset(self):
+        """The presets were educated guesses; this league confirms them. If a
+        FUTURE league differs, that's exactly why we now read the real thing."""
+        for key, val in nfl.SCORING_HALF_PPR.items():
+            if key in self.s["parsed"]:
+                assert self.s["parsed"][key] == val, key
+
+    def test_nothing_unparsed(self):
+        assert self.s["unknown"] == []
+
+    def test_general_settings_table_is_ignored(self):
+        """Lines before the first section header (league name, waiver rules,
+        dates) must not be mistaken for scoring."""
+        assert "Max Teams" not in self.s["parsed"]
+        assert all(not k.startswith("Trade") for k in self.s["parsed"])
+
+    def test_unrecognized_scoring_line_is_reported_not_silently_zero(self):
+        s = nfl.parse_scoring(["Offense League Value Yahoo Default Value",
+                              "Passing Yards 25 yards per point",
+                              "Quantum Touchdowns 9"])
+        assert s["weights"]["PassYds"] == 0.04
+        # Unknown LABELS aren't reported (they may be settings we don't score);
+        # a known label with an unparseable value is what must surface.
+        s2 = nfl.parse_scoring(["Offense League Value Yahoo Default Value",
+                               "Receptions banana"])
+        assert s2["unknown"] == ["Receptions banana"]
+
+    def test_missing_stats_fall_back_to_defaults_not_zero(self):
+        s = nfl.parse_scoring(["Offense League Value Yahoo Default Value",
+                              "Receptions 1"])
+        assert s["weights"]["Rec"] == 1.0                    # from the league
+        assert s["weights"]["PassTD"] == nfl.DEFAULT_SCORING["PassTD"]
+
+    def test_empty_input_degrades_to_defaults(self):
+        s = nfl.parse_scoring([])
+        assert s["weights"] == nfl.DEFAULT_SCORING
+        assert s["tiers"] == list(nfl.POINTS_ALLOWED_TIERS)
+        assert nfl.parse_scoring(None)["weights"] == nfl.DEFAULT_SCORING
+
+    def test_parsed_weights_drive_scoring_end_to_end(self):
+        cats = {"RecYds": 100, "Rec": 8, "RecTD": 1}
+        assert nfl.fantasy_points(cats, self.s["weights"]) == 20.0
+
+
+class TestParseRosterSlots:
+    def test_reads_the_authoritative_slot_list(self):
+        slots = nfl.parse_roster_slots(SETTINGS_LINES)
+        assert slots == ["QB", "WR", "WR", "RB", "RB", "TE", "W/R/T", "K",
+                         "DEF", "BN", "BN", "BN", "BN", "BN", "BN", "IR", "IR"]
+
+    def test_slots_feed_the_optimizer_and_infer_nfl(self):
+        slots = nfl.parse_roster_slots(SETTINGS_LINES)
+        assert fan.infer_sport(slots) == "nfl"
+        players = [{"name": "Qb", "positions": ["QB"], "value": 20.0,
+                    "playing": True, "status": ""}]
+        r = fan.optimize_lineup(players, slots)
+        assert [s["slot"] for s in r["starters"]] == ["QB"]
+        # Nine active slots in this league; one filled leaves eight empty.
+        assert len(r["empty_slots"]) == 8
+
+    def test_absent_line_returns_empty(self):
+        assert nfl.parse_roster_slots(["Max Teams: 10"]) == []
+        assert nfl.parse_roster_slots([]) == []
+
+
+class TestCompositionSeam:
+    """wes_fantasy wires the browser-free parser to the football-free scraper."""
+
+    def setup_method(self):
+        fan._nfl_scoring_cache.clear()
+
+    def test_reads_the_leagues_real_scoring(self):
+        s = fan.nfl_league_scoring("nfl.l.957011",
+                                   _lines_fn=lambda k: SETTINGS_LINES)
+        assert s["weights"]["Rec"] == 0.5
+        assert s["tiers"][0] == (0, 10.0)
+
+    def test_caches_per_league(self):
+        calls = []
+
+        def fetch(key):
+            calls.append(key)
+            return SETTINGS_LINES
+        fan.nfl_league_scoring("nfl.l.1", _lines_fn=fetch)
+        fan.nfl_league_scoring("nfl.l.1", _lines_fn=fetch)
+        assert calls == ["nfl.l.1"]          # second call served from cache
+
+    def test_scrape_failure_degrades_to_defaults_not_zeros(self):
+        """A degradation STRING from the scrape layer must not become an empty
+        weights dict — that would silently value every player at 0."""
+        s = fan.nfl_league_scoring(
+            "nfl.l.2", _lines_fn=lambda k: "I couldn't reach Yahoo Fantasy just now.")
+        assert s["weights"] == nfl.DEFAULT_SCORING
+        assert s["tiers"] == list(nfl.POINTS_ALLOWED_TIERS)
+
+    def test_slots_from_settings(self):
+        slots = fan.nfl_league_slots("nfl.l.957011",
+                                     _lines_fn=lambda k: SETTINGS_LINES)
+        assert slots[:3] == ["QB", "WR", "WR"]
+
+    def test_slots_degrade_on_scrape_failure(self):
+        assert fan.nfl_league_slots("nfl.l.3", _lines_fn=lambda k: "nope") == []
+
+
 class TestFormatting:
     def test_line_names_the_biggest_contributors(self):
         p = {"name": "Ja'Marr Chase", "positions": ["WR"],
