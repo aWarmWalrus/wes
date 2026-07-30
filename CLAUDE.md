@@ -118,6 +118,11 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   persistent-silence** stability fix, Google Cast/`catt`, `speak.py`, output modes.
 - `docs/vision.md` — on-device vision: Hailo `look` (YOLOv8s), Gemma `describe_scene`,
   face recognition + clothing-color disambiguation, wake-word vision prefetch.
+- `docs/data-architecture.md` — **read before touching the data path.** Layer
+  boundaries (raw → fantasy data → regression → decision → model), the contracts
+  between them, and the rule that imports point downward only. `pc/wes_http.py`
+  is the one HTTP client; no module hand-rolls a fetcher (a test enforces it).
+  Migration status + the remaining steps live in ticket #034.
 - `docs/startup-checklist.md` — **run at the top of a session / after any
   reboot**: are the services actually running, is the model pinned, are the
   nightly metrics fresh, did anything die at boot. Exists because a dead service

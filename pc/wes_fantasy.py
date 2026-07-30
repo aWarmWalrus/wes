@@ -388,26 +388,40 @@ def fantasy_player_value(player, versus=None):
 # The composition seam. wes_yahoo scrapes text and knows no football; wes_nfl
 # knows football and touches no browser; this module already imports both, so
 # the wiring belongs here and both sides stay unit-testable in isolation.
-_nfl_scoring_cache = {}   # league_key -> parsed scoring dict
+_settings_cache = {}   # league_key -> settings lines (or a degradation string)
+
+
+def league_settings(league_key, _lines_fn=None):
+    """The league's settings page as text lines, cached per league.
+
+    ONE cache for ONE page. Scoring weights and the roster-slot list both come
+    from this page, and before this existed each was fetched separately — two
+    Playwright browser launches (~5-10s each) for the same URL on every lineup
+    request. Settings essentially never change mid-season, so caching is safe.
+
+    Yahoo is behind a browser, not the `wes_http` raw layer, so the caching lives
+    here rather than in layer 1 — noted in #034 as the one fetch path that stays
+    outside the shared client."""
+    if league_key in _settings_cache:
+        return _settings_cache[league_key]
+    lines = (_lines_fn or wes_yahoo.league_settings_lines)(league_key)
+    if not isinstance(lines, list):
+        # Degradation string from the scrape layer — note it, don't raise, and
+        # don't cache a failure as if it were the league's real settings.
+        print(f"[fantasy] league settings scrape failed for {league_key}: "
+              f"{lines!r:.120}", flush=True)
+        return lines
+    _settings_cache[league_key] = lines
+    return lines
 
 
 def nfl_league_scoring(league_key, _lines_fn=None):
     """This NFL league's real scoring: {"weights", "tiers", "parsed", "unknown"}.
 
     Falls back to wes_nfl's defaults (half-PPR + Yahoo's standard ladder) when the
-    scrape fails, so valuation degrades to a sane guess instead of to zeros.
-    Cached per league — scoring settings essentially never change mid-season."""
-    if league_key in _nfl_scoring_cache:
-        return _nfl_scoring_cache[league_key]
-    fetch = _lines_fn or wes_yahoo.league_settings_lines
-    lines = fetch(league_key)
-    parsed = wes_nfl.parse_scoring(lines if isinstance(lines, list) else [])
-    if not isinstance(lines, list):
-        # Degradation string from the scrape layer — note it, don't raise.
-        print(f"[fantasy] nfl scoring scrape failed for {league_key}: "
-              f"{lines!r:.120}", flush=True)
-    _nfl_scoring_cache[league_key] = parsed
-    return parsed
+    scrape fails, so valuation degrades to a sane guess instead of to zeros."""
+    lines = league_settings(league_key, _lines_fn)
+    return wes_nfl.parse_scoring(lines if isinstance(lines, list) else [])
 
 
 def nfl_league_slots(league_key, _lines_fn=None):
@@ -416,8 +430,7 @@ def nfl_league_slots(league_key, _lines_fn=None):
 
     Preferred over deriving slots from a scraped roster: it works PRE-DRAFT (no
     roster yet) and includes slots no player currently occupies."""
-    fetch = _lines_fn or wes_yahoo.league_settings_lines
-    lines = fetch(league_key)
+    lines = league_settings(league_key, _lines_fn)
     return wes_nfl.parse_roster_slots(lines if isinstance(lines, list) else [])
 
 

@@ -29,6 +29,8 @@ slots. IDP (individual defensive players) is not modelled — see NOT_MODELLED.
 """
 import re
 
+import wes_http  # noqa: E402 — raw data layer (#034); same dir on path
+
 # --- scoring presets ---------------------------------------------------------
 # Yahoo's default NFL scoring. The three presets differ ONLY in Rec (points per
 # reception): that single knob is what "standard / half-PPR / full PPR" means,
@@ -330,7 +332,6 @@ def format_points(player, scoring=None):
 # pre-season valuation.
 _BYATHLETE = ("https://site.web.api.espn.com/apis/common/v3/sports/football/"
               "nfl/statistics/byathlete")
-_UA = {"User-Agent": "Mozilla/5.0 (WES NFL engine)"}
 
 # (ESPN group, ESPN label) -> canonical scoring key.
 #
@@ -431,11 +432,13 @@ def per_game(line):
 
 
 def _get_json(url):
-    import json
-    import urllib.request
-    req = urllib.request.Request(url, headers=_UA)
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read().decode())
+    """ESPN JSON via the shared raw layer (#034).
+
+    SEASON_TTL, not the short default: this is a COMPLETED season's totals, which
+    cannot change. Before the raw layer existed this was uncached, so every
+    "who should I start" turn re-fetched four pages of season stats — pure waste
+    inside a ~30s turn, and needlessly rude to ESPN."""
+    return wes_http.get_json(url, ttl=wes_http.SEASON_TTL, timeout=15.0)
 
 
 def player_pool(limit=200, season=None, sort=None, _get_fn=None):

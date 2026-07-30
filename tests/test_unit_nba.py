@@ -427,26 +427,44 @@ class TestDiscussion:
         assert "couldn't reach r/GoNets" in out
 
     def test_rss_fetch_is_cached(self, monkeypatch):
-        # reddit 429s on rapid repeats -> a second call within TTL must NOT
-        # hit the network again
+        """Reddit 429s on rapid repeats, so a second call within the TTL must not
+        hit the network.
+
+        Rewritten 2026-07-30 (#034): this used to monkeypatch
+        `wes_nba.urllib.request.urlopen` and clear `wes_nba._text_cache` — i.e. it
+        reached through the data layer into transport internals that no longer
+        exist there. Caching now belongs to the raw layer, so the test injects at
+        that seam instead. It still asserts the same user-visible property."""
+        import wes_http
         calls = []
 
-        class _Resp:
-            headers = {}
-            def read(self): return b"<feed xmlns='http://www.w3.org/2005/Atom'/>"
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
+        def fake_fetch(url, headers, timeout, retries):
+            calls.append(url)
+            return b"<feed xmlns='http://www.w3.org/2005/Atom'/>"
 
-        def fake_urlopen(req, timeout=0):
-            calls.append(req.full_url)
-            return _Resp()
-
-        monkeypatch.setattr(wes_nba.urllib.request, "urlopen", fake_urlopen)
-        wes_nba._text_cache.clear()
+        monkeypatch.setattr(wes_http, "_fetch", fake_fetch)
+        wes_http.clear_cache()
         wes_nba._get_text("https://reddit.test/x.rss", wes_nba._REDDIT_UA)
         wes_nba._get_text("https://reddit.test/x.rss", wes_nba._REDDIT_UA)
         assert len(calls) == 1  # second served from cache
-        wes_nba._text_cache.clear()
+        wes_http.clear_cache()
+
+    def test_rss_fetch_uses_the_browser_user_agent(self, monkeypatch):
+        """Load-bearing: reddit 403s a bot UA. Kept as a test because the UA
+        moved modules in #034 and a silent revert would look like reddit being
+        flaky rather than a bug."""
+        import wes_http
+        seen = {}
+
+        def fake_fetch(url, headers, timeout, retries):
+            seen.update(headers)
+            return b"<feed/>"
+
+        monkeypatch.setattr(wes_http, "_fetch", fake_fetch)
+        wes_http.clear_cache()
+        wes_nba._get_text("https://reddit.test/ua.rss", wes_nba._REDDIT_UA)
+        assert "Chrome" in seen["User-Agent"]
+        wes_http.clear_cache()
 
 
 class TestTeamSubreddit:

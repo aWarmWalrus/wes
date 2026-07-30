@@ -18,11 +18,10 @@ so we can normalize each category by the real pool — no per-player fan-out.
 
 Every entry point degrades to a safe value (`[]` / a string), never raises.
 """
-import json
 import urllib.parse
-import urllib.request
 
 import wes_fantasy  # noqa: E402 — same dir on path (server/tests add it)
+import wes_http  # noqa: E402 — raw data layer (#034)
 import wes_nba  # noqa: E402
 
 # ESPN's free bulk season-stats endpoint: one page returns many athletes, each
@@ -30,7 +29,6 @@ import wes_nba  # noqa: E402
 # arrays whose labels come from the top-level `categories[].names`).
 _BYATHLETE = ("https://site.web.api.espn.com/apis/common/v3/sports/basketball/"
               "nba/statistics/byathlete")
-_UA = {"User-Agent": "Mozilla/5.0 (WES draft engine)"}
 
 # Fantasy category (as Yahoo scores it) -> (ESPN category group, ESPN label).
 # Mirrors wes_nba._CAT_SOURCES but reads the BULK endpoint's per-game fields.
@@ -55,9 +53,9 @@ _COARSE_TARGET = {"G": 5, "F": 5, "C": 3}
 
 
 def _get_json(url):
-    req = urllib.request.Request(url, headers=_UA)
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read().decode())
+    """ESPN JSON via the shared raw layer (#034). SEASON_TTL — a season's stat
+    totals don't change, and this pool fetch was previously uncached."""
+    return wes_http.get_json(url, ttl=wes_http.SEASON_TTL, timeout=15.0)
 
 
 # --- pool ingestion (the population fetch) ----------------------------------

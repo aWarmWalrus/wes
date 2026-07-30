@@ -463,7 +463,7 @@ class TestCompositionSeam:
     """wes_fantasy wires the browser-free parser to the football-free scraper."""
 
     def setup_method(self):
-        fan._nfl_scoring_cache.clear()
+        fan._settings_cache.clear()
 
     def test_reads_the_leagues_real_scoring(self):
         s = fan.nfl_league_scoring("nfl.l.957011",
@@ -480,6 +480,29 @@ class TestCompositionSeam:
         fan.nfl_league_scoring("nfl.l.1", _lines_fn=fetch)
         fan.nfl_league_scoring("nfl.l.1", _lines_fn=fetch)
         assert calls == ["nfl.l.1"]          # second call served from cache
+
+    def test_scoring_and_slots_share_ONE_settings_fetch(self):
+        """Both read the SAME page. Fetching it twice meant two Playwright
+        browser launches (~5-10s each) per lineup request."""
+        calls = []
+
+        def fetch(key):
+            calls.append(key)
+            return SETTINGS_LINES
+        fan.nfl_league_scoring("nfl.l.9", _lines_fn=fetch)
+        fan.nfl_league_slots("nfl.l.9", _lines_fn=fetch)
+        assert calls == ["nfl.l.9"]
+
+    def test_a_failed_scrape_is_not_cached(self):
+        """Caching a degradation string would pin the league to defaults until
+        the process restarts."""
+        calls = []
+
+        def flaky(key):
+            calls.append(key)
+            return SETTINGS_LINES if len(calls) > 1 else "couldn't reach Yahoo"
+        assert fan.nfl_league_slots("nfl.l.8", _lines_fn=flaky) == []
+        assert fan.nfl_league_slots("nfl.l.8", _lines_fn=flaky)[:1] == ["QB"]
 
     def test_scrape_failure_degrades_to_defaults_not_zeros(self):
         """A degradation STRING from the scrape layer must not become an empty

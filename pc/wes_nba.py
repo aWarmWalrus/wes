@@ -16,44 +16,29 @@ degrades to a plain "couldn't reach the NBA data" string rather than raising,
 so a bad ESPN response never breaks the voice/Discord turn.
 """
 import html
-import json
 import re
-import time
 import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import date as _date
 from datetime import datetime, timedelta, timezone
 
+import wes_http  # noqa: E402 — raw data layer (#034); same dir on path
+
 _SITE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
 _WEB = "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba"
-_UA = {"User-Agent": "Mozilla/5.0 (WES NBA data)"}
 # Reddit 403s a bare/bot UA; its RSS (unlike the JSON API) serves fine to a
 # browser-like UA with no auth. JSON is blocked, OAuth needs an app — RSS is
-# the reliable no-key path (ticket #027 P1b).
-_REDDIT_UA = {"User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                             "AppleWebKit/537.36 (KHTML, like Gecko) "
-                             "Chrome/120.0 Safari/537.36")}
+# the reliable no-key path (ticket #027 P1b). Now lives in the raw layer.
+_REDDIT_UA = {"User-Agent": wes_http.BROWSER_UA}
 
 DEFAULT_TEAM = "Brooklyn Nets"
 DEFAULT_SUBREDDIT = "GoNets"  # the owner's Nets subreddit
 
-# Short in-process TTL cache: "score right now" asked twice, and the player
-# scan reusing today's summaries, stay cheap and easy on ESPN's servers.
-_CACHE_TTL = 20.0
-_cache = {}  # url -> (expiry_ts, data)
-
 
 def _get(url):
-    now = time.time()
-    hit = _cache.get(url)
-    if hit and hit[0] > now:
-        return hit[1]
-    req = urllib.request.Request(url, headers=_UA)
-    with urllib.request.urlopen(req, timeout=12) as r:
-        data = json.loads(r.read().decode())
-    _cache[url] = (now + _CACHE_TTL, data)
-    return data
+    """ESPN JSON via the shared raw layer (#034). Short TTL: "score right now"
+    asked twice, and the player scan reusing today's summaries, stay cheap."""
+    return wes_http.get_json(url, ttl=wes_http.DEFAULT_TTL)
 
 
 # --- pure formatting helpers (unit-tested without the network) --------------
@@ -704,23 +689,13 @@ _GUARD = (
 )
 
 
-# Reddit rate-limits its RSS aggressively (429 on rapid repeats), and fan
-# discussion changes slowly — cache text fetches for several minutes so a burst
-# of "what are fans saying" turns hits reddit once, not once per turn.
-_TEXT_TTL = 300.0
-_text_cache = {}  # url -> (expiry_ts, text)
-
-
 def _get_text(url, headers):
-    now = time.time()
-    hit = _text_cache.get(url)
-    if hit and hit[0] > now:
-        return hit[1]
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=12) as r:
-        text = r.read().decode("utf-8", "replace")
-    _text_cache[url] = (now + _TEXT_TTL, text)
-    return text
+    """RSS/text via the shared raw layer (#034). Reddit rate-limits its RSS
+    aggressively (429 on rapid repeats) and fan discussion changes slowly, so
+    this uses the long TEXT_TTL: a burst of "what are fans saying" turns hits
+    reddit once, not once per turn."""
+    ua = (headers or {}).get("User-Agent", wes_http.BROWSER_UA)
+    return wes_http.get_text(url, ttl=wes_http.TEXT_TTL, ua=ua)
 
 
 def _age(iso_ts, now=None):
