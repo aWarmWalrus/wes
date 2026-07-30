@@ -89,9 +89,13 @@ Register-ScheduledTask -TaskName "WES Nightly Eval" -Action $action `
 
 ## Tier 1 (Pi) client
 
-Deps in `~/wes/.venv` (openwakeword, pyaudio, requests, numpy, **pyyaml** — for
-the `hosts.yaml` registry; the client falls back to the hard-coded PC address if
-it's missing); the "hey_jarvis" model is downloaded.
+Deps in `~/wes/.venv` — pinned list in **`pi/requirements.txt`**
+(`~/wes/.venv/bin/python -m pip install -r ~/claude/wes/pi/requirements.txt`).
+Includes **pyyaml** for the `hosts.yaml` registry; the client falls back to the
+hard-coded PC address if it's missing. The "hey_jarvis" model is downloaded.
+That file covers **only this venv** — the Hailo/vision scripts run under the
+Pi's system `python3` (hailo_platform + cv2, provisioned via apt/the Hailo
+installer), and casting uses a separate `~/cast-venv`.
 
 Runs as a **systemd user unit** since 2026-07-05 (`pi/wes-client.service`,
 installed to `~/.config/systemd/user/`; linger is enabled so it starts at boot

@@ -1,0 +1,34 @@
+# Tier 1 (Pi client) runtime deps — install into ~/wes/.venv ON THE PI.
+# See docs/setup.md "Tier 1 (Pi) client".
+#
+#   ~/wes/.venv/bin/python -m pip install -r ~/claude/wes/pi/requirements.txt
+#
+# Direct deps only, pinned to what is installed and working on the Pi as of
+# 2026-07-29 (Python 3.11.2, aarch64). Transitive deps float — scikit-learn,
+# scipy, joblib, protobuf etc. come in via openwakeword and are not listed.
+#
+# TWO THINGS THIS FILE DOES *NOT* COVER:
+#
+# 1. The Hailo/vision code (hailo_faces.py, hailo_detect.py, pi_state.py,
+#    capture_frame.py) runs under the Pi's SYSTEM python3, NOT this venv, and
+#    needs hailo_platform + cv2 provisioned system-wide (apt / the Hailo
+#    installer). Never pip-install those here; see docs/vision.md.
+# 2. ~/cast-venv, the separate catt/piper venv used for Google Cast output
+#    (docs/audio.md).
+#
+# NOTE the deliberate split from pc/requirements.txt: onnxruntime is pinned to
+# 1.20.1 on the PC (1.27.0's DLL init fails on Windows) but the Pi runs 1.27.0
+# fine on aarch64, and openwakeword wants a recent build. Do not "unify" these.
+
+# --- Wake word ("hey_jarvis") ---
+openwakeword==0.6.0
+tflite-runtime==2.14.0     # openwakeword's inference backend on aarch64
+
+# --- Audio capture + endpointing ---
+PyAudio==0.2.14
+onnxruntime==1.27.0        # also runs the Silero-VAD ONNX model directly
+
+# --- Talking to the PC server + the host registry ---
+requests==2.34.2
+PyYAML==6.0.3              # hosts.yaml (wes_hosts.py, imported from repo root)
+numpy==2.4.6               # audio buffers; 2.x is fine here, unlike on the PC
