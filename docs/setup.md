@@ -9,6 +9,8 @@
   transitive float). Rebuild with
   `...\.venv\Scripts\python.exe -m pip install -r Z:\wes\pc\requirements.txt`,
   then `playwright install chromium`.
+  `requirements-dev.txt` (repo root) is the lighter set CI installs — it
+  deliberately leaves `ctranslate2` unpinned, since 4.4.0 has no Linux wheel.
   Two pins are **load-bearing** — don't bump without re-testing on this PC:
   - **`ctranslate2==4.4.0`** — 4.8.0 segfaults (`0xC0000005`) on model load on this PC.
   - **`onnxruntime==1.20.1`** — 1.27.0's DLL init fails (piper needs onnxruntime).

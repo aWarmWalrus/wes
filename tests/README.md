@@ -3,6 +3,24 @@
 Regression tripwires + performance tracking. The system spans two hosts, so the
 tests do too — run each host's set with that host's interpreter.
 
+## CI (GitHub Actions)
+
+`.github/workflows/ci.yml` runs the hardware/API-free suite on every push and PR
+(ubuntu, Python 3.11 + 3.12) plus a `hosts.yaml` parse check:
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest tests/ -q --ignore=tests/test_e2e.py --ignore=tests/test_faces.py
+```
+
+That's the same command locally — `requirements-dev.txt` is the minimal pinned
+set to import the PC modules (no piper/onnxruntime/discord.py/playwright; see
+the comments in that file for why each is unnecessary). CI collects `tests/` by
+directory, so a new `test_unit_*.py` is covered the day it lands — **keep new
+unit tests hardware- and API-free** or they'll fail there. Only `test_e2e.py`
+(live server + paid Claude call) and `test_faces.py` (Pi hardware, system
+python3) are excluded.
+
 ## PC (server logic + e2e + perf) — from the `wes-pc` venv
 
 ```powershell

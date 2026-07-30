@@ -104,6 +104,11 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
 - E2E (real pipeline, costs a Claude call) → `& $py -m pytest Z:\wes\tests\test_e2e.py --run-e2e -q`
 - **Add a test in the same change when you add a feature.** Keep unit tests
   hardware/API-free so they stay fast; reserve e2e for the full pipeline.
+- **CI** (`.github/workflows/ci.yml`) runs the
+  hardware/API-free suite on every push/PR (ubuntu, py3.11+3.12) from
+  `requirements-dev.txt`, collecting `tests/` by directory minus `test_e2e.py`
+  and `test_faces.py`. A new unit test that needs hardware or an API key will
+  fail there.
 
 ## Detailed docs (read on demand)
 

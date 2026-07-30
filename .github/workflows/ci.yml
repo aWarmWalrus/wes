@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  unit:
+    name: Fast unit suite
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      # Collect by directory rather than listing test files, so a new
+      # test_unit_*.py is covered the day it lands. (The version of this
+      # workflow that sat unmerged on a branch listed four files by name and had
+      # already fallen behind by four more.)
+      #
+      # The two exclusions are structural, not flaky:
+      #   test_e2e.py   — needs a live server + a real Claude API call (costs money)
+      #   test_faces.py — needs Pi hardware; runs under the Pi's SYSTEM python3
+      #                   (cv2 + hailo_platform), never under this venv
+      # Anything else that can't run here doesn't belong in the unit suite.
+      # See tests/README.md.
+      - name: Run unit tests
+        run: |
+          python -m pytest tests/ -q \
+            --ignore=tests/test_e2e.py \
+            --ignore=tests/test_faces.py
+
+  # Guards the invariant that broke production for a week: the launcher env and
+  # hosts.yaml must stay consistent with what the code actually reads. Cheap,
+  # no deps beyond the dev set.
+  registry:
+    name: Host registry parses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install PyYAML==6.0.3
+      - name: hosts.yaml loads and exposes both hosts
+        run: |
+          python -c "
+          import wes_hosts
+          wes_hosts.load(force=True)
+          print(wes_hosts.summary())
+          assert wes_hosts.ip('pc'), 'pc missing from hosts.yaml'
+          assert wes_hosts.ip('pi'), 'pi missing from hosts.yaml'
+          assert wes_hosts.url('pc', 'server').startswith('http'), 'pc server url malformed'
+          "
