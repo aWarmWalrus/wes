@@ -1,0 +1,5934 @@
+{
+ "requestedSeason": {
+  "year": 2025,
+  "displayName": "2025",
+  "startDate": "2025-07-31T07:00:00.000+00:00",
+  "endDate": "2026-02-12T07:59:00.000+00:00",
+  "type": {
+   "id": "2",
+   "type": 2,
+   "name": "Regular Season",
+   "startDate": "2025-09-04T07:00:00.000+00:00",
+   "endDate": "2026-01-07T07:59:00.000+00:00",
+   "week": {}
+  }
+ },
+ "categories": [
+  {
+   "name": "general",
+   "displayName": "Own General",
+   "labels": [
+    "GP",
+    "FF",
+    "FR",
+    "FTD"
+   ],
+   "names": [
+    "gamesPlayed",
+    "fumblesForced",
+    "fumblesRecovered",
+    "fumblesTouchdowns"
+   ],
+   "displayNames": [
+    "Games Played",
+    "Forced Fumbles",
+    "Fumbles Recovered",
+    "Fumbles Touchdowns"
+   ],
+   "descriptions": [
+    "Games Played",
+    "The total number of forced fumbles.",
+    "The number of fumbles recovered.",
+    "The number of times a fumbles is recovered and returned for a touchdown."
+   ]
+  },
+  {
+   "name": "passing",
+   "displayName": "Own Passing",
+   "labels": [
+    "CMP",
+    "ATT",
+    "CMP%",
+    "YDS",
+    "AVG",
+    "YDS/G",
+    "LNG",
+    "TD",
+    "INT",
+    "SACK",
+    "SYL",
+    "QBR",
+    "RTG",
+    "QBR"
+   ],
+   "names": [
+    "completions",
+    "passingAttempts",
+    "completionPct",
+    "passingYards",
+    "yardsPerPassAttempt",
+    "passingYardsPerGame",
+    "longPassing",
+    "passingTouchdowns",
+    "interceptions",
+    "sacks",
+    "sackYardsLost",
+    "QBR",
+    "QBRating",
+    "adjQBR"
+   ],
+   "displayNames": [
+    "Completions",
+    "Passing Attempts",
+    "Completion Percentage",
+    "Passing Yards",
+    "Yards Per Pass Attempt",
+    "Passing Yards Per Game",
+    "Longest Pass",
+    "Passing Touchdowns",
+    "Interceptions",
+    "Total Sacks",
+    "Sack Yards Lost",
+    "Total QBR",
+    "Passer Rating",
+    "Adjusted QBR"
+   ],
+   "descriptions": [
+    "The times a player completes a pass to another player who is eligible to catch a pass.",
+    "The number of times a pass is attempted.",
+    "The percentage of completed passes.",
+    "The total passing yards.",
+    "The average number yards per pass attempt.",
+    "The number of passing yards per game.",
+    "The longest pass play completed in terms of yards.",
+    "The total number of passing touchdowns.",
+    "The number of passes thrown that were intercepted by the opposing team.",
+    "The total number of sacks.",
+    "The amount of yards lost due to sacks.",
+    "Total Quarterback Rating, which values quarterback on all play types on a 0-to-100 scale.",
+    "Passer Rating",
+    "Adjusted Quarterback Rating."
+   ]
+  },
+  {
+   "name": "rushing",
+   "displayName": "Own Rushing",
+   "labels": [
+    "CAR",
+    "YDS",
+    "AVG",
+    "LNG",
+    "BIG",
+    "TD",
+    "YDS/G",
+    "FUM",
+    "LST",
+    "FD"
+   ],
+   "names": [
+    "rushingAttempts",
+    "rushingYards",
+    "yardsPerRushAttempt",
+    "longRushing",
+    "rushingBigPlays",
+    "rushingTouchdowns",
+    "rushingYardsPerGame",
+    "rushingFumbles",
+    "rushingFumblesLost",
+    "rushingFirstDowns"
+   ],
+   "displayNames": [
+    "Rushing Attempts",
+    "Rushing Yards",
+    "Yards Per Rush Attempt",
+    "Long Rushing",
+    "20+ Yard Rushing Plays",
+    "Rushing Touchdowns",
+    "Rushing Yards Per Game",
+    "Rushing Fumbles",
+    "Rushing Fumbles Lost",
+    "Rushing 1st downs"
+   ],
+   "descriptions": [
+    "The total number of attempted rushes.",
+    "The total rushing yards.",
+    "The average number of yards per rush attempt.",
+    "The amount of yards for the longest run.",
+    "The number of rushing big plays gained.",
+    "The total number of rushing touchdowns.",
+    "The average number of rushing yards per game.",
+    "The number of times there is a run and then the ball is fumbled.",
+    "The number of times there is a run and then the ball is fumbled.",
+    "The number of times a first down is picked up by a run."
+   ]
+  },
+  {
+   "name": "receiving",
+   "displayName": "Own Receiving",
+   "labels": [
+    "REC",
+    "TGTS",
+    "YDS",
+    "AVG",
+    "TD",
+    "LNG",
+    "BIG",
+    "YDS/G",
+    "FUM",
+    "LST",
+    "YAC",
+    "FD"
+   ],
+   "names": [
+    "receptions",
+    "receivingTargets",
+    "receivingYards",
+    "yardsPerReception",
+    "receivingTouchdowns",
+    "longReception",
+    "receivingBigPlays",
+    "receivingYardsPerGame",
+    "receivingFumbles",
+    "receivingFumblesLost",
+    "receivingYardsAfterCatch",
+    "receivingFirstDowns"
+   ],
+   "displayNames": [
+    "Receptions",
+    "Receiving Targets",
+    "Receiving Yards",
+    "Yards Per Reception",
+    "Receiving Touchdowns",
+    "Long Reception",
+    "20+ Yard Receiving Plays",
+    "Receiving Yards Per Game",
+    "Receiving Fumbles",
+    "Receiving Fumbles Lost",
+    "Receiving Yards After Catch",
+    "Receiving First Downs"
+   ],
+   "descriptions": [
+    "The total number of receptions.",
+    "The number of times a receiver is thrown to.",
+    "The total receiving yards.",
+    "The average number of yards per reception.",
+    "The total number of receiving touchdowns.",
+    "The amount of yards for the longest reception.",
+    "The number of receiving big plays gained.",
+    "The average number of receiving yards per game.",
+    "The number of times a reception is made and then the ball is fumbled.",
+    "The number of times a reception is made and the balled is fumbled and recovered by the opposing team.",
+    "The number of yards gained after the catch has been made.",
+    "The number of times a first down is picked up by a reception."
+   ]
+  },
+  {
+   "name": "defensive",
+   "displayName": "Own Defense",
+   "labels": [
+    "SOLO",
+    "AST",
+    "TOT",
+    "SACK",
+    "SCKYDS",
+    "TFL",
+    "PD",
+    "LNG"
+   ],
+   "names": [
+    "soloTackles",
+    "assistTackles",
+    "totalTackles",
+    "sacks",
+    "sackYards",
+    "tacklesForLoss",
+    "passesDefended",
+    "longInterception"
+   ],
+   "displayNames": [
+    "Solo Tackles",
+    "Assist Tackles",
+    "Total Tackles",
+    "Sacks",
+    "Sack Yards",
+    "Tackles For Loss",
+    "Passes Defended",
+    "Long Interception"
+   ],
+   "descriptions": [
+    "The number of times a tackle was made unassisted.",
+    "The number of assists on tackles.",
+    "The total number of tackles.",
+    "The total number of sacks.",
+    "The number of yards lost from sacks.",
+    "The number of tackles that result in a loss of yardage.",
+    "The total number of passes defended.",
+    "The amount of yards of the longest interception return."
+   ]
+  },
+  {
+   "name": "defensiveinterceptions",
+   "displayName": "Own Defensive Interceptions",
+   "labels": [
+    "INT",
+    "YDS",
+    "TD"
+   ],
+   "names": [
+    "interceptions",
+    "interceptionYards",
+    "interceptionTouchdowns"
+   ],
+   "displayNames": [
+    "Interceptions",
+    "Interception Yards",
+    "Interception Touchdowns"
+   ],
+   "descriptions": [
+    "The total number of interceptions.",
+    "The number of yards gained after an interception.",
+    "The number of times an interception is returned for a touchdown."
+   ]
+  },
+  {
+   "name": "scoring",
+   "displayName": "Own Scoring",
+   "labels": [
+    "RUSH",
+    "REC",
+    "RET",
+    "TD",
+    "FG",
+    "PAT",
+    "2PT",
+    "PTS",
+    "TP/G"
+   ],
+   "names": [
+    "rushingTouchdowns",
+    "receivingTouchdowns",
+    "returnTouchdowns",
+    "totalTouchdowns",
+    "fieldGoals",
+    "kickExtraPoints",
+    "totalTwoPointConvs",
+    "totalPoints",
+    "totalPointsPerGame"
+   ],
+   "displayNames": [
+    "Rushing Touchdowns",
+    "Receiving Touchdowns",
+    "Return Touchdowns",
+    "Total Touchdowns",
+    "Field Goals",
+    "Kick Extra Points",
+    "Total Two Point Conversions",
+    "Total Points",
+    "Total Points Per Game"
+   ],
+   "descriptions": [
+    "The total number of rushing touchdowns.",
+    "The total number of receiving touchdowns.",
+    "The total number of return touchdowns.",
+    "The number of touchdowns scored in total.",
+    "The number of field goals made.",
+    "The number of extra points made.",
+    "The number of times a 2-point conversion is successful.",
+    "The number of total points scored.",
+    "The number of points scored per game."
+   ]
+  },
+  {
+   "name": "returning",
+   "displayName": "Own Returning",
+   "labels": [
+    "ATT",
+    "YDS",
+    "AVG",
+    "LNG",
+    "TD",
+    "ATT",
+    "YDS",
+    "AVG",
+    "LNG",
+    "TD",
+    "FC"
+   ],
+   "names": [
+    "kickReturns",
+    "kickReturnYards",
+    "yardsPerKickReturn",
+    "longKickReturn",
+    "kickReturnTouchdowns",
+    "puntReturns",
+    "puntReturnYards",
+    "yardsPerPuntReturn",
+    "longPuntReturn",
+    "puntReturnTouchdowns",
+    "puntReturnFairCatches"
+   ],
+   "displayNames": [
+    "Kick Returns",
+    "Kick Return Yards",
+    "Yards Per Kick Return",
+    "Long Kick Return",
+    "Kick Return Touchdowns",
+    "Punt Returns",
+    "Punt Return Yards",
+    "Yards Per Punt Return",
+    "Long Punt Return",
+    "Punt Return Touchdowns",
+    "Punt Return Fair Catches"
+   ],
+   "descriptions": [
+    "The number of kick returns.",
+    "The total yardage of kick returns.",
+    "The average number of yards per kick return.",
+    "The longest kick return in yards.",
+    "The number of kick return touchdowns.",
+    "The number of punt returns.",
+    "The total yardage of punt returns.",
+    "The average number of yards per punt return.",
+    "The longest punt return in yards.",
+    "The number of punt return touchdowns.",
+    "The number of punt return fair catches."
+   ]
+  },
+  {
+   "name": "kicking",
+   "displayName": "Own Kicking",
+   "labels": [
+    "FGM",
+    "FGA",
+    "FG%",
+    "LNG",
+    "FGM 1-19",
+    "FGM 20-29",
+    "FGM 30-39",
+    "FGM 40-49",
+    "50+",
+    "FGA 1-19",
+    "FGA 20-29",
+    "FGA 30-39",
+    "FGA 40-49",
+    "FGA 50+",
+    "XPM",
+    "XPA",
+    "XP%"
+   ],
+   "names": [
+    "fieldGoalsMade",
+    "fieldGoalAttempts",
+    "fieldGoalPct",
+    "longFieldGoalMade",
+    "fieldGoalsMade1_19",
+    "fieldGoalsMade20_29",
+    "fieldGoalsMade30_39",
+    "fieldGoalsMade40_49",
+    "fieldGoalsMade50",
+    "fieldGoalAttempts1_19",
+    "fieldGoalAttempts20_29",
+    "fieldGoalAttempts30_39",
+    "fieldGoalAttempts40_49",
+    "fieldGoalAttempts50",
+    "extraPointsMade",
+    "extraPointAttempts",
+    "extraPointPct"
+   ],
+   "displayNames": [
+    "Field Goal Made",
+    "Field Goal Attempts",
+    "Field Goal Percentage",
+    "Long Field Goal Made",
+    "Field Goals Made 1-19",
+    "Field Goals Made 20-29",
+    "Field Goals Made 30-39",
+    "Field Goals Made 40-49",
+    "Field Goals Made 50+",
+    "Field Goal Attempts 1-19",
+    "Field Goal Attempts 20-29",
+    "Field Goal Attempts 30-39",
+    "Field Goal Attempts 40-49",
+    "Field Goal Attempts 50+",
+    "Extra Points Made",
+    "Extra Point Attempts",
+    "Extra Point Percentage"
+   ],
+   "descriptions": [
+    "The number of times a field goal is made.",
+    "The number of times a field goal is attempted.",
+    "The percentage of field goals attempted that are made.",
+    "The distance of the longest field goal made.",
+    "The number of field goals made from 1-19 yards.",
+    "The number of field goals made from 20-29 yards.",
+    "The number of field goals made from 30-39 yards.",
+    "The number of field goals made from 40-49 yards.",
+    "The number of field goals made from 50+ yards.",
+    "The number of field goals attempted from 1-19 yards.",
+    "The number of field goals attempted from 20-29 yards.",
+    "The number of field goals attempted from 30-39 yards.",
+    "The number of field goals attempted from 40-49 yards.",
+    "The number of field goals attempted from 50+ yards.",
+    "The number of extra point attempts made.",
+    "The number of extra point attempts.",
+    "The percentage of extra point attempts that are converted."
+   ]
+  },
+  {
+   "name": "punting",
+   "displayName": "Own Punting",
+   "labels": [
+    "PUNTS",
+    "YDS",
+    "LNG",
+    "AVG",
+    "NET",
+    "PBLK",
+    "IN20",
+    "TB",
+    "FC",
+    "ATT",
+    "YDS",
+    "AVG"
+   ],
+   "names": [
+    "punts",
+    "puntYards",
+    "longPunt",
+    "grossAvgPuntYards",
+    "netAvgPuntYards",
+    "puntsBlocked",
+    "puntsInside20",
+    "touchbacks",
+    "fairCatches",
+    "puntReturns",
+    "puntReturnYards",
+    "avgPuntReturnYards"
+   ],
+   "displayNames": [
+    "Punts",
+    "Punt Yards",
+    "Long Punt",
+    "Gross Average Punt Yards",
+    "Net Average Punt Yards",
+    "Punts Blocked",
+    "Punts Inside 20",
+    "Touchbacks",
+    "Fair Catches",
+    "Punt Returns",
+    "Punt Return Yards",
+    "Average Punt Return Yards"
+   ],
+   "descriptions": [
+    "The number of punts taken.",
+    "The total amount of yardage of punts.",
+    "The distance of the longest punt.",
+    "The average gross number of yards per punt.",
+    "The average net number of yards per punt.",
+    "The number of times a punt was blocked.",
+    "The number of times a punt is downed inside the 20.",
+    "The number of kickoffs that result in touchbacks.",
+    "The number of fair catches.",
+    "The number of times a punt was returned.",
+    "The total amount of yardage of punt returns.",
+    "The average number of yards per punt return."
+   ]
+  }
+ ],
+ "athletes": [
+  {
+   "athlete": {
+    "id": "4431452",
+    "uid": "s:20~l:28~a:4431452",
+    "guid": "2fbd2f9e-624d-3e63-9bb5-9bb965782b68",
+    "type": "football",
+    "firstName": "Drake",
+    "lastName": "Maye",
+    "displayName": "Drake Maye",
+    "shortName": "D. Maye",
+    "links": [
+     {
+      "language": "en-US",
+      "rel": [
+       "playercard",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/4431452/drake-maye",
+      "text": "Player Card",
+      "shortText": "Player Card",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/stats/_/id/4431452/drake-maye",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4431452&section=stats",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "splits",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/splits/_/id/4431452/drake-maye",
+      "text": "Splits",
+      "shortText": "Splits",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/gamelog/_/id/4431452/drake-maye",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4431452&section=gamelog",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/news/_/id/4431452/drake-maye",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4431452&section=news",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/bio/_/id/4431452/drake-maye",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4431452&section=bio",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/4431452/drake-maye",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4431452",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     }
+    ],
+    "headshot": {
+     "href": "https://a.espncdn.com/i/headshots/nfl/players/full/4431452.png",
+     "alt": "Drake Maye"
+    },
+    "position": {
+     "id": "8",
+     "name": "Quarterback",
+     "displayName": "Quarterback",
+     "abbreviation": "QB",
+     "leaf": true,
+     "parent": {
+      "leaf": false
+     },
+     "slug": "quarterback"
+    },
+    "status": {
+     "id": "1",
+     "name": "Active",
+     "type": "active",
+     "abbreviation": "Active"
+    },
+    "age": 23,
+    "teamName": "Patriots",
+    "teamShortName": "NE",
+    "teams": [
+     {
+      "name": "Patriots",
+      "abbreviation": "NE"
+     }
+    ],
+    "slug": "drake-maye",
+    "teamId": "17",
+    "teamUId": "s:20~l:28~t:17",
+    "teamLogos": [
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "default"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/ne.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/ne.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/ne.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/grayscale.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "grayscale"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/primary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/primary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/primary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/primary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/primary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/primary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_white"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/secondary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/secondary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/secondary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/secondary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/secondary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/0078f353-fe3e-67ed-a42c-43cca0568e21/logos/secondary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_white"
+      ]
+     }
+    ]
+   },
+   "categories": [
+    {
+     "name": "general",
+     "displayName": "Own General",
+     "totals": [
+      "17",
+      "0",
+      "0",
+      "-7"
+     ],
+     "values": [
+      17.0,
+      0.0,
+      0.0,
+      -7.0
+     ],
+     "ranks": [
+      "1",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "passing",
+     "displayName": "Own Passing",
+     "totals": [
+      "354",
+      "492",
+      "72.0",
+      "4,394",
+      "8.9",
+      "258.5",
+      "72",
+      "31",
+      "8",
+      "47",
+      "201",
+      "78.2",
+      "113.5",
+      "77.1"
+     ],
+     "values": [
+      354.0,
+      492.0,
+      71.95099639892578,
+      4394.0,
+      8.930999755859375,
+      258.4705810546875,
+      72.0,
+      31.0,
+      8.0,
+      47.0,
+      201.0,
+      78.17,
+      113.48200225830078,
+      77.06
+     ],
+     "ranks": [
+      "5",
+      "12",
+      "1",
+      "4",
+      "1",
+      "4",
+      "9",
+      "3",
+      "17",
+      "4",
+      "25",
+      "-",
+      "1",
+      "-"
+     ]
+    },
+    {
+     "name": "rushing",
+     "displayName": "Own Rushing",
+     "totals": [
+      "103",
+      "450",
+      "4.4",
+      "28",
+      "2",
+      "4",
+      "26.5",
+      "2",
+      "0",
+      "38"
+     ],
+     "values": [
+      103.0,
+      450.0,
+      4.36899995803833,
+      28.0,
+      2.0,
+      4.0,
+      26.47058868408203,
+      2.0,
+      0.0,
+      38.0
+     ],
+     "ranks": [
+      "3",
+      "4",
+      "13",
+      "9",
+      "6",
+      "8",
+      "4",
+      "16",
+      "16",
+      "4"
+     ]
+    },
+    {
+     "name": "receiving",
+     "displayName": "Own Receiving",
+     "totals": [
+      "1",
+      "1",
+      "2",
+      "2.0",
+      "0",
+      "2",
+      "0",
+      "0.1",
+      "0",
+      "0",
+      "10",
+      "0"
+     ],
+     "values": [
+      1.0,
+      1.0,
+      2.0,
+      2.0,
+      0.0,
+      2.0,
+      0.0,
+      0.11764705926179886,
+      0.0,
+      0.0,
+      10.0,
+      0.0
+     ],
+     "ranks": [
+      "2",
+      "3",
+      "2",
+      "2",
+      "2",
+      "2",
+      "2",
+      "2",
+      "2",
+      "1",
+      "2",
+      "2"
+     ]
+    },
+    {
+     "name": "defensive",
+     "displayName": "Own Defense",
+     "totals": [
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "defensiveinterceptions",
+     "displayName": "Own Defensive Interceptions",
+     "totals": [
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "scoring",
+     "displayName": "Own Scoring",
+     "totals": [
+      "4",
+      "0",
+      "0",
+      "4",
+      "0",
+      "0",
+      "1",
+      "26",
+      "1.5"
+     ],
+     "values": [
+      4.0,
+      0.0,
+      0.0,
+      4.0,
+      0.0,
+      0.0,
+      1.0,
+      26.0,
+      1.5290000438690186
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "returning",
+     "displayName": "Own Returning",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "kicking",
+     "displayName": "Own Kicking",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "punting",
+     "displayName": "Own Punting",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    }
+   ]
+  },
+  {
+   "athlete": {
+    "id": "2971573",
+    "uid": "s:20~l:28~a:2971573",
+    "guid": "aeb0f227-f365-e95c-94dd-55325ce5edbf",
+    "type": "football",
+    "firstName": "Ka'imi",
+    "lastName": "Fairbairn",
+    "displayName": "Ka'imi Fairbairn",
+    "shortName": "K. Fairbairn",
+    "debutYear": 2016,
+    "links": [
+     {
+      "language": "en-US",
+      "rel": [
+       "playercard",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/2971573/kaimi-fairbairn",
+      "text": "Player Card",
+      "shortText": "Player Card",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/stats/_/id/2971573/kaimi-fairbairn",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:2971573&section=stats",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "splits",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/splits/_/id/2971573/kaimi-fairbairn",
+      "text": "Splits",
+      "shortText": "Splits",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/gamelog/_/id/2971573/kaimi-fairbairn",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:2971573&section=gamelog",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/news/_/id/2971573/kaimi-fairbairn",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:2971573&section=news",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/bio/_/id/2971573/kaimi-fairbairn",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:2971573&section=bio",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/2971573/kaimi-fairbairn",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:2971573",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     }
+    ],
+    "headshot": {
+     "href": "https://a.espncdn.com/i/headshots/nfl/players/full/2971573.png",
+     "alt": "Ka'imi Fairbairn"
+    },
+    "position": {
+     "id": "22",
+     "name": "Place kicker",
+     "displayName": "Place Kicker",
+     "abbreviation": "PK",
+     "leaf": true,
+     "parent": {
+      "leaf": false
+     },
+     "slug": "place-kicker"
+    },
+    "status": {
+     "id": "1",
+     "name": "Active",
+     "type": "active",
+     "abbreviation": "Active"
+    },
+    "age": 32,
+    "teamName": "Texans",
+    "teamShortName": "HOU",
+    "teams": [
+     {
+      "name": "Texans",
+      "abbreviation": "HOU"
+     }
+    ],
+    "slug": "kaimi-fairbairn",
+    "teamId": "34",
+    "teamUId": "s:20~l:28~t:34",
+    "teamLogos": [
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/hou.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "default"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/hou.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/hou.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/hou.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/grayscale.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "grayscale"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/primary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/primary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/primary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/primary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/primary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/primary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_white"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/secondary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/secondary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/secondary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/secondary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/secondary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/595690b3-2161-4913-a7a7-814af2fd2621/logos/secondary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_white"
+      ]
+     }
+    ]
+   },
+   "categories": [
+    {
+     "name": "general",
+     "displayName": "Own General",
+     "totals": [
+      "15",
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      15.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "23",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "passing",
+     "displayName": "Own Passing",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "rushing",
+     "displayName": "Own Rushing",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "receiving",
+     "displayName": "Own Receiving",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "defensive",
+     "displayName": "Own Defense",
+     "totals": [
+      "1",
+      "0",
+      "1",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      1.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "defensiveinterceptions",
+     "displayName": "Own Defensive Interceptions",
+     "totals": [
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "scoring",
+     "displayName": "Own Scoring",
+     "totals": [
+      "0",
+      "0",
+      "0",
+      "0",
+      "44",
+      "28",
+      "0",
+      "160",
+      "10.7"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      44.0,
+      28.0,
+      0.0,
+      160.0,
+      10.666999816894531
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "returning",
+     "displayName": "Own Returning",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "kicking",
+     "displayName": "Own Kicking",
+     "totals": [
+      "44",
+      "48",
+      "91.7",
+      "57",
+      "0",
+      "8",
+      "11",
+      "16",
+      "9",
+      "0",
+      "8",
+      "11",
+      "16",
+      "13",
+      "28",
+      "28",
+      "100.0"
+     ],
+     "values": [
+      44.0,
+      48.0,
+      91.66699981689453,
+      57.0,
+      0.0,
+      8.0,
+      11.0,
+      16.0,
+      9.0,
+      0.0,
+      8.0,
+      11.0,
+      16.0,
+      13.0,
+      28.0,
+      28.0,
+      100.0
+     ],
+     "ranks": [
+      "1",
+      "1",
+      "11",
+      "18",
+      "4",
+      "7",
+      "3",
+      "1",
+      "13",
+      "4",
+      "7",
+      "4",
+      "1",
+      "18",
+      "22",
+      "23",
+      "1"
+     ]
+    },
+    {
+     "name": "punting",
+     "displayName": "Own Punting",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    }
+   ]
+  },
+  {
+   "athlete": {
+    "id": "4379399",
+    "uid": "s:20~l:28~a:4379399",
+    "guid": "cdce4094-c5b8-d8ee-8849-810e285a6323",
+    "type": "football",
+    "firstName": "James",
+    "lastName": "Cook III",
+    "displayName": "James Cook III",
+    "shortName": "J. Cook III",
+    "links": [
+     {
+      "language": "en-US",
+      "rel": [
+       "playercard",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/4379399/james-cook-iii",
+      "text": "Player Card",
+      "shortText": "Player Card",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/stats/_/id/4379399/james-cook-iii",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4379399&section=stats",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "splits",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/splits/_/id/4379399/james-cook-iii",
+      "text": "Splits",
+      "shortText": "Splits",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/gamelog/_/id/4379399/james-cook-iii",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4379399&section=gamelog",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/news/_/id/4379399/james-cook-iii",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4379399&section=news",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/bio/_/id/4379399/james-cook-iii",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4379399&section=bio",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/4379399/james-cook-iii",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4379399",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     }
+    ],
+    "headshot": {
+     "href": "https://a.espncdn.com/i/headshots/nfl/players/full/4379399.png",
+     "alt": "James Cook III"
+    },
+    "position": {
+     "id": "9",
+     "name": "Running Back",
+     "displayName": "Running Back",
+     "abbreviation": "RB",
+     "leaf": true,
+     "parent": {
+      "leaf": false
+     },
+     "slug": "running-back"
+    },
+    "status": {
+     "id": "1",
+     "name": "Active",
+     "type": "active",
+     "abbreviation": "Active"
+    },
+    "age": 26,
+    "teamName": "Bills",
+    "teamShortName": "BUF",
+    "teams": [
+     {
+      "name": "Bills",
+      "abbreviation": "BUF"
+     }
+    ],
+    "slug": "james-cook-iii",
+    "teamId": "2",
+    "teamUId": "s:20~l:28~t:2",
+    "teamLogos": [
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "default"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/buf.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/buf.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/buf.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/grayscale.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "grayscale"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/primary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/primary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/primary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/primary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/primary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/primary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_white"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/secondary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/secondary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/secondary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/secondary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/secondary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/232afaf2-01ac-fcc2-8bd6-66550df1703a/logos/secondary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_white"
+      ]
+     }
+    ]
+   },
+   "categories": [
+    {
+     "name": "general",
+     "displayName": "Own General",
+     "totals": [
+      "17",
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      17.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "1",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "passing",
+     "displayName": "Own Passing",
+     "totals": [
+      "0",
+      "0",
+      "0.0",
+      "0",
+      "0.0",
+      "0.0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "-",
+      "39.6",
+      "-"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      null,
+      39.58300018310547,
+      null
+     ],
+     "ranks": [
+      "4",
+      "7",
+      "4",
+      "4",
+      "4",
+      "4",
+      "4",
+      "4",
+      "1",
+      "3",
+      "1",
+      "-",
+      "4",
+      "-"
+     ]
+    },
+    {
+     "name": "rushing",
+     "displayName": "Own Rushing",
+     "totals": [
+      "309",
+      "1,621",
+      "5.2",
+      "64",
+      "9",
+      "12",
+      "95.4",
+      "6",
+      "3",
+      "68"
+     ],
+     "values": [
+      309.0,
+      1621.0,
+      5.245999813079834,
+      64.0,
+      9.0,
+      12.0,
+      95.35294342041016,
+      6.0,
+      3.0,
+      68.0
+     ],
+     "ranks": [
+      "3",
+      "1",
+      "2",
+      "11",
+      "5",
+      "6",
+      "1",
+      "1",
+      "1",
+      "5"
+     ]
+    },
+    {
+     "name": "receiving",
+     "displayName": "Own Receiving",
+     "totals": [
+      "33",
+      "40",
+      "291",
+      "8.8",
+      "2",
+      "51",
+      "4",
+      "17.1",
+      "0",
+      "0",
+      "272",
+      "11"
+     ],
+     "values": [
+      33.0,
+      40.0,
+      291.0,
+      8.817999839782715,
+      2.0,
+      51.0,
+      4.0,
+      17.117647171020508,
+      0.0,
+      0.0,
+      272.0,
+      11.0
+     ],
+     "ranks": [
+      "22",
+      "25",
+      "16",
+      "10",
+      "14",
+      "9",
+      "7",
+      "16",
+      "19",
+      "10",
+      "22",
+      "20"
+     ]
+    },
+    {
+     "name": "defensive",
+     "displayName": "Own Defense",
+     "totals": [
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "defensiveinterceptions",
+     "displayName": "Own Defensive Interceptions",
+     "totals": [
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "scoring",
+     "displayName": "Own Scoring",
+     "totals": [
+      "12",
+      "2",
+      "0",
+      "14",
+      "0",
+      "0",
+      "0",
+      "84",
+      "4.9"
+     ],
+     "values": [
+      12.0,
+      2.0,
+      0.0,
+      14.0,
+      0.0,
+      0.0,
+      0.0,
+      84.0,
+      4.940999984741211
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "returning",
+     "displayName": "Own Returning",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "kicking",
+     "displayName": "Own Kicking",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "punting",
+     "displayName": "Own Punting",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    }
+   ]
+  },
+  {
+   "athlete": {
+    "id": "3043078",
+    "uid": "s:20~l:28~a:3043078",
+    "guid": "81c182a5-8981-2272-a00f-f8daf9533e07",
+    "type": "football",
+    "firstName": "Derrick",
+    "lastName": "Henry",
+    "displayName": "Derrick Henry",
+    "shortName": "D. Henry",
+    "debutYear": 2016,
+    "links": [
+     {
+      "language": "en-US",
+      "rel": [
+       "playercard",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/3043078/derrick-henry",
+      "text": "Player Card",
+      "shortText": "Player Card",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/stats/_/id/3043078/derrick-henry",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:3043078&section=stats",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "splits",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/splits/_/id/3043078/derrick-henry",
+      "text": "Splits",
+      "shortText": "Splits",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/gamelog/_/id/3043078/derrick-henry",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:3043078&section=gamelog",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/news/_/id/3043078/derrick-henry",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:3043078&section=news",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/bio/_/id/3043078/derrick-henry",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:3043078&section=bio",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/3043078/derrick-henry",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:3043078",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     }
+    ],
+    "headshot": {
+     "href": "https://a.espncdn.com/i/headshots/nfl/players/full/3043078.png",
+     "alt": "Derrick Henry"
+    },
+    "position": {
+     "id": "9",
+     "name": "Running Back",
+     "displayName": "Running Back",
+     "abbreviation": "RB",
+     "leaf": true,
+     "parent": {
+      "leaf": false
+     },
+     "slug": "running-back"
+    },
+    "status": {
+     "id": "1",
+     "name": "Active",
+     "type": "active",
+     "abbreviation": "Active"
+    },
+    "age": 32,
+    "teamName": "Ravens",
+    "teamShortName": "BAL",
+    "teams": [
+     {
+      "name": "Ravens",
+      "abbreviation": "BAL"
+     }
+    ],
+    "slug": "derrick-henry",
+    "teamId": "33",
+    "teamUId": "s:20~l:28~t:33",
+    "teamLogos": [
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "default"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/bal.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/bal.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/bal.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/grayscale.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "grayscale"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/primary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/primary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/primary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/primary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/primary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/primary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_white"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/secondary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/secondary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/secondary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/secondary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/secondary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/38248455-3da4-84e4-8090-98b5cc38ffdc/logos/secondary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_white"
+      ]
+     }
+    ]
+   },
+   "categories": [
+    {
+     "name": "general",
+     "displayName": "Own General",
+     "splitId": "0",
+     "totals": [
+      "17",
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      17.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "1",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "passing",
+     "displayName": "Own Passing",
+     "splitId": "0",
+     "totals": [
+      "0",
+      "1",
+      "0.0",
+      "0",
+      "0.0",
+      "0.0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "9.3",
+      "39.6",
+      "7.9"
+     ],
+     "values": [
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      9.26,
+      39.58300018310547,
+      7.92
+     ],
+     "ranks": [
+      "4",
+      "3",
+      "4",
+      "4",
+      "4",
+      "4",
+      "4",
+      "4",
+      "1",
+      "3",
+      "1",
+      "-",
+      "4",
+      "-"
+     ]
+    },
+    {
+     "name": "rushing",
+     "displayName": "Own Rushing",
+     "splitId": "0",
+     "totals": [
+      "307",
+      "1,595",
+      "5.2",
+      "59",
+      "17",
+      "16",
+      "93.8",
+      "4",
+      "3",
+      "79"
+     ],
+     "values": [
+      307.0,
+      1595.0,
+      5.195000171661377,
+      59.0,
+      17.0,
+      16.0,
+      93.82353210449219,
+      4.0,
+      3.0,
+      79.0
+     ],
+     "ranks": [
+      "4",
+      "2",
+      "3",
+      "13",
+      "1",
+      "2",
+      "2",
+      "3",
+      "1",
+      "2"
+     ]
+    },
+    {
+     "name": "receiving",
+     "displayName": "Own Receiving",
+     "splitId": "0",
+     "totals": [
+      "15",
+      "21",
+      "150",
+      "10.0",
+      "0",
+      "44",
+      "1",
+      "8.8",
+      "0",
+      "0",
+      "135",
+      "4"
+     ],
+     "values": [
+      15.0,
+      21.0,
+      150.0,
+      10.0,
+      0.0,
+      44.0,
+      1.0,
+      8.823529243469238,
+      0.0,
+      0.0,
+      135.0,
+      4.0
+     ],
+     "ranks": [
+      "41",
+      "40",
+      "36",
+      "3",
+      "31",
+      "15",
+      "29",
+      "36",
+      "19",
+      "10",
+      "39",
+      "40"
+     ]
+    },
+    {
+     "name": "defensive",
+     "displayName": "Own Defense",
+     "splitId": "0",
+     "totals": [
+      "1",
+      "0",
+      "1",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      1.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "defensiveinterceptions",
+     "displayName": "Own Defensive Interceptions",
+     "splitId": "0",
+     "totals": [
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "scoring",
+     "displayName": "Own Scoring",
+     "splitId": "0",
+     "totals": [
+      "16",
+      "0",
+      "0",
+      "16",
+      "0",
+      "0",
+      "0",
+      "96",
+      "5.6"
+     ],
+     "values": [
+      16.0,
+      0.0,
+      0.0,
+      16.0,
+      0.0,
+      0.0,
+      0.0,
+      96.0,
+      5.646999835968018
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "returning",
+     "displayName": "Own Returning",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "kicking",
+     "displayName": "Own Kicking",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "punting",
+     "displayName": "Own Punting",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    }
+   ]
+  },
+  {
+   "athlete": {
+    "id": "4430878",
+    "uid": "s:20~l:28~a:4430878",
+    "guid": "edf87204-0e8c-331c-ac63-c6e04a89ee76",
+    "type": "football",
+    "firstName": "Jaxon",
+    "lastName": "Smith-Njigba",
+    "displayName": "Jaxon Smith-Njigba",
+    "shortName": "J. Smith-Njigba",
+    "links": [
+     {
+      "language": "en-US",
+      "rel": [
+       "playercard",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/4430878/jaxon-smith-njigba",
+      "text": "Player Card",
+      "shortText": "Player Card",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/stats/_/id/4430878/jaxon-smith-njigba",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4430878&section=stats",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "splits",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/splits/_/id/4430878/jaxon-smith-njigba",
+      "text": "Splits",
+      "shortText": "Splits",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/gamelog/_/id/4430878/jaxon-smith-njigba",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4430878&section=gamelog",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/news/_/id/4430878/jaxon-smith-njigba",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4430878&section=news",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/bio/_/id/4430878/jaxon-smith-njigba",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4430878&section=bio",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/4430878/jaxon-smith-njigba",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4430878",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     }
+    ],
+    "headshot": {
+     "href": "https://a.espncdn.com/i/headshots/nfl/players/full/4430878.png",
+     "alt": "Jaxon Smith-Njigba"
+    },
+    "position": {
+     "id": "1",
+     "name": "Wide Receiver",
+     "displayName": "Wide Receiver",
+     "abbreviation": "WR",
+     "leaf": true,
+     "parent": {
+      "leaf": false
+     },
+     "slug": "wide-receiver"
+    },
+    "status": {
+     "id": "1",
+     "name": "Active",
+     "type": "active",
+     "abbreviation": "Active"
+    },
+    "age": 24,
+    "teamName": "Seahawks",
+    "teamShortName": "SEA",
+    "teams": [
+     {
+      "name": "Seahawks",
+      "abbreviation": "SEA"
+     }
+    ],
+    "slug": "jaxon-smith-njigba",
+    "teamId": "26",
+    "teamUId": "s:20~l:28~t:26",
+    "teamLogos": [
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/sea.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "default"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/sea.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/sea.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/sea.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/grayscale.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "grayscale"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/primary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/primary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/primary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/primary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/primary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/primary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_white"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/secondary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/secondary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/secondary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/secondary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/secondary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/3767a23c-a17d-294f-288a-9086ad1f0680/logos/secondary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_white"
+      ]
+     }
+    ]
+   },
+   "categories": [
+    {
+     "name": "general",
+     "displayName": "Own General",
+     "totals": [
+      "17",
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      17.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "2",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "passing",
+     "displayName": "Own Passing",
+     "totals": [
+      "0",
+      "0",
+      "0.0",
+      "0",
+      "0.0",
+      "0.0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "-",
+      "39.6",
+      "-"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      null,
+      39.58300018310547,
+      null
+     ],
+     "ranks": [
+      "4",
+      "9",
+      "4",
+      "4",
+      "4",
+      "2",
+      "4",
+      "3",
+      "1",
+      "2",
+      "1",
+      "-",
+      "4",
+      "-"
+     ]
+    },
+    {
+     "name": "rushing",
+     "displayName": "Own Rushing",
+     "totals": [
+      "7",
+      "36",
+      "5.1",
+      "11",
+      "0",
+      "0",
+      "2.1",
+      "0",
+      "0",
+      "2"
+     ],
+     "values": [
+      7.0,
+      36.0,
+      5.14300012588501,
+      11.0,
+      0.0,
+      0.0,
+      2.117647171020508,
+      0.0,
+      0.0,
+      2.0
+     ],
+     "ranks": [
+      "43",
+      "43",
+      "22",
+      "45",
+      "37",
+      "45",
+      "21",
+      "28",
+      "19",
+      "43"
+     ]
+    },
+    {
+     "name": "receiving",
+     "displayName": "Own Receiving",
+     "totals": [
+      "119",
+      "163",
+      "1,793",
+      "15.1",
+      "10",
+      "63",
+      "27",
+      "105.5",
+      "3",
+      "1",
+      "528",
+      "79"
+     ],
+     "values": [
+      119.0,
+      163.0,
+      1793.0,
+      15.067000389099121,
+      10.0,
+      63.0,
+      27.0,
+      105.47058868408203,
+      3.0,
+      1.0,
+      528.0,
+      79.0
+     ],
+     "ranks": [
+      "4",
+      "5",
+      "1",
+      "10",
+      "6",
+      "18",
+      "1",
+      "0",
+      "2",
+      "5",
+      "10",
+      "2"
+     ]
+    },
+    {
+     "name": "defensive",
+     "displayName": "Own Defense",
+     "totals": [
+      "3",
+      "0",
+      "3",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      3.0,
+      0.0,
+      3.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "defensiveinterceptions",
+     "displayName": "Own Defensive Interceptions",
+     "totals": [
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "scoring",
+     "displayName": "Own Scoring",
+     "totals": [
+      "0",
+      "10",
+      "0",
+      "10",
+      "0",
+      "0",
+      "0",
+      "60",
+      "3.5"
+     ],
+     "values": [
+      0.0,
+      10.0,
+      0.0,
+      10.0,
+      0.0,
+      0.0,
+      0.0,
+      60.0,
+      3.5290000438690186
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "returning",
+     "displayName": "Own Returning",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "kicking",
+     "displayName": "Own Kicking",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "punting",
+     "displayName": "Own Punting",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    }
+   ]
+  },
+  {
+   "athlete": {
+    "id": "4426515",
+    "uid": "s:20~l:28~a:4426515",
+    "guid": "05861488-1bb7-7c32-83eb-d0658a6e2b89",
+    "type": "football",
+    "firstName": "Puka",
+    "lastName": "Nacua",
+    "displayName": "Puka Nacua",
+    "shortName": "P. Nacua",
+    "links": [
+     {
+      "language": "en-US",
+      "rel": [
+       "playercard",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/4426515/puka-nacua",
+      "text": "Player Card",
+      "shortText": "Player Card",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/stats/_/id/4426515/puka-nacua",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4426515&section=stats",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "splits",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/splits/_/id/4426515/puka-nacua",
+      "text": "Splits",
+      "shortText": "Splits",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/gamelog/_/id/4426515/puka-nacua",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4426515&section=gamelog",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/news/_/id/4426515/puka-nacua",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4426515&section=news",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/bio/_/id/4426515/puka-nacua",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4426515&section=bio",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/4426515/puka-nacua",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4426515",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     }
+    ],
+    "headshot": {
+     "href": "https://a.espncdn.com/i/headshots/nfl/players/full/4426515.png",
+     "alt": "Puka Nacua"
+    },
+    "position": {
+     "id": "1",
+     "name": "Wide Receiver",
+     "displayName": "Wide Receiver",
+     "abbreviation": "WR",
+     "leaf": true,
+     "parent": {
+      "leaf": false
+     },
+     "slug": "wide-receiver"
+    },
+    "status": {
+     "id": "1",
+     "name": "Active",
+     "type": "active",
+     "abbreviation": "Active"
+    },
+    "age": 25,
+    "teamName": "Rams",
+    "teamShortName": "LAR",
+    "teams": [
+     {
+      "name": "Rams",
+      "abbreviation": "LAR"
+     }
+    ],
+    "slug": "puka-nacua",
+    "teamId": "14",
+    "teamUId": "s:20~l:28~t:14",
+    "teamLogos": [
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/lar.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "default"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/lar.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/lar.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/lar.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/grayscale.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "grayscale"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/primary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/primary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/primary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/primary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/primary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/primary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_white"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/secondary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/secondary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/secondary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/secondary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/secondary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/2e1473b2-e269-fd7a-1137-c1edacb85986/logos/secondary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_white"
+      ]
+     }
+    ]
+   },
+   "categories": [
+    {
+     "name": "general",
+     "displayName": "Own General",
+     "splitId": "0",
+     "totals": [
+      "16",
+      "-",
+      "-",
+      "0"
+     ],
+     "values": [
+      16.0,
+      null,
+      null,
+      0.0
+     ],
+     "ranks": [
+      "57",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "passing",
+     "displayName": "Own Passing",
+     "splitId": "0",
+     "totals": [
+      "0",
+      "0",
+      "0.0",
+      "0",
+      "0.0",
+      "0.0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "-",
+      "39.6",
+      "-"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      null,
+      39.58300018310547,
+      null
+     ],
+     "ranks": [
+      "4",
+      "9",
+      "4",
+      "4",
+      "4",
+      "0",
+      "4",
+      "3",
+      "1",
+      "2",
+      "1",
+      "-",
+      "4",
+      "-"
+     ]
+    },
+    {
+     "name": "rushing",
+     "displayName": "Own Rushing",
+     "splitId": "0",
+     "totals": [
+      "10",
+      "105",
+      "10.5",
+      "45",
+      "1",
+      "1",
+      "6.6",
+      "0",
+      "0",
+      "5"
+     ],
+     "values": [
+      10.0,
+      105.0,
+      10.5,
+      45.0,
+      1.0,
+      1.0,
+      6.5625,
+      0.0,
+      0.0,
+      5.0
+     ],
+     "ranks": [
+      "37",
+      "31",
+      "3",
+      "19",
+      "28",
+      "27",
+      "0",
+      "28",
+      "19",
+      "32"
+     ]
+    },
+    {
+     "name": "receiving",
+     "displayName": "Own Receiving",
+     "splitId": "0",
+     "totals": [
+      "129",
+      "166",
+      "1,715",
+      "13.3",
+      "10",
+      "58",
+      "27",
+      "107.2",
+      "1",
+      "1",
+      "666",
+      "80"
+     ],
+     "values": [
+      129.0,
+      166.0,
+      1715.0,
+      13.295000076293945,
+      10.0,
+      58.0,
+      27.0,
+      107.1875,
+      1.0,
+      1.0,
+      666.0,
+      80.0
+     ],
+     "ranks": [
+      "1",
+      "4",
+      "2",
+      "34",
+      "6",
+      "29",
+      "1",
+      "0",
+      "10",
+      "5",
+      "3",
+      "1"
+     ]
+    },
+    {
+     "name": "defensive",
+     "displayName": "Own Defense",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "defensiveinterceptions",
+     "displayName": "Own Defensive Interceptions",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "scoring",
+     "displayName": "Own Scoring",
+     "splitId": "0",
+     "totals": [
+      "1",
+      "10",
+      "0",
+      "11",
+      "0",
+      "0",
+      "0",
+      "66",
+      "4.1"
+     ],
+     "values": [
+      1.0,
+      10.0,
+      0.0,
+      11.0,
+      0.0,
+      0.0,
+      0.0,
+      66.0,
+      4.125
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "returning",
+     "displayName": "Own Returning",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "kicking",
+     "displayName": "Own Kicking",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "punting",
+     "displayName": "Own Punting",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    }
+   ]
+  },
+  {
+   "athlete": {
+    "id": "4361307",
+    "uid": "s:20~l:28~a:4361307",
+    "guid": "bd8caf85-18e8-478a-ff01-42ac1225ccff",
+    "type": "football",
+    "firstName": "Trey",
+    "lastName": "McBride",
+    "displayName": "Trey McBride",
+    "shortName": "T. McBride",
+    "links": [
+     {
+      "language": "en-US",
+      "rel": [
+       "playercard",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/4361307/trey-mcbride",
+      "text": "Player Card",
+      "shortText": "Player Card",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/stats/_/id/4361307/trey-mcbride",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "stats",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4361307&section=stats",
+      "text": "Stats",
+      "shortText": "Stats",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "splits",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/splits/_/id/4361307/trey-mcbride",
+      "text": "Splits",
+      "shortText": "Splits",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/gamelog/_/id/4361307/trey-mcbride",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "gamelog",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4361307&section=gamelog",
+      "text": "Game Log",
+      "shortText": "Game Log",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/news/_/id/4361307/trey-mcbride",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "news",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4361307&section=news",
+      "text": "News",
+      "shortText": "News",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/bio/_/id/4361307/trey-mcbride",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "bio",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4361307&section=bio",
+      "text": "Bio",
+      "shortText": "Bio",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "desktop",
+       "athlete"
+      ],
+      "href": "https://www.espn.com/nfl/player/_/id/4361307/trey-mcbride",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     },
+     {
+      "language": "en-US",
+      "rel": [
+       "overview",
+       "sportscenter",
+       "app",
+       "athlete"
+      ],
+      "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:28~a:4361307",
+      "text": "Overview",
+      "shortText": "Overview",
+      "isExternal": false,
+      "isPremium": false
+     }
+    ],
+    "headshot": {
+     "href": "https://a.espncdn.com/i/headshots/nfl/players/full/4361307.png",
+     "alt": "Trey McBride"
+    },
+    "position": {
+     "id": "7",
+     "name": "Tight End",
+     "displayName": "Tight End",
+     "abbreviation": "TE",
+     "leaf": true,
+     "parent": {
+      "leaf": false
+     },
+     "slug": "tight-end"
+    },
+    "status": {
+     "id": "1",
+     "name": "Active",
+     "type": "active",
+     "abbreviation": "Active"
+    },
+    "age": 26,
+    "teamName": "Cardinals",
+    "teamShortName": "ARI",
+    "teams": [
+     {
+      "name": "Cardinals",
+      "abbreviation": "ARI"
+     }
+    ],
+    "slug": "trey-mcbride",
+    "teamId": "22",
+    "teamUId": "s:20~l:28~t:22",
+    "teamLogos": [
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "default"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/ari.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/ari.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/scoreboard/ari.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "scoreboard",
+       "dark"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/grayscale.png",
+      "width": 500,
+      "height": 500,
+      "rel": [
+       "full",
+       "grayscale"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/primary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/primary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/primary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/primary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/primary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/primary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "primary_logo_white"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/secondary_logo_on_white_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_white_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/secondary_logo_on_black_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_black_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/secondary_logo_on_primary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_primary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/secondary_logo_on_secondary_color.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_on_secondary_color"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/secondary_logo_black.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_black"
+      ]
+     },
+     {
+      "href": "https://a.espncdn.com/guid/8fc7b962-95e1-3cb8-6a7d-b499de9ad546/logos/secondary_logo_white.png",
+      "width": 4096,
+      "height": 4096,
+      "rel": [
+       "full",
+       "secondary_logo_white"
+      ]
+     }
+    ]
+   },
+   "categories": [
+    {
+     "name": "general",
+     "displayName": "Own General",
+     "splitId": "0",
+     "totals": [
+      "17",
+      "-",
+      "-",
+      "0"
+     ],
+     "values": [
+      17.0,
+      null,
+      null,
+      0.0
+     ],
+     "ranks": [
+      "2",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "passing",
+     "displayName": "Own Passing",
+     "splitId": "0",
+     "totals": [
+      "0",
+      "0",
+      "0.0",
+      "0",
+      "0.0",
+      "0.0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "-",
+      "39.6",
+      "-"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      null,
+      39.58300018310547,
+      null
+     ],
+     "ranks": [
+      "4",
+      "9",
+      "4",
+      "4",
+      "4",
+      "2",
+      "4",
+      "3",
+      "1",
+      "2",
+      "1",
+      "-",
+      "4",
+      "-"
+     ]
+    },
+    {
+     "name": "rushing",
+     "displayName": "Own Rushing",
+     "splitId": "0",
+     "totals": [
+      "0",
+      "0",
+      "0.0",
+      "0",
+      "0",
+      "0",
+      "0.0",
+      "0",
+      "0",
+      "0"
+     ],
+     "values": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ranks": [
+      "87",
+      "77",
+      "77",
+      "81",
+      "37",
+      "45",
+      "38",
+      "28",
+      "19",
+      "62"
+     ]
+    },
+    {
+     "name": "receiving",
+     "displayName": "Own Receiving",
+     "splitId": "0",
+     "totals": [
+      "126",
+      "169",
+      "1,239",
+      "9.8",
+      "11",
+      "31",
+      "12",
+      "72.9",
+      "0",
+      "0",
+      "583",
+      "63"
+     ],
+     "values": [
+      126.0,
+      169.0,
+      1239.0,
+      9.833000183105469,
+      11.0,
+      31.0,
+      12.0,
+      72.88235473632812,
+      0.0,
+      0.0,
+      583.0,
+      63.0
+     ],
+     "ranks": [
+      "2",
+      "3",
+      "6",
+      "93",
+      "2",
+      "111",
+      "28",
+      "3",
+      "63",
+      "36",
+      "6",
+      "6"
+     ]
+    },
+    {
+     "name": "defensive",
+     "displayName": "Own Defense",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "defensiveinterceptions",
+     "displayName": "Own Defensive Interceptions",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "scoring",
+     "displayName": "Own Scoring",
+     "splitId": "0",
+     "totals": [
+      "0",
+      "11",
+      "0",
+      "11",
+      "0",
+      "0",
+      "0",
+      "66",
+      "3.9"
+     ],
+     "values": [
+      0.0,
+      11.0,
+      0.0,
+      11.0,
+      0.0,
+      0.0,
+      0.0,
+      66.0,
+      3.881999969482422
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "returning",
+     "displayName": "Own Returning",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "kicking",
+     "displayName": "Own Kicking",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    },
+    {
+     "name": "punting",
+     "displayName": "Own Punting",
+     "splitId": "0",
+     "totals": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ],
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "ranks": [
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-",
+      "-"
+     ]
+    }
+   ]
+  }
+ ]
+}

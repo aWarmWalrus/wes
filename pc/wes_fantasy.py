@@ -278,7 +278,14 @@ def optimize_lineup(players, slots, sport=None):
         return tuple((elig_tbl[t] is None or bool(pos & elig_tbl[t]))
                      for t in order)
     elig = [_elig(p) for p in startable]
+    # `value: None` means UNKNOWN (no stat line found), which is NOT the same as
+    # "worth 0" — but the DP needs a number, so unknowns score 0 and are recorded
+    # instead. Conflating the two produced a real wrong lineup on 2026-07-29: a
+    # pool missing every WR valued Ja'Marr Chase at 0.0, so he was benched behind
+    # a replacement-level rookie and the output looked perfectly confident.
+    # Design §8.8: don't act on incomplete data, say so.
     val = [float(p.get("value") or 0.0) for p in startable]
+    unknown = [p["name"] for p in startable if p.get("value") is None]
 
     import functools
 
@@ -324,6 +331,9 @@ def optimize_lineup(players, slots, sport=None):
         "empty_slots": empty,
         "total": round(total, 2),
         "sport": sport,
+        # Startable players whose value could not be determined. Non-empty means
+        # this lineup is a guess in part — surface it, never swallow it.
+        "unknown_value": unknown,
     }
 
 
@@ -343,6 +353,15 @@ def format_lineup(result, team_name=""):
     if result["bench"]:
         lines.append("  Bench: " + ", ".join(result["bench"]))
     lines.append(f"Projected value total: {result['total']:g}.")
+    if result.get("unknown_value"):
+        # Stated plainly, because a lineup built on missing data still LOOKS
+        # authoritative and the model would otherwise relay it as certain.
+        lines.append(
+            "  WARNING — no stats found for "
+            + ", ".join(result["unknown_value"])
+            + f"; they were treated as 0, so this lineup may be wrong. "
+              f"({len(result['unknown_value'])} of "
+              f"{len(result['starters']) + len(result['bench'])} players.)")
     return "\n".join(lines)
 
 

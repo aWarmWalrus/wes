@@ -78,6 +78,59 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 
 ## Notes
 
+### 2026-07-29 — NFL player pool (ESPN) — the read→value→optimize loop is CLOSED
+`wes_nfl` now fetches real stat lines, so the weights have something to chew on.
+The full chain runs end to end on live data: **Yahoo roster → ESPN 2025 stats →
+this league's real scoring → optimal lineup.**
+
+- `parse_byathlete()` (pure) + `player_pool()` / `pool_by_position()` (the one
+  networked part, `_get_fn`-injectable). Football sibling of the NBA fetch in
+  `wes_draft`. Defaults to the most recent COMPLETED season (2025), which is what
+  pre-season valuation wants.
+- `per_game()` — season totals rescaled by games played. The CALLER chooses which
+  view to rank on, deliberately: a 4-game star beats a 17-game plodder per game
+  and loses on totals, and neither is universally right.
+- Real ESPN payload saved as `tests/fixtures/espn_nfl_byathlete.json`.
+
+**Live result** (`nfl.l.957011`, 209 players, season 2025) — top of the pool by
+this league's rules reads correctly (Josh Allen 22.0, McCaffrey 21.5, Puka Nacua
+19.4), and the owner's lineup is now sensible: Hurts QB, Chase + London WR,
+Nico Collins flex, Skattebo + Jaylen Warren RB, Tyler Warren TE.
+
+**THE TRAP THAT WOULD HAVE POISONED EVERY QB VALUATION:** ESPN reuses stat labels
+across groups with opposite fantasy meaning. `passing.sacks` is sacks the QB
+**took** — Drake Maye's 2025 line says **47** — while `defensive.sacks` is sacks
+**made**. Same for `passing.interceptions` (thrown, negative) vs
+`defensiveinterceptions.interceptions` (caught, positive). A naive label lookup
+hands a quarterback 47 sack points and ranks him above every real defence.
+Mapping is by `(group, label)` PAIR only, with a test named for it.
+
+**Two bugs found by running it for real, both silent-and-confident:**
+1. **The pool had ZERO WRs and TEs.** `receiving.receivingYards:desc` returns
+   *nothing* at `limit=200` but 60 players at `limit=60` — an ESPN quirk my
+   blanket `except: return []` swallowed. Ja'Marr Chase valued 0.0 and was benched
+   behind a replacement-level rookie, with a perfectly confident-looking lineup.
+   Now: a retry ladder per sort, and `pool_by_position` returns
+   `(pool, failed_sorts)` so an incomplete pool is **visible** rather than
+   inferred from suspiciously low numbers.
+2. **"No stats" was indistinguishable from "worth 0".** That conflation is what
+   made bug 1 invisible. `optimize_lineup` now treats `value: None` as unknown —
+   still 0 for the DP, since it needs a number, but recorded in
+   `unknown_value` and surfaced by `format_lineup` as an explicit WARNING naming
+   the players and the ratio. Design §8.8: don't act on incomplete data, say so.
+   A genuine 0.0 stays unflagged — a real zero is information.
+
+**Known limits, verified not guessed:**
+- **Team DEFENCES can't be valued.** `byathlete` is per-athlete, so the only
+  defensive numbers in it belong to individual defenders (IDP), which the scoring
+  model doesn't cover. Valuing the `DEF` slot needs a TEAM-level source; mapping
+  IDP stats there would value a linebacker as if he were a whole defence.
+- **Pool depth is capped by ESPN's per-sort limits** — effectively 60 for
+  receiving, which yields only **12 TEs**, so a real starter like Jake Ferguson
+  has no stat line. Confirmed as depth, not name-matching (he is simply absent
+  from the pool). ESPN returns a `pagination` block; paging through it is the fix.
+  Until then the `unknown_value` warning makes the gap loud instead of silent.
+
 ### 2026-07-29 — NFL leagues' REAL scoring + slots now read from settings
 `league_scoring` used to answer "categories: unknown" for an H2H-points league —
 correct-but-useless, and it *read* like a scrape failure. Now the settings page is

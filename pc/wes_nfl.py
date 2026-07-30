@@ -12,11 +12,13 @@ optimizer and the draft recommender already consume:
 `wes_fantasy.optimize_lineup` and `wes_draft.best_available` only ever read
 `value` and `positions`, so they work unchanged against either sport.
 
-DESIGN (same rule as the rest of the engine): pure, deterministic arithmetic
-over real numbers. No LLM, no network in this module — the model reads a
-formatted line and reasons about it, it never invents a stat. Every scoring
-weight is data, so a league with custom settings is a dict change, not a code
-change.
+DESIGN (same rule as the rest of the engine): deterministic arithmetic over real
+numbers, never an LLM — the model reads a formatted line and reasons about it, it
+never invents a stat. Every scoring weight is data, so a league with custom
+settings is a dict change, not a code change. Scoring and parsing are PURE; the
+one networked part is `player_pool()` at the bottom (ESPN), which mirrors
+`wes_nba` / `wes_draft.draftable_pool` and takes an injectable `_get_fn` so tests
+stay offline.
 
 STAT-LINE SHAPE: the same `{"name", "cats": {...}}` dicts wes_nba produces, so
 the two sports' pools are interchangeable to callers. `cats` keys are Yahoo's
@@ -318,3 +320,180 @@ def format_points(player, scoring=None):
     pos = "/".join(player.get("positions") or []) or "?"
     name = player.get("name", "Unknown")
     return f"{name} ({pos}): {pts:g} fantasy pts" + (f" — {tail}" if tail else "")
+
+
+# --- the player pool (ESPN; the only networked part) -------------------------
+# ESPN's free bulk season-stats endpoint, football sibling of the NBA one
+# wes_draft uses. One call returns many athletes with per-group stat arrays whose
+# labels live in the top-level `categories[].names`. Defaults to the most recent
+# COMPLETED season (2025 as of 2026-07-29), which is what you want for
+# pre-season valuation.
+_BYATHLETE = ("https://site.web.api.espn.com/apis/common/v3/sports/football/"
+              "nfl/statistics/byathlete")
+_UA = {"User-Agent": "Mozilla/5.0 (WES NFL engine)"}
+
+# (ESPN group, ESPN label) -> canonical scoring key.
+#
+# *** THE TRAP THIS TABLE EXISTS TO AVOID ***
+# ESPN reuses labels across groups with OPPOSITE fantasy meaning:
+#   passing.interceptions              = INTs a QB THREW        -> Int (negative)
+#   defensiveinterceptions.interceptions = INTs a defender CAUGHT -> not mapped
+#   passing.sacks                      = sacks the QB TOOK      -> NOT a stat
+#   defensive.sacks                    = sacks a defender MADE  -> not mapped
+# Drake Maye's 2025 line has passing.sacks = 47. A naive "sacks" lookup would
+# hand a quarterback 47 sack points. Mapping is by (group, label) PAIR only.
+_ESPN_LABEL = {
+    "PassYds": ("passing", "passingYards"),
+    "PassTD": ("passing", "passingTouchdowns"),
+    "Int": ("passing", "interceptions"),          # thrown, not caught
+    "RushYds": ("rushing", "rushingYards"),
+    "RushTD": ("rushing", "rushingTouchdowns"),
+    "Rec": ("receiving", "receptions"),
+    "RecYds": ("receiving", "receivingYards"),
+    "RecTD": ("receiving", "receivingTouchdowns"),
+    "RetTD": ("scoring", "returnTouchdowns"),
+    "2PT": ("scoring", "totalTwoPointConvs"),
+    "FG0_19": ("kicking", "fieldGoalsMade1_19"),  # ESPN says 1_19, Yahoo 0-19
+    "FG20_29": ("kicking", "fieldGoalsMade20_29"),
+    "FG30_39": ("kicking", "fieldGoalsMade30_39"),
+    "FG40_49": ("kicking", "fieldGoalsMade40_49"),
+    "FG50": ("kicking", "fieldGoalsMade50"),
+    "XP": ("kicking", "extraPointsMade"),
+}
+# Fumbles lost are split across two groups and fantasy scores the SUM.
+_FUMBLE_SOURCES = (("rushing", "rushingFumblesLost"),
+                   ("receiving", "receivingFumblesLost"))
+
+# Team DEFENCES are deliberately absent: this feed is per-ATHLETE, so the only
+# defensive numbers in it belong to individual defenders (IDP), which the scoring
+# model above doesn't cover. Valuing a Yahoo "DEF" slot needs a TEAM-level
+# source; mapping individual defenders' sacks/INTs here would let a linebacker be
+# valued as if he were a whole defence. See NOT_MODELLED.
+
+
+def parse_byathlete(payload):
+    """ESPN NFL `byathlete` JSON -> list of stat-line dicts in the shape the rest
+    of the engine consumes: {name, season, gp, team, positions, cats}. Pure.
+
+    `cats` holds SEASON TOTALS (that's what the feed reports); `gp` is included so
+    a caller can go per-game — see `per_game()`."""
+    if not isinstance(payload, dict):
+        return []
+    season = str((payload.get("requestedSeason") or {}).get("displayName", ""))
+    labels = {c.get("name"): (c.get("names") or [])
+              for c in payload.get("categories", [])}
+    out = []
+    for a in payload.get("athletes", []):
+        ath = a.get("athlete", {}) or {}
+        name = ath.get("displayName", "")
+        if not name:
+            continue
+        by_group = {}
+        for cat in a.get("categories", []):
+            names = labels.get(cat.get("name"), [])
+            by_group[cat.get("name")] = dict(zip(names, cat.get("values") or []))
+
+        def get(group, label, _bg=by_group):
+            return _bg.get(group, {}).get(label)
+
+        cats = {}
+        for key, (grp, lbl) in _ESPN_LABEL.items():
+            v = get(grp, lbl)
+            if _num(v):
+                cats[key] = round(float(v), 3)
+        fumbles = sum(float(get(g, l)) for g, l in _FUMBLE_SOURCES
+                      if _num(get(g, l)))
+        if fumbles:
+            cats["FumLost"] = fumbles
+        pos = (ath.get("position") or {}).get("abbreviation") or ""
+        out.append({
+            "name": name,
+            "season": season,
+            "gp": get("general", "gamesPlayed"),
+            "team": ath.get("teamName", ""),
+            # Normalize ESPN's kicker abbreviation to Yahoo's slot position.
+            "positions": [("K" if pos == "PK" else pos)] if pos else [],
+            "cats": cats,
+        })
+    return out
+
+
+def per_game(line):
+    """A season-total stat line rescaled to per-game, or unchanged if `gp` is
+    missing/zero. Fairer for comparing players with different games played (an
+    injury-shortened season shouldn't read as a bad player), which is why the
+    caller — not this module — decides which view to rank on."""
+    gp = line.get("gp")
+    if not _num(gp) or gp <= 0:
+        return line
+    return {**line, "cats": {k: round(v / gp, 3)
+                             for k, v in (line.get("cats") or {}).items()}}
+
+
+def _get_json(url):
+    import json
+    import urllib.request
+    req = urllib.request.Request(url, headers=_UA)
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read().decode())
+
+
+def player_pool(limit=200, season=None, sort=None, _get_fn=None):
+    """The NFL player population as stat lines, for valuation and draft ranking.
+
+    Live/network — degrades to `[]` on ANY failure so a bad ESPN response never
+    breaks a turn. `_get_fn` injectable for tests.
+
+    ESPN paginates and sorts server-side, and a single sort skews WHICH players
+    come back (sorting by passing yards returns quarterbacks). `pool_by_position`
+    is usually what you want instead."""
+    import urllib.parse
+    get = _get_fn or _get_json
+    params = {"region": "us", "lang": "en", "contentorigin": "espn",
+              "limit": min(int(limit), 200)}
+    if season:
+        params["season"] = int(season)
+    if sort:
+        params["sort"] = sort
+    try:
+        return parse_byathlete(get(_BYATHLETE + "?" + urllib.parse.urlencode(params)))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+# One sort per position group, because ESPN's default ordering is passing-based
+# and would return a pool of quarterbacks (verified 2026-07-29: the first 60
+# athletes were QBs and kickers only).
+_POOL_SORTS = ("passing.passingYards:desc", "rushing.rushingYards:desc",
+               "receiving.receivingYards:desc", "kicking.fieldGoalsMade:desc")
+# ESPN's `limit` is not uniformly safe across sorts: receiving.receivingYards at
+# limit=200 returns NOTHING, while the same sort at 60 returns 60 players
+# (measured 2026-07-29). Retry down the ladder rather than accept an empty group —
+# the first version of this silently produced a pool with zero WRs and TEs, which
+# valued Ja'Marr Chase at 0.0 and benched him behind a replacement-level rookie.
+_LIMIT_LADDER = (60, 40, 25)
+
+
+def pool_by_position(limit_each=60, season=None, _get_fn=None):
+    """A pool that actually spans QB/RB/WR/TE/K, by querying each position group's
+    sort and merging on name (first line wins).
+
+    Each sort that comes back empty is retried at smaller limits. Returns
+    (pool, failed_sorts) so the caller can SEE an incomplete pool instead of
+    inferring it from suspiciously low values — a missing position group is
+    indistinguishable from "these players are bad" once the numbers are merged."""
+    merged, failed = {}, []
+    for sort in _POOL_SORTS:
+        lines = []
+        for limit in (limit_each,) + _LIMIT_LADDER:
+            lines = player_pool(limit, season, sort, _get_fn)
+            if lines:
+                break
+        if not lines:
+            failed.append(sort)
+            print(f"[nfl] pool sort {sort!r} returned nothing at every limit",
+                  flush=True)
+            continue
+        for line in lines:
+            merged.setdefault(line["name"], line)
+    return list(merged.values()), failed

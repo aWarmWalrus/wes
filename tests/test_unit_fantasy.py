@@ -244,6 +244,27 @@ class TestOptimizeLineup:
         assert r["empty_slots"] == []
         assert r["bench"] == []
 
+    def test_unknown_value_is_reported_not_treated_as_zero_silently(self):
+        """Regression: 'no stat line found' looked identical to 'worth 0'. A pool
+        missing every WR valued Ja'Marr Chase at 0.0, benched him behind a
+        replacement-level rookie, and reported it with total confidence."""
+        players = [self._p("Elite", ["PG"], None),      # unknown
+                   self._p("Known", ["PG"], 3.0)]
+        r = fan.optimize_lineup(players, ["PG", "PG", "BN"])
+        assert r["unknown_value"] == ["Elite"]
+        out = fan.format_lineup(r)
+        assert "WARNING" in out and "Elite" in out
+
+    def test_no_warning_when_every_value_is_known(self):
+        r = fan.optimize_lineup([self._p("A", ["PG"], 0.0)], ["PG"])
+        assert r["unknown_value"] == []
+        assert "WARNING" not in fan.format_lineup(r)
+
+    def test_genuine_zero_is_not_flagged_as_unknown(self):
+        """0.0 and None must stay distinguishable — a real zero is information."""
+        r = fan.optimize_lineup([self._p("Zero", ["PG"], 0.0)], ["PG"])
+        assert r["unknown_value"] == []
+
     def test_tie_break_never_costs_value(self):
         # Only one slot: the 5 must start, not the 0, even though both fill it.
         r = fan.optimize_lineup(

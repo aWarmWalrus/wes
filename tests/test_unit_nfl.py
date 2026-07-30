@@ -5,6 +5,7 @@ absolute (a stat line through the league's scoring settings). These tests pin
 the arithmetic, the alias tolerance, and the interface parity that lets
 wes_fantasy.optimize_lineup / wes_draft.best_available consume either sport.
 """
+import json
 import os
 import sys
 
@@ -274,6 +275,188 @@ class TestParseRosterSlots:
     def test_absent_line_returns_empty(self):
         assert nfl.parse_roster_slots(["Max Teams: 10"]) == []
         assert nfl.parse_roster_slots([]) == []
+
+
+BYATHLETE = os.path.join(os.path.dirname(__file__), "fixtures",
+                         "espn_nfl_byathlete.json")
+with open(BYATHLETE, encoding="utf-8") as _f:
+    BYATHLETE_PAYLOAD = json.load(_f)
+
+
+class TestParseByathlete:
+    """Parsed from a REAL ESPN NFL payload (2025 season, captured 2026-07-29)."""
+
+    @classmethod
+    def setup_class(cls):
+        cls.lines = nfl.parse_byathlete(BYATHLETE_PAYLOAD)
+        cls.by_name = {p["name"]: p for p in cls.lines}
+
+    def test_parses_every_athlete(self):
+        assert len(self.lines) == len(BYATHLETE_PAYLOAD["athletes"])
+        assert "Drake Maye" in self.by_name
+
+    def test_season_and_games_played(self):
+        m = self.by_name["Drake Maye"]
+        assert m["season"] == "2025"
+        assert m["gp"] == 17.0
+        assert m["team"] == "Patriots"
+
+    def test_quarterback_passing_line(self):
+        m = self.by_name["Drake Maye"]["cats"]
+        assert m["PassYds"] == 4394.0
+        assert m["PassTD"] == 31.0
+        assert m["Int"] == 8.0          # thrown
+
+    def test_sacks_taken_are_NOT_scored_as_sacks_made(self):
+        """The catastrophic one: ESPN's passing.sacks is sacks the QB TOOK (Drake
+        Maye 2025: 47). A naive 'sacks' lookup hands a quarterback 47 sack
+        points, which would rank him above every real defence."""
+        m = self.by_name["Drake Maye"]["cats"]
+        assert "Sack" not in m
+        assert 47.0 not in m.values()
+
+    def test_defensive_interceptions_are_not_mapped(self):
+        """passing.interceptions (thrown, negative) must not collide with
+        defensiveinterceptions.interceptions (caught, positive)."""
+        m = self.by_name["Drake Maye"]["cats"]
+        assert m["Int"] == 8.0
+        assert "DefInt" not in m
+
+    def test_a_quarterbacks_interceptions_cost_him_points(self):
+        m = self.by_name["Drake Maye"]
+        with_ints = nfl.fantasy_points(m["cats"])
+        without = nfl.fantasy_points({k: v for k, v in m["cats"].items()
+                                      if k != "Int"})
+        assert with_ints < without
+
+    def test_running_back_line(self):
+        rb = next(p for p in self.lines if p["positions"] == ["RB"])
+        assert rb["cats"]["RushYds"] > 500
+        assert "RushTD" in rb["cats"]
+
+    def test_receiver_line_has_receptions(self):
+        wr = next(p for p in self.lines if p["positions"] == ["WR"])
+        assert wr["cats"]["Rec"] > 0
+        assert wr["cats"]["RecYds"] > 500
+
+    def test_kicker_position_normalized_and_fg_buckets_mapped(self):
+        """ESPN says PK and 'fieldGoalsMade1_19'; Yahoo's slot is K and its
+        bucket is 0-19. Both are translated, or a kicker is ineligible for the
+        K slot and scores nothing."""
+        k = next(p for p in self.lines if p["positions"] == ["K"])
+        assert k["positions"] == ["K"]          # not "PK"
+        assert any(key.startswith("FG") for key in k["cats"])
+        assert "XP" in k["cats"]
+
+    def test_kicker_scores_points(self):
+        k = next(p for p in self.lines if p["positions"] == ["K"])
+        assert nfl.fantasy_points(k["cats"]) > 0
+
+    def test_positions_are_yahoo_slot_compatible(self):
+        for p in self.lines:
+            for pos in p["positions"]:
+                assert pos in fan._SPORTS["nfl"]["eligibility"], pos
+
+    def test_junk_payload_degrades_to_empty(self):
+        assert nfl.parse_byathlete(None) == []
+        assert nfl.parse_byathlete({}) == []
+        assert nfl.parse_byathlete({"athletes": [{}]}) == []   # no name -> skipped
+
+    def test_ranking_the_real_pool_puts_a_plausible_player_on_top(self):
+        ranked = nfl.rank_by_points(self.lines, "half")
+        assert ranked[0]["value"] > ranked[-1]["value"]
+        # A QB throwing for 4394 yards + 31 TD should out-score a kicker.
+        top = ranked[0]
+        assert top["positions"][0] in {"QB", "RB", "WR", "TE"}
+
+
+class TestPerGame:
+    def test_rescales_by_games_played(self):
+        line = {"name": "X", "gp": 10, "cats": {"RecYds": 1000, "Rec": 50}}
+        pg = nfl.per_game(line)
+        assert pg["cats"] == {"RecYds": 100.0, "Rec": 5.0}
+        assert pg["gp"] == 10                 # original preserved
+
+    @pytest.mark.parametrize("gp", [None, 0, "n/a"])
+    def test_unusable_gp_returns_the_line_unchanged(self, gp):
+        """No divide-by-zero and no silent zeroing — season totals pass through."""
+        line = {"name": "X", "gp": gp, "cats": {"RecYds": 10}}
+        assert nfl.per_game(line)["cats"] == {"RecYds": 10}
+
+    def test_absent_gp_key_returns_the_line_unchanged(self):
+        line = {"name": "X", "cats": {"RecYds": 10}}
+        assert nfl.per_game(line)["cats"] == {"RecYds": 10}
+
+    def test_per_game_can_reorder_against_season_totals(self):
+        """The reason this is the caller's choice: a 4-game star out-ranks a
+        17-game plodder per game, and the reverse on totals."""
+        star = {"name": "Star", "gp": 4, "cats": {"RecYds": 600, "RecTD": 6}}
+        plod = {"name": "Plod", "gp": 17, "cats": {"RecYds": 900, "RecTD": 6}}
+        totals = nfl.rank_by_points([star, plod])
+        pergame = nfl.rank_by_points([nfl.per_game(star), nfl.per_game(plod)])
+        assert totals[0]["name"] == "Plod"
+        assert pergame[0]["name"] == "Star"
+
+
+class TestPlayerPool:
+    def test_uses_injected_fetcher_and_parses(self):
+        pool = nfl.player_pool(_get_fn=lambda url: BYATHLETE_PAYLOAD)
+        assert len(pool) == len(BYATHLETE_PAYLOAD["athletes"])
+
+    def test_network_failure_degrades_to_empty_list(self):
+        def boom(url):
+            raise OSError("espn down")
+        assert nfl.player_pool(_get_fn=boom) == []
+
+    def test_limit_is_capped_and_season_passed_through(self):
+        seen = {}
+
+        def fake(url):
+            seen["url"] = url
+            return BYATHLETE_PAYLOAD
+        nfl.player_pool(limit=9999, season=2025, _get_fn=fake)
+        assert "limit=200" in seen["url"]
+        assert "season=2025" in seen["url"]
+
+    def test_pool_by_position_merges_sorts_and_dedupes(self):
+        calls = []
+
+        def fake(url):
+            calls.append(url)
+            return BYATHLETE_PAYLOAD
+        pool, failed = nfl.pool_by_position(_get_fn=fake)
+        assert len(calls) == len(nfl._POOL_SORTS)     # one query per group
+        assert failed == []
+        # Same payload four times must not produce duplicates.
+        assert len(pool) == len(BYATHLETE_PAYLOAD["athletes"])
+        assert len({p["name"] for p in pool}) == len(pool)
+
+    def test_empty_sort_is_retried_at_a_smaller_limit(self):
+        """The real ESPN quirk: receiving.receivingYards returns NOTHING at
+        limit=200 but 60 players at limit=60. Without the retry the pool silently
+        contains no WRs or TEs."""
+        calls = []
+
+        def picky(url):
+            calls.append(url)
+            if "receiving" in url and "limit=200" in url:
+                return {"athletes": []}
+            return BYATHLETE_PAYLOAD
+        pool, failed = nfl.pool_by_position(limit_each=200, _get_fn=picky)
+        assert failed == []                          # recovered, not given up on
+        assert any("receiving" in c and "limit=60" in c for c in calls)
+        assert pool
+
+    def test_a_sort_that_never_works_is_REPORTED_not_hidden(self):
+        """A missing position group is indistinguishable from 'those players are
+        bad' once values are merged, so it has to surface as failure."""
+        def broken(url):
+            if "receiving" in url:
+                raise OSError("espn hates receivers")
+            return BYATHLETE_PAYLOAD
+        pool, failed = nfl.pool_by_position(_get_fn=broken)
+        assert failed == ["receiving.receivingYards:desc"]
+        assert pool                                   # partial pool still ranks
 
 
 class TestCompositionSeam:
