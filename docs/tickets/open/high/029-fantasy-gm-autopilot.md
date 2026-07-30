@@ -78,6 +78,46 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 
 ## Notes
 
+### 2026-07-29 (later) — TWO real NFL leagues found; one is ALREADY DRAFTED
+The owner mentioned an NFL league they'd "accidentally joined" and asked whether
+it was documented anywhere. **It wasn't — anywhere.** `my_teams()` only scrapes
+`a[href*='/nba/']`, so a football league is *structurally invisible* to WES: it
+could never have surfaced on its own. The only trace in the whole repo was the
+bare id `424494` in #030's recon notes, used as a mock-draft lobby path without
+anyone recording that it is a league the owner belongs to.
+
+Wrote **`pc/yahoo_league_discover.py`** (read-only recon, sibling to
+`yahoo_draft_recon.py`) and ran it against the live session. Found **two**:
+
+| League | Yahoo name | Team | Status |
+|---|---|---|---|
+| `nfl.l.424494` | LSE Fantasy Football | `t.5` "Teletubbies" | **PRE-DRAFT** |
+| `nfl.l.957011` | Yahoo H2H-Pts 957011 | `t.4` "Charles's Pop" | **ALREADY DRAFTED** |
+
+`957011` is the accidental one — Yahoo's auto-generated `H2H-Pts <id>` name is
+the tell for a public league — and it **already has a real roster** (Hurts,
+Chase, London, Hall, Skattebo). Owner has designated it a **throwaway**, which
+makes it the ideal **shadow-soak testbed: real live data, no cost to a bad
+decision.** All three teams are now in the PC-local `~/wes-pc/teams.yaml`
+(verified: `configured_teams()` returns 3; NBA stays first so `_resolve_team()`
+with no name is unchanged).
+
+**This kills the "wait for the draft" blocker.** A drafted NFL roster exists
+*today*, so the read → value path is exercisable now — sport-parameterizing
+`wes_yahoo` is unblocked immediately, not post-draft as this ticket said an hour
+ago.
+
+**Two DOM facts worth more than the ids** (both would have caused silent bugs):
+- **The URL shape is not symmetrical.** NBA is `/nba/<league>/<team>` on
+  `basketball.fantasysports.yahoo.com`; NFL is **`/f1/`** — not `/nfl/` — on
+  `football.fantasysports.yahoo.com`. The key prefix is still the game code.
+- **The dashboard links your Week 1 OPPONENT too**, so league `957011` appeared
+  to contain two of "your" teams (`t.4` and `t.8` "Brickhouse jp"). Ownership
+  must come from Yahoo's own **"My Team" nav link** on the league page; text
+  markers like "Edit Team"/"My Team" appear in nav on *every* team's page and
+  are useless as a signal. A naive scraper would have happily managed a
+  stranger's roster.
+
 ### 2026-07-29 — P7 PULLED FORWARD: run this epic on NFL first, not NBA
 **Owner call.** This epic was blocked on "wait for NBA season" (October) because
 the offseason gives no games and blank eligible positions. But the owner is

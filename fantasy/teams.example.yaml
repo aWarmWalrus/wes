@@ -54,3 +54,23 @@ teams:
     autonomy: advise
     guardrails:
       actions_allowed: []
+
+  # An NFL team. `sport` selects the site + URL shape, and they are NOT
+  # symmetrical — a real trap when adding a sport:
+  #   NBA: basketball.fantasysports.yahoo.com/nba/<league>/<team>
+  #   NFL: football.fantasysports.yahoo.com/f1/<league>/<team>   <- "/f1/", not "/nfl/"
+  # The dotted key prefix is Yahoo's game code either way ("nba", "nfl").
+  #
+  # Finding your team_key: read it off Yahoo's own "My Team" nav link on the
+  # league page. Do NOT trust the dashboard's link text — the dashboard also
+  # links your Week 1 OPPONENT, so a league can appear to contain two of "your"
+  # teams. `pc/yahoo_league_discover.py` enumerates leagues across sports and
+  # resolves this correctly.
+  - name: "Sunday Money"
+    account: main
+    sport: nfl
+    league_key: "nfl.l.424494"
+    team_key: "nfl.l.424494.t.5"
+    autonomy: advise
+    guardrails:
+      actions_allowed: []

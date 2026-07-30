@@ -93,6 +93,24 @@ static roster/scoring scrape #029 P0 already does.
 
 ## Notes
 
+### 2026-07-29 (later) — 424494 is a REAL league of the owner's, still pre-draft
+The id this ticket has been using as a mock-lobby path
+(`/f1/424494/mock_lobby`) is **the owner's actual league**: `nfl.l.424494`, "LSE
+Fantasy Football", their team `t.5` "Teletubbies" — and it is **still
+PRE-DRAFT**, so the live draft-room recon this ticket needs can be done against
+a *mock in their own league* as planned. Found by
+`pc/yahoo_league_discover.py`; now recorded in `~/wes-pc/teams.yaml`.
+
+A **second** league turned up too: `nfl.l.957011` (team `t.4` "Charles's Pop"),
+the accidentally-joined public one, which has **already drafted**. Useful here as
+a reference: its `draftresults` page is a real, populated draft board to develop
+the board scraper against **without needing to be on the clock**.
+
+Also note for the pick-submit work: the league dashboard links the Week 1
+**opponent** as well as your own team, so team identity must come from Yahoo's
+"My Team" nav link, never from dashboard link text. Getting that wrong in a
+draft agent would mean drafting into someone else's roster.
+
 ### 2026-07-29 — the NFL valuer this ticket needed is BUILT (shared with #029)
 The "NFL points-based valuer TODO" below is **done**, delivered under #029's
 P7-pull-forward: **`pc/wes_nfl.py`**. `rank_by_points(pool, scoring)` mirrors
