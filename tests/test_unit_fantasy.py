@@ -9,6 +9,8 @@ import json
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -232,18 +234,23 @@ class TestOptimizeLineup:
         r = fan.optimize_lineup([self._p("A", ["PG"], 5)], ["PG", "C"])
         assert r["empty_slots"] == ["C"]
 
-    def test_matches_brute_force(self):
-        import itertools
+    @pytest.mark.parametrize("sport,pos_pool,slot_pool", [
+        ("nba", ["PG", "SG", "SF", "PF", "C"],
+         ["PG", "SG", "G", "SF", "PF", "F", "C", "UTIL"]),
+        ("nfl", ["QB", "RB", "WR", "TE", "K", "DEF"],
+         ["QB", "RB", "WR", "TE", "W/R", "W/R/T", "Q/W/R/T", "K", "DEF"]),
+    ])
+    def test_matches_brute_force(self, sport, pos_pool, slot_pool):
+        """The DP must equal exhaustive search — for BOTH sports' slot tables,
+        since NFL flex slots exercise the same eligibility machinery."""
         import random
-        pos_pool = ["PG", "SG", "SF", "PF", "C"]
-        slot_pool = ["PG", "SG", "G", "SF", "PF", "F", "C", "UTIL"]
 
         def brute(players, slots):
-            active = [s for s in slots if fan._slot_type(s)]
-            start = [p for p in players if fan._startable(p)]
+            active = [s for s in slots if fan._slot_type(s, sport)]
+            start = [p for p in players if fan._startable(p, sport)]
 
             def elig(p, s):
-                e = fan._SLOT_ELIGIBILITY[fan._slot_type(s)]
+                e = fan._SPORTS[sport]["eligibility"][fan._slot_type(s, sport)]
                 return e is None or bool(set(p["positions"]) & e)
             best = [0.0]
 
@@ -266,7 +273,92 @@ class TestOptimizeLineup:
                                playing=rng.random() > 0.2,
                                status=rng.choice(["", "", "O"])) for i in range(n)]
             slots = rng.sample(slot_pool, rng.randint(1, 5)) + ["BN"]
-            assert fan.optimize_lineup(players, slots)["total"] == brute(players, slots)
+            assert fan.optimize_lineup(players, slots, sport)["total"] \
+                == brute(players, slots)
+
+
+class TestNflLineup:
+    """NFL weekly lineups through the same optimizer (#029 P7 pulled forward)."""
+
+    def _p(self, name, pos, val, playing=True, status=""):
+        return {"name": name, "positions": pos, "value": val,
+                "playing": playing, "status": status}
+
+    NFL_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "W/R/T", "K", "DEF",
+                 "BN", "BN", "IR"]
+
+    def test_infers_nfl_from_slots(self):
+        assert fan.infer_sport(self.NFL_SLOTS) == "nfl"
+        assert fan.infer_sport(["PG", "SG", "C", "UTIL", "BN"]) == "nba"
+        assert fan.infer_sport([]) == fan.DEFAULT_SPORT       # no evidence
+        assert fan.infer_sport(["BN", "IR"]) == fan.DEFAULT_SPORT
+
+    def test_flex_takes_best_leftover_skill_player(self):
+        players = [self._p("Qb", ["QB"], 20), self._p("Rb1", ["RB"], 18),
+                   self._p("Rb2", ["RB"], 15), self._p("Rb3", ["RB"], 14),
+                   self._p("Wr1", ["WR"], 17), self._p("Wr2", ["WR"], 12),
+                   self._p("Te", ["TE"], 9), self._p("K", ["K"], 8),
+                   self._p("Def", ["DEF"], 7)]
+        r = fan.optimize_lineup(players, self.NFL_SLOTS)
+        got = {s["name"]: s["slot"] for s in r["starters"]}
+        # Rb3 (14) is the best player with no dedicated slot left -> flex.
+        assert got["Rb3"] == "W/R/T"
+        assert r["sport"] == "nfl"
+        assert r["bench"] == []
+
+    def test_kicker_never_fills_a_skill_slot(self):
+        """The regression that the NBA-only table would have allowed: an
+        unrecognized/other slot must not become a wildcard for NFL, or a kicker
+        ends up at QB. K is eligible for K only."""
+        players = [self._p("K", ["K"], 99), self._p("Qb", ["QB"], 1)]
+        r = fan.optimize_lineup(players, ["QB", "K"])
+        assert {s["name"]: s["slot"] for s in r["starters"]} == \
+            {"Qb": "QB", "K": "K"}
+
+    def test_unknown_active_slot_degrades_to_flex_not_wildcard(self):
+        players = [self._p("K", ["K"], 99), self._p("Wr", ["WR"], 5)]
+        r = fan.optimize_lineup(players, ["WEIRD"], sport="nfl")
+        # The flex fallback admits WR/RB/TE — the kicker stays benched.
+        assert [s["name"] for s in r["starters"]] == ["Wr"]
+        assert r["bench"] == ["K"]
+
+    def test_superflex_admits_a_quarterback(self):
+        players = [self._p("Qb1", ["QB"], 20), self._p("Qb2", ["QB"], 19),
+                   self._p("Wr", ["WR"], 5)]
+        r = fan.optimize_lineup(players, ["QB", "Q/W/R/T"], sport="nfl")
+        assert r["total"] == 39.0          # both QBs start, WR benched
+        # ...but the plain flex must NOT admit the second QB.
+        r2 = fan.optimize_lineup(players, ["QB", "W/R/T"], sport="nfl")
+        assert r2["total"] == 25.0         # 20 + the WR's 5
+
+    def test_bye_week_and_doubtful_are_not_startable(self):
+        players = [self._p("Bye", ["RB"], 99, playing=False),
+                   self._p("Doubtful", ["RB"], 98, status="D"),
+                   self._p("Questionable", ["RB"], 10, status="Q"),
+                   self._p("Ir", ["RB"], 97, status="IR")]
+        r = fan.optimize_lineup(players, ["RB", "BN", "IR"], sport="nfl")
+        # Questionable players routinely play, so only they start.
+        assert [s["name"] for s in r["starters"]] == ["Questionable"]
+        assert set(r["bench"]) == {"Bye", "Doubtful", "Ir"}
+
+    def test_defence_slot_spellings_are_equivalent(self):
+        players = [self._p("D", ["DEF"], 7)]
+        for label in ("DEF", "D/ST", "DST"):
+            r = fan.optimize_lineup(players, [label], sport="nfl")
+            assert [s["name"] for s in r["starters"]] == ["D"], label
+
+    def test_format_lineup_says_this_week_for_nfl(self):
+        empty = fan.optimize_lineup([], ["BN"], sport="nfl")
+        assert "this week" in fan.format_lineup(empty)
+        empty_nba = fan.optimize_lineup([], ["BN"], sport="nba")
+        assert "today" in fan.format_lineup(empty_nba)
+
+    def test_nba_behaviour_is_unchanged_by_default(self):
+        """No sport argument + NBA slots must behave exactly as before."""
+        players = [self._p("A", ["PG"], 10), self._p("B", ["PG", "SG"], 8)]
+        r = fan.optimize_lineup(players, ["PG", "G", "BN"])
+        assert r["sport"] == "nba"
+        assert r["total"] == 18.0
 
 
 class TestOptimizeAssembly:

@@ -148,7 +148,13 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   2026-07-21** (`wes_fantasy.optimize_lineup`, exact + property-tested) but
   **tool registration deferred to in-season** — offseason Yahoo leaves eligible
   positions blank, so `fantasy_optimize_lineup` can't produce a real lineup yet.
-  Next: wire the tool + shadow-soak once the season opens, then P3 executor.
+  **P7 pulled forward 2026-07-29 — NFL FIRST** (season ~Sept 10 vs NBA's late
+  Oct, so the epic is no longer blocked on the offseason): `optimize_lineup` is
+  multi-sport (`_SPORTS` tables + `infer_sport`; the solver needed no change —
+  NFL flex ≡ NBA G/F) and `pc/wes_nfl.py` adds points-based valuation
+  (`rank_by_points`, same contract as `rank_by_zscore`). Left: sport-parameterize
+  `wes_yahoo.py` (basketball-hardcoded; post-draft), NFL player pool, weekly
+  cadence. Next: wire the tool + shadow-soak once the season opens, then P3 executor.
   Platform pivoted from the official Yahoo API to browser automation (API access
   now requires a no-caching DocuSign).
 - `docs/tickets/open/med/030-fantasy-draft-tool.md` — Fantasy DRAFT epic (#030):

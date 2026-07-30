@@ -146,44 +146,112 @@ def rank_by_zscore(pool, categories=None):
     return ranked
 
 
-# --- daily lineup optimizer (P2) --------------------------------------------
-# Yahoo NBA daily-lineup slots -> the positions that satisfy them (None = any).
+# --- lineup optimizer (P2), multi-sport (P7 pulled forward) -----------------
+# Roster slot label -> the set of positions that satisfy it (None = any player).
 # The active-slot STRUCTURE is read off the roster itself (each roster carries
 # exactly the league's slots), so no separate settings scrape is needed.
-_SLOT_ELIGIBILITY = {
-    "PG": {"PG"}, "SG": {"SG"}, "G": {"PG", "SG"},
-    "SF": {"SF"}, "PF": {"PF"}, "F": {"SF", "PF"},
-    "C": {"C"}, "UTIL": None, "UTL": None,
+#
+# WHY THIS IS A TABLE, NOT A BRANCH: the optimizer below is a pure assignment
+# problem (players -> slots, maximize value, respect eligibility) and is
+# identical for every sport. Only these tables differ. NFL's FLEX (W/R/T) is
+# structurally the same thing as NBA's G (PG|SG) and F (SF|PF), so nothing in
+# the solver needed changing to support it.
+_SPORTS = {
+    "nba": {
+        # Yahoo NBA daily-lineup slots.
+        "eligibility": {
+            "PG": {"PG"}, "SG": {"SG"}, "G": {"PG", "SG"},
+            "SF": {"SF"}, "PF": {"PF"}, "F": {"SF", "PF"},
+            "C": {"C"}, "UTIL": None, "UTL": None,
+        },
+        "order": ["PG", "SG", "G", "SF", "PF", "F", "C", "UTIL"],
+        # Statuses meaning "do not start" (Yahoo abbreviations). GTD/probable
+        # players routinely play, so they are NOT here.
+        "out": {"O", "OUT", "INJ", "SUSP", "NA", "IL"},
+        "fallback": "UTIL",
+        "period": "today",
+    },
+    "nfl": {
+        # Yahoo NFL weekly slots. Yahoo spells flex slots as the eligible
+        # positions joined by "/" ("W/R/T"); "FLEX" and "D/ST" show up in some
+        # league UIs, and Q/W/R/T + OP are the two superflex spellings.
+        "eligibility": {
+            "QB": {"QB"}, "RB": {"RB"}, "WR": {"WR"}, "TE": {"TE"},
+            "K": {"K"}, "PK": {"K"},
+            "DEF": {"DEF"}, "D/ST": {"DEF"}, "DST": {"DEF"},
+            "W/R": {"WR", "RB"}, "W/T": {"WR", "TE"}, "R/T": {"RB", "TE"},
+            "W/R/T": {"WR", "RB", "TE"}, "FLEX": {"WR", "RB", "TE"},
+            "Q/W/R/T": {"QB", "WR", "RB", "TE"}, "OP": {"QB", "WR", "RB", "TE"},
+        },
+        "order": ["QB", "RB", "WR", "TE", "W/R", "W/T", "R/T", "W/R/T", "FLEX",
+                  "Q/W/R/T", "OP", "K", "PK", "DEF", "D/ST", "DST"],
+        # NFL: DOUBTFUL effectively means out; QUESTIONABLE does not, so "Q" is
+        # deliberately absent. IR/PUP/NFI are season-or-weeks-long designations.
+        "out": {"O", "OUT", "IR", "IR-R", "SUSP", "NA", "PUP", "NFI",
+                "D", "DOUBTFUL", "DNP"},
+        # NFL has no true "any player" slot, so an unrecognized ACTIVE label
+        # degrades to the standard flex rather than to a wildcard — a kicker
+        # must never become startable at QB just because Yahoo renamed a label.
+        "fallback": "W/R/T",
+        "period": "this week",
+    },
 }
-_BENCH_SLOTS = {"BN", "BE", "IL", "IL+", "IR", "NA"}  # not part of the active lineup
-_SLOT_ORDER = ["PG", "SG", "G", "SF", "PF", "F", "C", "UTIL"]
-# Injury/availability statuses that mean "do not start" (Yahoo abbreviations).
-_OUT_STATUS = {"O", "OUT", "INJ", "SUSP", "NA", "IL"}
+# Shared across sports: bench/injury slots are not part of the active lineup.
+_BENCH_SLOTS = {"BN", "BE", "IL", "IL+", "IR", "IR+", "IR-R", "NA", "RES"}
+DEFAULT_SPORT = "nba"
+# Positions that only exist in one sport — enough to identify a roster.
+_SPORT_MARKERS = {"nfl": {"QB", "RB", "WR", "TE", "K", "DEF"},
+                  "nba": {"PG", "SG", "SF", "PF", "C", "UTIL"}}
 
 
-def _startable(p):
-    """Can this player be started today? They must have a game AND not be ruled
-    out. Absent `playing` (offseason / unknown schedule) counts as not playing."""
+def _sport(sport):
+    """The slot table for `sport`, defaulting to NBA for an unknown name so a
+    bad config degrades to the original behaviour instead of raising."""
+    return _SPORTS.get((sport or DEFAULT_SPORT).lower(), _SPORTS[DEFAULT_SPORT])
+
+
+def infer_sport(slots):
+    """Guess the sport from a roster's slot labels, so callers that already know
+    the sport can stay silent and a roster can't be scored against the wrong
+    table. Counts unambiguous position markers ('QB' is NFL-only, 'PG' is
+    NBA-only) and takes the winner; ties / no evidence -> DEFAULT_SPORT."""
+    seen = {s.strip().upper() for s in (slots or []) if s}
+    hits = {sp: len(seen & marks) for sp, marks in _SPORT_MARKERS.items()}
+    best_sport = max(hits, key=lambda sp: hits[sp])
+    if hits[best_sport] == 0 or list(hits.values()).count(hits[best_sport]) > 1:
+        return DEFAULT_SPORT
+    return best_sport
+
+
+def _startable(p, sport=DEFAULT_SPORT):
+    """Can this player be started this period? They must have a game (NFL: not on
+    a bye) AND not be ruled out. Absent `playing` (offseason / unknown schedule)
+    counts as not playing."""
     return bool(p.get("playing")) and \
-        (p.get("status") or "").upper() not in _OUT_STATUS
+        (p.get("status") or "").upper() not in _sport(sport)["out"]
 
 
-def _slot_type(slot):
+def _slot_type(slot, sport=DEFAULT_SPORT):
     """Normalize a roster slot label to a known active-slot type, or None if it's
-    a bench/IL slot. Unknown *active* labels fall back to UTIL (any-eligible)."""
-    s = (slot or "").upper()
+    a bench/IL slot. Unknown *active* labels fall back to the sport's widest
+    non-wildcard slot (NBA: UTIL / any; NFL: W/R/T flex)."""
+    s = (slot or "").strip().upper()
     if s in _BENCH_SLOTS:
         return None
-    return s if s in _SLOT_ELIGIBILITY else "UTIL"
+    tbl = _sport(sport)
+    return s if s in tbl["eligibility"] else tbl["fallback"]
 
 
-def optimize_lineup(players, slots):
-    """Exact optimal daily lineup: assign startable players to the active slots
-    to MAXIMIZE total value, respecting position eligibility. Pure/deterministic
-    (§8.2) — no LLM, no network.
+def optimize_lineup(players, slots, sport=None):
+    """Exact optimal lineup for the period: assign startable players to the
+    active slots to MAXIMIZE total value, respecting position eligibility.
+    Pure/deterministic (§8.2) — no LLM, no network. Sport-agnostic: NBA daily
+    and NFL weekly are the same assignment problem (see _SPORTS).
 
       players: [{name, positions:[...], value:float, playing:bool, status}]
-      slots:   the roster's slot labels (e.g. ['PG','SG',...,'UTIL','BN','IL'])
+      slots:   the roster's slot labels (NBA ['PG',...,'UTIL','BN','IL'];
+               NFL ['QB','RB','RB','WR','WR','TE','W/R/T','K','DEF','BN','IR'])
+      sport:   'nba' | 'nfl'; None infers it from `slots` (see infer_sport)
 
     Returns {starters:[{slot,name,value}], bench:[name], empty_slots:[type],
              total:float}. Players without a game / ruled out are benched; a
@@ -191,19 +259,22 @@ def optimize_lineup(players, slots):
     too. Same-type slots are interchangeable, so a starter's `slot` is its type.
 
     Method: capacity DP over slot types — state = (player index, remaining
-    capacity per type). Optimal by construction; state space is tiny for an NBA
-    roster (≤ ~15 players, ≤ 8 slot types)."""
-    order = [t for t in _SLOT_ORDER
-             if any(_slot_type(s) == t for s in slots)]
-    cap0 = tuple(sum(1 for s in slots if _slot_type(s) == t) for t in order)
+    capacity per type). Optimal by construction; state space is tiny for either
+    sport's roster (≤ ~16 players, ≤ ~10 distinct slot types)."""
+    sport = sport or infer_sport(slots)
+    tbl = _sport(sport)
+    elig_tbl = tbl["eligibility"]
+    order = [t for t in tbl["order"]
+             if any(_slot_type(s, sport) == t for s in slots)]
+    cap0 = tuple(sum(1 for s in slots if _slot_type(s, sport) == t) for t in order)
 
     startable, benched = [], []
     for p in players:
-        (startable if _startable(p) else benched).append(p)
+        (startable if _startable(p, sport) else benched).append(p)
 
     def _elig(p):
-        pos = set(p.get("positions") or [])
-        return tuple((_SLOT_ELIGIBILITY[t] is None or bool(pos & _SLOT_ELIGIBILITY[t]))
+        pos = {x.strip().upper() for x in (p.get("positions") or []) if x}
+        return tuple((elig_tbl[t] is None or bool(pos & elig_tbl[t]))
                      for t in order)
     elig = [_elig(p) for p in startable]
     val = [float(p.get("value") or 0.0) for p in startable]
@@ -242,13 +313,16 @@ def optimize_lineup(players, slots):
         "bench": [p["name"] for p in benched],
         "empty_slots": empty,
         "total": round(total, 2),
+        "sport": sport,
     }
 
 
 def format_lineup(result, team_name=""):
     """Compact, spoken/typed-friendly optimal lineup for the model to relay."""
+    period = _sport(result.get("sport"))["period"]   # NBA "today" / NFL "this week"
     if not result["starters"] and not result["empty_slots"]:
-        return "No startable players today — nobody on the roster has a game."
+        return (f"No startable players {period} — nobody on the roster "
+                f"has a game.")
     head = f"Optimal lineup{f' — {team_name}' if team_name else ''}:"
     lines = [head]
     for s in result["starters"]:

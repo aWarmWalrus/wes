@@ -250,11 +250,25 @@ tickets (#030+) as they start.
   H2H-category punt strategy per week. Highest reasoning bar → Claude escalation
   likely. **Accept:** an incoming trade gets a graded, category-aware
   recommendation; weekly strategy accounts for the matchup.
-- **P7 (stretch) — Portfolio + generalization.** Manage N teams across accounts
-  from config; sport-agnostic adapter seams for NFL/MLB; weekly portfolio digest.
+- **P7 — Portfolio + generalization. NO LONGER A STRETCH: partly done, pulled
+  forward 2026-07-29.** Manage N teams across accounts from config;
+  sport-agnostic adapter seams for NFL/MLB; weekly portfolio digest.
+  **Why it moved:** waiting for NBA (late October) blocked the whole epic, but
+  the owner's real NFL league starts **~Sept 10**, making NFL a live testbed
+  6-7 weeks earlier. The generalization was cheap because the P2 solver was
+  already sport-neutral — an assignment problem over (positions × slots) with no
+  category logic, and NFL's FLEX is structurally NBA's G/F. **Done:** multi-sport
+  slot tables + `infer_sport` in `wes_fantasy`, and NFL points-based valuation in
+  **`pc/wes_nfl.py`** (`rank_by_points` mirrors `rank_by_zscore`'s contract, so
+  the optimizer and `wes_draft.best_available` take either sport unchanged).
+  **Left:** sport-parameterize `wes_yahoo` (hardcoded to basketball URLs/keys —
+  needs the league to exist, so post-draft), an NFL player pool, and the weekly
+  lock cadence (simpler than NBA's per-game locks).
 
 **Critical path to the headline feature** (Jarvis auto-sets my lineup): P0 → P1 →
-P2 → P3 → P4. P5/P6 extend GM scope; P7 scales it out.
+P2 → P3 → P4. P5/P6 extend GM scope. **P7 is now ON the critical path rather than
+scaling it out**, because it decides *which sport* P3/P4 first execute against —
+NFL in September, NBA in late October on an already-soaked loop.
 
 ---
 

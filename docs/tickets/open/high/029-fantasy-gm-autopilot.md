@@ -5,7 +5,7 @@ status: open
 priority: high
 created: 2026-07-16
 closed:
-tags: [nba, fantasy, yahoo, oauth, tools, agentic, actions, scheduling, rails, epic]
+tags: [nfl, nba, fantasy, yahoo, oauth, tools, agentic, actions, scheduling, rails, epic, multi-sport]
 related: [docs/fantasy-gm-design.md, "#027", "#028", "#026", "#005", "#012", "#004", "#002", "#030"]
 ---
 
@@ -77,6 +77,69 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 - [ ] Daily lineup management runs on schedule per each team's mode
 
 ## Notes
+
+### 2026-07-29 — P7 PULLED FORWARD: run this epic on NFL first, not NBA
+**Owner call.** This epic was blocked on "wait for NBA season" (October) because
+the offseason gives no games and blank eligible positions. But the owner is
+joining a real **NFL** league drafting Aug/Sep, and the NFL season starts
+**~Sept 10** — so NFL is a live GM testbed **6-7 weeks before** NBA. That
+reframes P7 ("sport-agnostic adapter seams for NFL/MLB", the last stretch phase)
+as the way to *unblock* the epic rather than a someday-scaling item.
+
+Why this is cheap: **the expensive part was already sport-agnostic.**
+`optimize_lineup` is a pure assignment problem (players → slots, maximize value,
+respect position eligibility) with no roto-category logic anywhere, and NFL's
+FLEX (W/R/T) is structurally identical to NBA's G (PG|SG) / F (SF|PF). The
+solver needed **zero** changes. Only the lookup tables and the valuation model
+are sport-specific.
+
+**Shipped 2026-07-29 (both offline, no Yahoo access needed):**
+- **Multi-sport optimizer.** The NBA-only module constants became a `_SPORTS`
+  table (eligibility / display order / out-statuses / period wording), plus
+  `optimize_lineup(players, slots, sport=None)` and `infer_sport(slots)` —
+  `sport=None` identifies the roster from unambiguous markers (QB is NFL-only,
+  PG is NBA-only), so a roster can't be scored against the wrong table. NBA
+  behaviour is unchanged by default and pinned by a test.
+- **NFL slot tables** for QB/RB/WR/TE, all four flex spellings Yahoo uses
+  (`W/R`, `W/T`, `R/T`, `W/R/T`, plus `FLEX`), both superflex spellings
+  (`Q/W/R/T`, `OP`), K, and DEF (`DEF`/`D/ST`/`DST`).
+- **`pc/wes_nfl.py`** — the points-based valuer, the NFL counterpart to
+  `rank_by_zscore`. `fantasy_points(cats, scoring)` runs a stat line through the
+  league's scoring; `rank_by_points(pool, scoring)` mirrors the NBA ranker's
+  contract exactly, so `optimize_lineup` and `wes_draft.best_available` consume
+  either sport unchanged. Presets standard / half / full PPR (they differ *only*
+  in points-per-reception — pinned by a test). Kickers by FG distance, team
+  defence with the points-allowed tier ladder. **This also closes #030's "NFL
+  points-based valuer TODO"** — one build, two tickets.
+- **48 new tests.** The brute-force optimality property test is now
+  parameterized over BOTH sports (1500 random rosters each).
+
+**A real trap this surfaced:** `_slot_type` degraded any unrecognized *active*
+slot label to `UTIL` (any-eligible). Pointed at an NFL roster under the old NBA
+table that would not have errored — it would have silently treated `QB` as a
+wildcard and started a **kicker at quarterback**. NFL's fallback is now the
+standard flex (WR/RB/TE), never a wildcard, with a regression test named for it.
+
+**Remaining for the NFL path**, in order:
+1. **Sport-parameterize `pc/wes_yahoo.py`** — the bulk of the work and the only
+   part that needs the owner's league to exist (so: post-draft). Currently
+   hardcoded to basketball throughout: `FANTASY_HOME =
+   basketball.fantasysports.yahoo.com`, `/nba/` URL paths, `nba.l.<id>.t.<id>`
+   team keys, NBA-specific detail-cell parsing.
+2. **NFL player pool** for the valuer to rank (ESPN NFL feed, sibling to
+   `wes_nba`'s). Needed for waiver/draft value, not for lineup optimization
+   (which only needs the roster's own players).
+3. **Weekly cadence** instead of daily — *simpler* than NBA: one main lock
+   (Sun ~1pm ET) plus TNF/MNF, versus NBA's per-game locks. `playing` becomes
+   "not on a bye week". §6/§8.3's lock logic needs the weekly variant.
+4. **Wire the P2 tool + shadow-soak weekly through September**, then P3 executor.
+   NBA plugs into the same loop in late October, by then already soaked on real
+   data — so this de-risks the NBA path rather than competing with it.
+
+**Scope honesty:** this widens an already-large epic. If the goal were
+specifically NBA, NFL would be a detour; the argument for it is that it makes the
+whole loop testable against a real team ~6 weeks sooner, and every piece except
+the valuer is shared.
 
 ### 2026-07-21 — P2 optimizer ENGINE done (advise/dry-run); tool deferred to in-season
 The deterministic daily-lineup optimizer + its assembly are built and validated;

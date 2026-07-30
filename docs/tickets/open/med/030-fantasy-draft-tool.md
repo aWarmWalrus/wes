@@ -93,6 +93,20 @@ static roster/scoring scrape #029 P0 already does.
 
 ## Notes
 
+### 2026-07-29 — the NFL valuer this ticket needed is BUILT (shared with #029)
+The "NFL points-based valuer TODO" below is **done**, delivered under #029's
+P7-pull-forward: **`pc/wes_nfl.py`**. `rank_by_points(pool, scoring)` mirrors
+`wes_fantasy.rank_by_zscore`'s contract exactly, so **`wes_draft.best_available`
+works for NFL with no change** — it only ever reads `value` and `positions`.
+Presets for standard / half / full PPR, kickers by FG distance, team defence via
+the points-allowed tier ladder. Still needed for drafting specifically: the
+**NFL player pool** to rank (ESPN NFL feed, sibling to `wes_nba`'s `byathlete`
+bulk fetch), since valuation is only useful over a real draftable set.
+
+The optimizer is multi-sport now too (`_SPORTS` tables + `infer_sport`), which
+matters here because the draft-room automation was always meant to be
+sport-agnostic — the shared layer now genuinely is, at the engine level.
+
 ### 2026-07-23 — NFL is now the FIRST target; dual-sport, sport-specific valuation
 Strategy shift (owner): **the owner is joining a real NFL fantasy league this
 season** (draft Aug/Sep — sooner than NBA's October), so **NFL is the first live
