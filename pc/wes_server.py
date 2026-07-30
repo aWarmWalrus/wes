@@ -635,6 +635,33 @@ TOOLS = [
             "required": ["player"],
         },
     },
+    {
+        "name": "fantasy_optimize_lineup",
+        "description": (
+            "The owner's OPTIMAL fantasy starting lineup for their configured "
+            "team, computed from the real roster, real player stats and that "
+            "league's real scoring settings. Use for 'who should I start', 'set "
+            "my lineup', 'is my lineup optimal', 'who do I sit this week', 'best "
+            "lineup'. Football is weekly (one Sunday lock), basketball is daily. "
+            "This only ADVISES — it never changes the team on Yahoo, so say what "
+            "it recommends rather than claiming you set anything. If the result "
+            "carries a WARNING about missing stats, relay that caveat too: the "
+            "lineup is a partial guess in that case. Never invent players, "
+            "positions or point totals — report exactly what comes back."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team": {
+                    "type": "string",
+                    "description": ("optional team name when several are "
+                                    "configured, e.g. 'Charles's Pop'; omit for "
+                                    "the default team"),
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -959,6 +986,8 @@ def run_tool(name, tool_input):
         if name == "fantasy_player_value":
             return wes_fantasy.fantasy_player_value(
                 tool_input.get("player", ""), tool_input.get("versus"))
+        if name == "fantasy_optimize_lineup":
+            return wes_fantasy.fantasy_optimize_lineup(tool_input.get("team"))
         return f"unknown tool: {name}"
     except Exception as e:  # noqa: BLE001
         return f"tool error: {e}"

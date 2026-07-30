@@ -232,6 +232,36 @@ class TestTeamRegistry:
         assert team is None
         assert "Dinosaurs" in err and "Work League" in err
 
+    def test_inactive_teams_are_skipped(self, monkeypatch):
+        """A dead league (per-season key, #033) must not be selectable — it was
+        first in the file, so it became the default and broke every fantasy
+        question with "I'm not seeing a roster"."""
+        monkeypatch.setattr(wy, "_load_teams", lambda force=False: {"teams": [
+            {"name": "Dead", "team_key": "nba.l.1.t.1", "active": False},
+            {"name": "Live", "team_key": "nfl.l.2.t.4"},
+        ]})
+        assert [t["name"] for t in wy.configured_teams()] == ["Live"]
+        chosen, err = wy._resolve_team()
+        assert err is None and chosen["name"] == "Live"
+
+    def test_inactive_teams_are_still_recorded(self, monkeypatch):
+        """Kept in the file for key history — skipped, not deleted."""
+        monkeypatch.setattr(wy, "_load_teams", lambda force=False: {"teams": [
+            {"name": "Dead", "team_key": "nba.l.1.t.1", "active": False}]})
+        assert wy.configured_teams() == []
+        assert len(wy.configured_teams(include_inactive=True)) == 1
+
+    def test_active_defaults_to_true_when_absent(self, monkeypatch):
+        monkeypatch.setattr(wy, "_load_teams", lambda force=False: {"teams": [
+            {"name": "NoFlag", "team_key": "nfl.l.2.t.4"}]})
+        assert [t["name"] for t in wy.configured_teams()] == ["NoFlag"]
+
+    def test_all_inactive_falls_back_to_a_live_listing(self, monkeypatch):
+        """(None, None) tells the caller to list teams live rather than error."""
+        monkeypatch.setattr(wy, "_load_teams", lambda force=False: {"teams": [
+            {"name": "Dead", "team_key": "nba.l.1.t.1", "active": False}]})
+        assert wy._resolve_team() == (None, None)
+
     def test_no_config_returns_none_none(self, monkeypatch):
         monkeypatch.setattr(wy, "configured_teams", lambda: [])
         assert wy._resolve_team("anything") == (None, None)

@@ -73,6 +73,20 @@ Two distinct problems fall out:
 
 ## Notes
 
+### 2026-07-29 (later) — partly mitigated: `active: false` + eval repointed
+- **`teams.yaml` now supports `active: false`** and `configured_teams()` skips
+  those records (`include_inactive=True` to see the whole file). The NBA entry is
+  marked inactive. This was not cosmetic: being FIRST in the file made the dead
+  league the DEFAULT team, so the newly-registered `fantasy_optimize_lineup`
+  answered *"I'm not seeing a fantasy football roster for you right now"* for a
+  football question. Marking it inactive beats reordering, which would leave the
+  same trap for the next rollover.
+- **The `fantasy-roster` eval case is repointed basketball → football**, where a
+  real drafted roster exists. It now passes (judge 2/2) and puts the NFL read path
+  under nightly cover, which it lacked. Point it back once an NBA team exists.
+- Still open: the NBA keys themselves (need re-registering for 2026-27), and the
+  detection gap (#031) — nothing alerted for the two days this was broken.
+
 - 2026-07-29: the underlying lesson for the epic — **Yahoo league keys are
   season-scoped**, so any long-lived config that names one has a built-in expiry.
   The design treats them as stable identities; they aren't.

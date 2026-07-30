@@ -429,42 +429,110 @@ def _playing_today(player):
 
 def _player_scalar(player, categories):
     """Fetch a rostered player's season stats and reduce to the interim scalar.
-    0.0 if stats can't be fetched (so a lookup miss just benches them, no crash)."""
+    None when stats can't be fetched — UNKNOWN, not zero, so `optimize_lineup`
+    reports it instead of silently ranking the player as worthless (see the
+    `unknown_value` note there)."""
     stats = wes_nba.player_season_stats(player.get("name", ""))
-    return roto_scalar(stats, categories) if isinstance(stats, dict) else 0.0
+    return roto_scalar(stats, categories) if isinstance(stats, dict) else None
+
+
+# --- NFL: weekly availability + values from the ESPN pool --------------------
+def _nfl_playing(player):
+    """Is this player available THIS WEEK? NFL is weekly, not daily: the question
+    is "not on a bye" rather than "has a game today".
+
+    Reads the `game` cell wes_yahoo captures ("Sun 1:25 pm vs Was"). Empty means
+    no game is shown, which we treat as not playing — failing safe, since a
+    player we can't confirm shouldn't take a starting slot from one we can.
+
+    CAVEAT: Yahoo renders a bye as "Bye" in that cell, but a real bye could NOT
+    be observed on 2026-07-29 (pre-season; every row showed a Week 1 game). The
+    substring check is from Yahoo's documented rendering, not from a captured
+    example — re-verify in-season, ideally week 5+ when byes start."""
+    game = " ".join((player.get("game") or "").split()).lower()
+    if not game:
+        return False
+    return "bye" not in game
+
+
+def _norm_name(name):
+    """Loose key for matching a Yahoo roster name to an ESPN pool name (case,
+    punctuation and suffix noise differ: "Ja'Marr Chase", "James Cook III")."""
+    return "".join(ch for ch in str(name or "").lower() if ch.isalnum())
+
+
+def _nfl_value_map(league_key, _pool_fn=None, _scoring_fn=None):
+    """{normalized name -> fantasy points} for the NFL pool under THIS league's
+    scoring, plus the sorts that failed. Ranked PER GAME so an injury-shortened
+    season doesn't read as a bad player."""
+    scoring = (_scoring_fn or nfl_league_scoring)(league_key)
+    pool, failed = (_pool_fn or wes_nfl.pool_by_position)()
+    ranked = wes_nfl.rank_by_points([wes_nfl.per_game(p) for p in pool],
+                                   scoring["weights"], scoring["tiers"])
+    return {_norm_name(p["name"]): p["value"] for p in ranked}, failed
 
 
 def fantasy_optimize_lineup(team=None, _players_fn=None, _playing_fn=None,
-                            _value_fn=None):
-    """P2 tool entry: recommend today's optimal starting lineup for a configured
-    team. ADVISE / DRY-RUN only — it NEVER writes to Yahoo (that's P3's gated
-    executor). Degrades to a string on any problem, including the offseason:
-    Yahoo hides eligible positions and there are no games until October, so
-    there's nothing to optimize yet (re-verify in-season via WES_YAHOO_LIVE=1).
+                            _value_fn=None, _slots_fn=None, _valmap_fn=None):
+    """P2 tool entry: recommend the optimal starting lineup for a configured team.
+    ADVISE / DRY-RUN only — it NEVER writes to Yahoo (that's P3's gated executor).
+    Degrades to a string on any problem, never raises into a turn.
 
-    Injectables (_players_fn/_playing_fn/_value_fn) let the whole pipeline be
-    unit-tested from fixtures without the network (design §9)."""
+    Multi-sport. The two sports differ in three places and nowhere else:
+      period      NBA = today (per-game locks)   NFL = this week (one Sunday lock)
+      availability "team has a game today"       "not on a bye"
+      valuation    roto scalar over categories   fantasy points under league weights
+    NBA additionally hides eligible positions in the offseason, which is why the
+    blank-positions guard below exists.
+
+    Injectables let the whole pipeline be unit-tested from fixtures without the
+    network (design §9)."""
     chosen, err = wes_yahoo._resolve_team(team)
     if err:
         return err
     if chosen is None:
         return "No fantasy team is configured yet — set up teams.yaml first."
     team_key, name = chosen.get("team_key", ""), chosen.get("name", "")
+    league_key = chosen.get("league_key", "") or team_key
+    sport = str(chosen.get("sport") or wes_yahoo._sport_of(team_key)).lower()
     players = (_players_fn or wes_yahoo.roster_players)(team_key)
     if not isinstance(players, list):
         return players  # degradation string from the scraper
     if not players:
         return "That roster came back empty."
-    # No eligible positions => can't respect slot eligibility. This is the
+    # No eligible positions => can't respect slot eligibility. This is the NBA
     # offseason state (Yahoo blanks them); fail safe rather than guess (§8.8).
     if not any(p.get("positions") for p in players):
         return ("I can't build a lineup yet — Yahoo isn't showing player "
                 "positions (they stay blank until the season starts).")
-    cats = _league_categories()
-    playing = _playing_fn or _playing_today
-    value = _value_fn or (lambda p: _player_scalar(p, cats))
+
+    warn = ""
+    if sport == "nfl":
+        playing = _playing_fn or _nfl_playing
+        if _value_fn:
+            value = _value_fn
+        else:
+            vmap, failed = (_valmap_fn or _nfl_value_map)(league_key)
+            # .get returns None for a player with no stat line — UNKNOWN, which
+            # optimize_lineup reports rather than scoring as a real zero.
+            value = lambda p: vmap.get(_norm_name(p.get("name")))  # noqa: E731
+            if failed:
+                warn = ("\n  NOTE — part of the player pool didn't load "
+                        f"({len(failed)} of {len(wes_nfl._POOL_SORTS)} position "
+                        "groups), so some values may be missing.")
+        slots = (_slots_fn or nfl_league_slots)(league_key) \
+            or [p.get("slot", "") for p in players]
+        no_games = ("Everyone on your roster is on a bye or has no game this "
+                    "week — there's no lineup to set.")
+    else:
+        cats = _league_categories()
+        playing = _playing_fn or _playing_today
+        value = _value_fn or (lambda p: _player_scalar(p, cats))
+        slots = [p.get("slot", "") for p in players]
+        no_games = "No games on your roster today — there's no lineup to set."
+
     enriched = [{**p, "playing": playing(p), "value": value(p)} for p in players]
     if not any(e["playing"] for e in enriched):
-        return "No games on your roster today — there's no lineup to set."
-    result = optimize_lineup(enriched, [p.get("slot", "") for p in players])
-    return format_lineup(result, team_name=name)
+        return no_games
+    result = optimize_lineup(enriched, slots, sport)
+    return format_lineup(result, team_name=name) + warn

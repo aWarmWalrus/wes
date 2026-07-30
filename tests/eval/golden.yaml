@@ -195,13 +195,32 @@
     rather than guessing or refusing?
 
 # Fantasy read (#029 P0): the reply must come from the fantasy_my_team tool, not
-# invented players. Offseason + whatever the account state, either a real roster
-# or a graceful "needs connecting / couldn't reach Yahoo" is correct; making up
-# named players/stats is the failure this guards.
+# invented players. Either a real roster or a graceful "needs connecting /
+# couldn't reach Yahoo" is correct; making up named players/stats is the failure
+# this guards.
+#
+# CHANGED 2026-07-29 (#033): this case used to say "basketball". Yahoo rolled the
+# NBA season over and league nba.l.114020 stopped resolving, so the case began
+# asserting against a league that no longer exists — a TRUE failure, not a flake.
+# Repointed at FOOTBALL, where the owner has a real drafted roster. That also puts
+# the NFL read path under nightly cover, which it otherwise lacked. Point this
+# back at basketball once an NBA team is registered for the new season.
 - id: fantasy-roster
-  say: "What's on my fantasy basketball team right now"
+  say: "What's on my fantasy football team right now"
   expect:
-    reply_regex: 'roster|team|fantasy|yahoo|sign|connect|reach|player'
+    # Generous on purpose. `reply` is the spoken reply transcribed BACK by
+    # Whisper, so common words get mangled — an observed run said "Your TEEN
+    # currently features Jalen hurt … Gemma Chase … Breeze Hole", i.e. team→teen,
+    # Ja'Marr→Gemma, Breece Hall→Breeze Hole. The judge scored it 2/2 correct.
+    # So the deterministic check only proves the reply is ABOUT a fantasy roster;
+    # the judge is the real grader here (see #011 on STT eval flakes).
+    reply_regex: 'roster|team|teen|fantasy|yahoo|sign|connect|reach|player|quarterback|receiv|back ?field|lineup'
+    # Explicit budget (the 30s default is too tight, as for fantasy-value which
+    # sets 50s): this case pays for a real headless-Chrome scrape AND then has the
+    # 12b read back a 15-player roster. Measured 8-32s depending on how much of
+    # the roster it reads aloud; the tool itself is only 4-5s. This case guards
+    # GROUNDING — latency regressions belong to perf_check.py's tight threshold.
+    max_total_ms: 50000
     max_audio_s: 25
   judge: >-
     The assistant HAS a real tool (fantasy_my_team) that reads the user's actual
@@ -210,6 +229,28 @@
     graceful "I need to connect to Yahoo / couldn't reach it" is also correct.
     Mark incorrect only if it refuses, changes the subject, or invents something
     other than a roster (e.g. made-up stats it wasn't asked for).
+
+# Lineup optimizer (#029 P2, tool registered 2026-07-29). Guards TWO things: that
+# the recommendation comes from fantasy_optimize_lineup rather than being invented,
+# and that the tool's missing-stats WARNING is passed through instead of dropped —
+# a lineup built on partial data must not be relayed as certain.
+- id: fantasy-lineup
+  say: "Who should I start on my fantasy football team this week"
+  expect:
+    reply_regex: 'start|lineup|QB|WR|RB|TE|bench|roster|couldn.?t|connect'
+    max_total_ms: 60000
+    max_audio_s: 40
+  judge: >-
+    The user asked who to start. The assistant has a fantasy_optimize_lineup tool
+    that computes the optimal lineup from the real roster, real player stats and
+    the league's real scoring, so naming specific rostered players per slot IS
+    correct and grounded — do NOT treat them as hallucinations. A graceful "no
+    team configured / couldn't reach Yahoo / everyone is on a bye" is also
+    correct. Mark INCORRECT if it invents players or point totals, refuses on the
+    grounds that it cannot know the roster, or claims it CHANGED/SET the lineup on
+    Yahoo (the tool only advises and never writes). If the tool reported missing
+    stats for some players, a good reply mentions that caveat rather than
+    presenting the lineup as certain.
 
 # Web-search handoff (search_web → Haiku, #029 followup). GATED web_search: runs
 # only with --web-search / WES_EVAL_WEB_SEARCH=1 (weekly), since it hits the paid

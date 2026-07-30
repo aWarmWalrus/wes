@@ -30,6 +30,6 @@ Conventions + workflow: `README.md`. Next free id: **034** (open here;
 - [008](open/low/008-single-call-scene.md) — Inject prefetched scene into context to skip the vision tool round-trip (KR3)
 - [009](open/low/009-multi-person-disambiguation.md) — Verify clothing-color disambiguation with 3+ people in frame (KR4)
 - [010](open/low/010-future-hailo-use.md) — Use spare Hailo headroom: pose/gesture, ambient detection, wake-word on-device
-- [011](open/low/011-eval-flakes.md) — Eval flakes: lexicon-names STT + math-simple arithmetic
+- [011](open/low/011-eval-flakes.md) — Eval flakes: math-simple arithmetic, plus **`lexicon-names` re-diagnosed 2026-07-29 — it is NOT an STT flake**: the lexicon works (`transcript_includes` always passes) but the model treats "say hello to Kaia and Ellis" as a *vision* request and refuses; 7 FAIL / 4 PASS since 07-21, and the passes are hollow (the refusal happens to echo a name, matching the regex). The case currently rewards the wrong behaviour
 - [013](open/low/013-storage-tier.md) — Storage tier on the PC for audio/video/transcripts
 - [025](open/low/025-dashboard-gpu-temp-power-axis.md) — Dashboard "GPU temperature / power" panel mixes °C and W on one axis (bug)

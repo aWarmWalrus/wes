@@ -78,6 +78,52 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 
 ## Notes
 
+### 2026-07-29 — P2 TOOL REGISTERED + weekly availability. Jarvis answers it live.
+`fantasy_optimize_lineup` is registered and **working through a real turn** — the
+thing held back all offseason. Asked *"Who should I start on my fantasy football
+team this week?"*, Jarvis now replies with the real lineup **and relays the
+missing-stats caveat** instead of presenting a partial answer as certain:
+
+> QB Jalen Hurts · WR Ja'Marr Chase · WR Drake London · RB Cam Skattebo ·
+> TE Tyler Warren · W/R/T Nico Collins · RB Jaylen Warren · K Tyler Loop ·
+> DEF Steelers — "since there were no stats available for Carnell Tate, Ricky
+> Pearsall, Jake Ferguson, or the Steelers defense, the system had to treat them
+> as 0"
+
+- `_nfl_playing()` — weekly availability from the `game` cell ("not on a bye"),
+  where NBA asks "has a game today". Empty game → not playing, failing safe: a
+  player we can't confirm shouldn't take a slot from one we can.
+  **CAVEAT: a real bye could not be observed** (pre-season; every row showed a
+  Week 1 game). The `"bye"` substring check is from Yahoo's documented rendering,
+  not a captured example — **re-verify week 5+**.
+- `fantasy_optimize_lineup` is now sport-dispatched. The sports differ in exactly
+  three places — period, availability test, valuation — and nowhere else.
+- Slots come from league settings, falling back to roster slots if that scrape
+  fails.
+- Two new golden cases' worth of coverage: `fantasy-lineup` added (guards
+  grounding AND that the WARNING is passed through, AND that it never claims to
+  have SET the lineup), and `fantasy-roster` repointed basketball→football per
+  #033. Full eval **20/21**, both fantasy cases 2/2 from the local judge.
+
+**A dead default team broke every fantasy question.** The first live turn answered
+*"I'm not seeing a fantasy football roster for you right now."* Cause: the model
+called the tool correctly, but `_resolve_team(None)` returns the FIRST configured
+team — the **dead NBA league** (#033). So `teams.yaml` now supports
+**`active: false`**, and `configured_teams()` skips inactive records. Better than
+reordering the file, which would leave the same trap for the next rollover:
+a per-season key that stops resolving can be retired without losing its history.
+Retested → correct lineup.
+
+**Cost of registering the tool, measured not assumed:** one more tool in the
+schema pushed `perf_check` ttfa from a 1918ms baseline to 2527ms (+32%), still
+inside the threshold. Every turn pays a little for the extra tool description.
+
+**Also fixed a silent harness bug found by this work** (`tests/eval_turns.py`):
+fixture WAVs were cached by case id and only regenerated `if not exists`, so
+editing a golden case's `say` kept the OLD audio forever. Repointing
+`fantasy-roster` to "football" still transcribed as *"basketball"*. Filenames now
+carry a hash of the spoken text.
+
 ### 2026-07-29 — NFL player pool (ESPN) — the read→value→optimize loop is CLOSED
 `wes_nfl` now fetches real stat lines, so the weights have something to chew on.
 The full chain runs end to end on live data: **Yahoo roster → ESPN 2025 stats →

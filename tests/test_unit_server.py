@@ -163,6 +163,28 @@ class TestRunTool:
         assert ws.run_tool("fantasy_player_value", {"player": "Cam Thomas"}) \
             == "Cam Thomas vs None"
 
+    def test_fantasy_optimize_lineup_is_registered(self):
+        """Registered 2026-07-29 after being held back all offseason — there is
+        now a real drafted NFL roster to point it at."""
+        assert "fantasy_optimize_lineup" in [t["name"] for t in ws.TOOLS]
+
+    def test_fantasy_optimize_lineup_dispatches(self, monkeypatch):
+        monkeypatch.setattr(ws.wes_fantasy, "fantasy_optimize_lineup",
+                            lambda team=None: f"lineup for {team!r}")
+        assert ws.run_tool("fantasy_optimize_lineup", {}) == "lineup for None"
+        assert ws.run_tool("fantasy_optimize_lineup", {"team": "Pop"}) \
+            == "lineup for 'Pop'"
+
+    def test_optimize_lineup_tool_description_says_it_only_advises(self):
+        """The tool never writes to Yahoo. If the description stops saying so, the
+        model starts claiming it set the lineup — a false statement about a real
+        account, which is worse than an unhelpful answer."""
+        tool = next(t for t in ws.TOOLS
+                    if t["name"] == "fantasy_optimize_lineup")
+        desc = tool["description"].lower()
+        assert "advise" in desc or "advises" in desc
+        assert "never" in desc and "yahoo" in desc
+
     def test_nba_schedule_is_registered(self):
         assert "nba_schedule" in [t["name"] for t in ws.TOOLS]
 

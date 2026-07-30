@@ -441,3 +441,122 @@ class TestOptimizeAssembly:
     def test_no_team_configured(self, monkeypatch):
         monkeypatch.setattr(fan.wes_yahoo, "_resolve_team", lambda t=None: (None, None))
         assert "configured" in fan.fantasy_optimize_lineup()
+
+    def test_unfetchable_nba_stats_are_unknown_not_zero(self, monkeypatch):
+        """_player_scalar returns None on a failed fetch, so the lineup says so
+        rather than ranking the player as worthless."""
+        monkeypatch.setattr(fan.wes_nba, "player_season_stats",
+                            lambda n: "ESPN is down")
+        assert fan._player_scalar({"name": "X"}, fan.DEFAULT_CATEGORIES) is None
+
+
+class TestNflAssembly:
+    """The NFL end of fantasy_optimize_lineup: weekly availability + points."""
+
+    ROSTER = [
+        {"name": "Jalen Hurts", "positions": ["QB"], "slot": "QB", "status": "",
+         "team": "Phi", "game": "Sun 1:25 pm vs Was"},
+        {"name": "Ja'Marr Chase", "positions": ["WR"], "slot": "WR", "status": "",
+         "team": "Cin", "game": "Sun 10:00 am vs TB"},
+        {"name": "Bye Guy", "positions": ["WR"], "slot": "BN", "status": "",
+         "team": "Xxx", "game": "Bye"},
+    ]
+    SLOTS = ["QB", "WR", "WR", "BN"]
+
+    def _cfg(self, monkeypatch):
+        monkeypatch.setattr(
+            fan.wes_yahoo, "_resolve_team",
+            lambda t=None: ({"team_key": "nfl.l.957011.t.4",
+                             "name": "Charles's Pop", "sport": "nfl",
+                             "league_key": "nfl.l.957011"}, None))
+
+    def _vmap(self, extra=None):
+        base = {fan._norm_name("Jalen Hurts"): 19.3,
+                fan._norm_name("Ja'Marr Chase"): 15.7}
+        base.update(extra or {})
+        return lambda league: (base, [])
+
+    def test_builds_an_nfl_lineup_from_league_slots(self, monkeypatch):
+        self._cfg(monkeypatch)
+        out = fan.fantasy_optimize_lineup(
+            _players_fn=lambda k: self.ROSTER,
+            _slots_fn=lambda k: self.SLOTS,
+            _valmap_fn=self._vmap())
+        assert "Jalen Hurts" in out and "Ja'Marr Chase" in out
+        assert "QB:" in out and "WR:" in out
+
+    def test_a_player_on_a_bye_is_not_started(self, monkeypatch):
+        self._cfg(monkeypatch)
+        out = fan.fantasy_optimize_lineup(
+            _players_fn=lambda k: self.ROSTER,
+            _slots_fn=lambda k: self.SLOTS,
+            _valmap_fn=self._vmap({fan._norm_name("Bye Guy"): 99.0}))
+        # Worth the most, but on a bye -> benched, and its WR slot left empty.
+        assert "Bye Guy" not in out.split("Bench:")[0]
+        assert "Bye Guy" in out
+
+    def test_missing_stats_produce_the_warning(self, monkeypatch):
+        self._cfg(monkeypatch)
+        out = fan.fantasy_optimize_lineup(
+            _players_fn=lambda k: self.ROSTER,
+            _slots_fn=lambda k: self.SLOTS,
+            _valmap_fn=lambda league: ({}, []))     # nobody has stats
+        assert "WARNING" in out and "no stats found" in out
+
+    def test_partial_pool_failure_is_noted(self, monkeypatch):
+        self._cfg(monkeypatch)
+        out = fan.fantasy_optimize_lineup(
+            _players_fn=lambda k: self.ROSTER,
+            _slots_fn=lambda k: self.SLOTS,
+            _valmap_fn=lambda league: (
+                {fan._norm_name("Jalen Hurts"): 19.3}, ["receiving...:desc"]))
+        assert "part of the player pool didn't load" in out
+
+    def test_falls_back_to_roster_slots_when_settings_unavailable(self, monkeypatch):
+        self._cfg(monkeypatch)
+        out = fan.fantasy_optimize_lineup(
+            _players_fn=lambda k: self.ROSTER,
+            _slots_fn=lambda k: [],                 # settings scrape failed
+            _valmap_fn=self._vmap())
+        assert "Jalen Hurts" in out                 # still built a lineup
+
+    def test_everyone_on_bye_degrades(self, monkeypatch):
+        self._cfg(monkeypatch)
+        allbye = [dict(p, game="Bye") for p in self.ROSTER]
+        out = fan.fantasy_optimize_lineup(
+            _players_fn=lambda k: allbye,
+            _slots_fn=lambda k: self.SLOTS,
+            _valmap_fn=self._vmap())
+        assert "bye" in out.lower() and "no lineup to set" in out.lower()
+
+    def test_sport_inferred_from_team_key_when_config_omits_it(self, monkeypatch):
+        monkeypatch.setattr(
+            fan.wes_yahoo, "_resolve_team",
+            lambda t=None: ({"team_key": "nfl.l.957011.t.4", "name": "X",
+                             "league_key": "nfl.l.957011"}, None))
+        out = fan.fantasy_optimize_lineup(
+            _players_fn=lambda k: self.ROSTER,
+            _slots_fn=lambda k: self.SLOTS,
+            _valmap_fn=self._vmap())
+        assert "Jalen Hurts" in out
+
+
+class TestNflPlayingThisWeek:
+    @pytest.mark.parametrize("game", ["Sun 1:25 pm vs Was", "Thu 5:35 pm @ LAR",
+                                      "Mon 5:15 pm vs KC"])
+    def test_a_scheduled_game_means_playing(self, game):
+        assert fan._nfl_playing({"game": game}) is True
+
+    @pytest.mark.parametrize("game", ["Bye", "BYE", "  bye  ", "Bye Week"])
+    def test_a_bye_means_not_playing(self, game):
+        assert fan._nfl_playing({"game": game}) is False
+
+    def test_no_game_shown_fails_safe(self):
+        """A player we can't confirm must not take a slot from one we can."""
+        assert fan._nfl_playing({"game": ""}) is False
+        assert fan._nfl_playing({}) is False
+
+    def test_name_normalization_matches_espn_spellings(self):
+        assert fan._norm_name("Ja'Marr Chase") == fan._norm_name("JaMarr Chase")
+        assert fan._norm_name("James Cook III") == "jamescookiii"
+        assert fan._norm_name(None) == ""

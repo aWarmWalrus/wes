@@ -635,10 +635,23 @@ def _load_teams(force=False):
     return _teams_cache
 
 
-def configured_teams():
-    """The team records from teams.yaml ([] if none / unreadable)."""
+def configured_teams(include_inactive=False):
+    """The team records from teams.yaml ([] if none / unreadable).
+
+    Records with `active: false` are SKIPPED by default. That flag exists because
+    Yahoo league keys are per-SEASON (#033): when a season rolls over, the old
+    key stops resolving and every scrape against it returns empty. Deleting the
+    entry loses the history; leaving it selectable is worse — it was first in the
+    file, so it became the DEFAULT team and silently broke every fantasy question
+    ("who should I start" resolved to a league that no longer exists). Mark it
+    inactive instead. Pass include_inactive=True to see the full file."""
     teams = _load_teams().get("teams")
-    return teams if isinstance(teams, list) else []
+    if not isinstance(teams, list):
+        return []
+    if include_inactive:
+        return teams
+    return [t for t in teams
+            if isinstance(t, dict) and t.get("active", True) is not False]
 
 
 def _resolve_team(name=None):

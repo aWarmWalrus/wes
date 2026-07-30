@@ -41,6 +41,7 @@ Audio goes over HTTP only; nothing is ever played on a speaker.
 """
 import argparse
 import csv
+import hashlib
 import io
 import json
 import os
@@ -120,10 +121,18 @@ def case_turns(case):
 
 
 def fixture_wav(case, turn_i=0):
-    """Synthesized (or silence) WAV bytes for one turn, cached on disk."""
+    """Synthesized (or silence) WAV bytes for one turn, cached on disk.
+
+    The filename carries a hash of the SPOKEN TEXT, not just the case id. Keying
+    on the id alone meant editing a case's `say` kept the stale WAV forever (the
+    cache only checked existence), so the harness went on asking the OLD question
+    while the golden file showed the new one — a silent false pass. Caught
+    2026-07-29 repointing `fantasy-roster` from basketball to football: the
+    transcript still came back "basketball". Old hashes are simply orphaned."""
     os.makedirs(FIXTURES, exist_ok=True)
     say = case_turns(case)[turn_i]
-    name = case["id"] + (f"-{turn_i}" if turn_i else "")
+    digest = hashlib.sha1(say.encode("utf-8")).hexdigest()[:8]
+    name = case["id"] + (f"-{turn_i}" if turn_i else "") + f"-{digest}"
     path = os.path.join(FIXTURES, name + ".wav")
     if not os.path.exists(path):
         if say == "SILENCE":
