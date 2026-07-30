@@ -398,6 +398,153 @@ class TestPerGame:
         assert pergame[0]["name"] == "Star"
 
 
+def _paged_payload(names, page, pages, positions=None):
+    """A minimal byathlete-shaped payload for one page, `pages` total."""
+    positions = positions or {}
+    athletes = [{"athlete": {"displayName": n,
+                             "position": {"abbreviation": positions.get(n, "WR")}},
+                "categories": []} for n in names]
+    return {"requestedSeason": {"displayName": "2025"},
+           "categories": [], "athletes": athletes,
+           "pagination": {"count": len(names) * pages, "limit": 60,
+                          "page": page, "pages": pages}}
+
+
+class TestPagination:
+    """ESPN both under-limits (some sorts need <=60 to return anything, #029
+    7/29) and flakes PER-PAGE independent of that (a page can come back
+    completely empty while its neighbours are fine, #029 7/30). Both are
+    real, measured ESPN behaviours, not hypotheticals."""
+
+    def test_single_page_sort_is_unaffected(self):
+        payload = _paged_payload(["A", "B"], 1, 1)
+        lines, ok = nfl._paginated_pool(
+            "x", 60, None, lambda url: payload)
+        assert ok is True
+        assert {p["name"] for p in lines} == {"A", "B"}
+
+    def test_walks_every_page_and_merges(self):
+        pages = {1: _paged_payload(["A", "B"], 1, 3),
+                2: _paged_payload(["C", "D"], 2, 3),
+                3: _paged_payload(["E"], 3, 3)}
+
+        def fetch(url):
+            page = 1
+            if "page=2" in url:
+                page = 2
+            elif "page=3" in url:
+                page = 3
+            return pages[page]
+        lines, ok = nfl._paginated_pool("x", 60, None, fetch)
+        assert ok is True
+        assert {p["name"] for p in lines} == {"A", "B", "C", "D", "E"}
+
+    def test_one_flaky_page_recovers_on_retry(self):
+        """The exact ESPN behaviour observed: page 2 empty once, fine the next
+        attempt — must not be treated as 'this page has no players'."""
+        calls = {"page2": 0}
+        p1 = _paged_payload(["A"], 1, 2)
+        p2_ok = _paged_payload(["B"], 2, 2)
+
+        def fetch(url):
+            if "page=2" in url:
+                calls["page2"] += 1
+                if calls["page2"] == 1:
+                    return {"league": {}}          # the real observed shape
+                return p2_ok
+            return p1
+        lines, ok = nfl._paginated_pool("x", 60, None, fetch)
+        assert ok is True
+        assert {p["name"] for p in lines} == {"A", "B"}
+        assert calls["page2"] == 2
+
+    def test_a_page_that_never_recovers_still_returns_the_rest(self):
+        """The rest of the pool must not be discarded for one bad page — most
+        of the value lives in the pages that DID come back."""
+        p1 = _paged_payload(["A"], 1, 3)
+        p3 = _paged_payload(["C"], 3, 3)
+
+        def fetch(url):
+            if "page=2" in url:
+                return {"league": {}}              # never recovers
+            if "page=3" in url:
+                return p3
+            return p1
+        lines, ok = nfl._paginated_pool("x", 60, None, fetch)
+        assert ok is True
+        assert {p["name"] for p in lines} == {"A", "C"}
+
+    def test_page_one_itself_failing_is_the_real_failure(self):
+        def fetch(url):
+            return {"league": {}}                  # nothing, ever
+        lines, ok = nfl._paginated_pool("x", 60, None, fetch)
+        assert ok is False and lines == []
+
+    def test_a_page_that_fails_at_one_limit_recovers_at_a_smaller_one(self):
+        """The real ESPN behaviour, not a hypothetical: receiving.receivingYards
+        page 2 came back completely empty at limit=60 on THREE separate
+        attempts with a delay between them, yet limit=40 at that same page
+        returned data immediately. So the fix cannot be 'retry the identical
+        request' — it has to try a smaller limit."""
+        def fetch(url):
+            if "page=2" in url and "limit=60" in url:
+                return {"league": {}}          # never recovers at this limit
+            if "page=2" in url and "limit=40" in url:
+                return _paged_payload(["B"], 2, 2)
+            if "page=1" in url and "limit=60" in url:
+                p = _paged_payload(["A"], 1, 2)
+                p["pagination"]["limit"] = 60
+                return p
+            if "page=1" in url and "limit=40" in url:
+                p = _paged_payload(["A"], 1, 2)
+                p["pagination"]["limit"] = 40
+                return p
+            return {"league": {}}
+        lines, ok = nfl._paginated_pool("x", 60, None, fetch)
+        assert ok is True
+        assert {p["name"] for p in lines} == {"A", "B"}   # full depth recovered
+
+    def test_page_one_uses_the_limit_ladder_like_before(self):
+        """The pre-existing whole-sort quirk (limit=200 returns nothing, 60
+        does) must still work now that page 1 goes through _paginated_pool."""
+        def fetch(url):
+            if "limit=200" in url:
+                return {"league": {}}
+            return _paged_payload(["A"], 1, 1)
+        lines, ok = nfl._paginated_pool("x", 200, None, fetch)
+        assert ok is True and lines[0]["name"] == "A"
+
+    def test_pool_by_position_now_gets_full_depth_across_pages(self):
+        """The regression test that matters: before pagination, TE depth was
+        capped at whatever fit in one page (12 TEs was the measured real gap
+        that left Jake Ferguson without a stat line)."""
+        many_tes = [f"TE{i}" for i in range(150)]
+        page1 = _paged_payload(many_tes[:60], 1, 3,
+                               {n: "TE" for n in many_tes})
+        page2 = _paged_payload(many_tes[60:120], 2, 3,
+                               {n: "TE" for n in many_tes})
+        page3 = _paged_payload(many_tes[120:], 3, 3,
+                               {n: "TE" for n in many_tes})
+        empty = {"league": {}}
+
+        def fetch(url):
+            if "receiving" not in url:
+                return empty
+            if "page=2" in url:
+                return page2
+            if "page=3" in url:
+                return page3
+            return page1
+        pool, failed = nfl.pool_by_position(_get_fn=fetch)
+        tes = [p for p in pool if p["positions"] == ["TE"]]
+        assert len(tes) == 150
+        # The other three sorts legitimately returned nothing here (by design
+        # of this test), and that must be visible, not swallowed.
+        assert set(failed) == {"passing.passingYards:desc",
+                               "rushing.rushingYards:desc",
+                               "kicking.fieldGoalsMade:desc"}
+
+
 class TestPlayerPool:
     def test_uses_injected_fetcher_and_parses(self):
         pool = nfl.player_pool(_get_fn=lambda url: BYATHLETE_PAYLOAD)

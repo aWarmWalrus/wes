@@ -78,6 +78,37 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 
 ## Notes
 
+### 2026-07-30 (later) — ESPN pool DEPTH fixed: pagination + a second, real quirk
+The pool-depth gap flagged after the first live run (only 12 TEs, Jake Ferguson
+missing) is substantially closed. `pool_by_position` now walks EVERY page of
+each sort, not just the first. Verified live: **209 → 278 players**, TE depth
+**12 → 34**, Jake Ferguson now found and dropped off the live "no stats"
+warning.
+
+**A second, genuinely different ESPN bug turned up doing this — not
+speculative, reproduced with a delay between attempts:**
+`receiving.receivingYards:desc` page 2 came back **completely empty** at
+`limit=60` on three separate tries, while `limit=40/30/25/20/15` at that exact
+same page all returned data immediately. Ruled out a fixed-offset bug (limit=40's
+page 2 covers a range that also crosses the limit=60 boundary and works fine) —
+it's tied to the (sort, limit) pair, not a data range. So the fix is NOT "retry
+the same request": `_paginated_pool` now tries each limit in the existing ladder
+as a full walk (all its pages), keeps whichever attempt got the most players if
+none completes fully, and reports real partial data as success (`ok=True`)
+rather than pretending completeness. Two remaining names (Carnell Tate, Ricky
+Pearsall) still don't resolve — every limit hit a wall on *some* page in the
+live run — which is an honest ESPN reliability ceiling, not a bug left unfixed;
+the `unknown_value` warning correctly still names them.
+
+Also **why this happened instead of finishing the write path**: real DOM recon
+on the roster-edit popover (see the entry below) didn't produce a clean,
+reproducible signal for how Yahoo's JS reveals the save button, and I didn't
+want to keep guessing against a live account. Pivoted to this instead — lower
+risk, and it directly improves what Jarvis already says on every "who should I
+start" turn today.
+
+562 tests pass (was 554). Live turn re-verified; perf_check within thresholds.
+
 ### 2026-07-30 — P3 SHADOW EXECUTOR shipped + real edit-roster recon
 Owner: "continue the epic." Latency explicitly doesn't matter (this runs while
 the owner is inactive), so the next real step was P3 — the gated executor design

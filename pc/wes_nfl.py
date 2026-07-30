@@ -441,27 +441,45 @@ def _get_json(url):
     return wes_http.get_json(url, ttl=wes_http.SEASON_TTL, timeout=15.0)
 
 
-def player_pool(limit=200, season=None, sort=None, _get_fn=None):
-    """The NFL player population as stat lines, for valuation and draft ranking.
-
-    Live/network — degrades to `[]` on ANY failure so a bad ESPN response never
-    breaks a turn. `_get_fn` injectable for tests.
-
-    ESPN paginates and sorts server-side, and a single sort skews WHICH players
-    come back (sorting by passing yards returns quarterbacks). `pool_by_position`
-    is usually what you want instead."""
-    import urllib.parse
-    get = _get_fn or _get_json
+def _byathlete_params(limit, season, sort, page=None):
     params = {"region": "us", "lang": "en", "contentorigin": "espn",
               "limit": min(int(limit), 200)}
     if season:
         params["season"] = int(season)
     if sort:
         params["sort"] = sort
+    if page:
+        params["page"] = int(page)
+    return params
+
+
+def player_pool(limit=200, season=None, sort=None, _get_fn=None, page=None):
+    """The NFL player population as stat lines, for valuation and draft ranking.
+
+    Live/network — degrades to `[]` on ANY failure so a bad ESPN response never
+    breaks a turn. `_get_fn` injectable for tests.
+
+    ESPN sorts server-side, and a single sort skews WHICH players come back
+    (sorting by passing yards returns quarterbacks). `pool_by_position` is
+    usually what you want instead — it also handles pagination, which this does
+    NOT (`page` just forwards the param; see `_paginated_pool` for the walk)."""
+    import urllib.parse
+    get = _get_fn or _get_json
+    params = _byathlete_params(limit, season, sort, page)
     try:
         return parse_byathlete(get(_BYATHLETE + "?" + urllib.parse.urlencode(params)))
     except Exception:  # noqa: BLE001
         return []
+
+
+def _raw_page(limit, season, sort, page, _get_fn):
+    """One page's RAW payload (not yet parsed to stat lines) — needed for its
+    `pagination` block, which `player_pool` throws away. Raises on failure; the
+    caller decides how to degrade."""
+    import urllib.parse
+    get = _get_fn or _get_json
+    params = _byathlete_params(limit, season, sort, page)
+    return get(_BYATHLETE + "?" + urllib.parse.urlencode(params))
 
 
 # One sort per position group, because ESPN's default ordering is passing-based
@@ -475,24 +493,89 @@ _POOL_SORTS = ("passing.passingYards:desc", "rushing.rushingYards:desc",
 # the first version of this silently produced a pool with zero WRs and TEs, which
 # valued Ja'Marr Chase at 0.0 and benched him behind a replacement-level rookie.
 _LIMIT_LADDER = (60, 40, 25)
+# ESPN also flakes PER-PAGE, independent of the limit-ladder issue above: probed
+# 2026-07-30, receiving.receivingYards at limit=60 has 4 pages (182 players total,
+# only 60 fit per NBA-style default depth) and page 2 alone came back completely
+# empty ({'league': ...}, no 'athletes' key at all) while pages 1/3/4 were fine on
+# the SAME request shape. A single retry recovers it. This is why a partial pool
+# (some pages missing) is reported rather than silently accepted — an unrecovered
+# page looks exactly like "nobody at this depth had a game", which is false.
+_PAGE_RETRIES = 2
+
+
+def _paginated_pool(sort, limit_each, season, _get_fn):
+    """All pages of ONE sort, retrying transient AND limit-tied per-page failures.
+
+    Two DIFFERENT ESPN quirks, confirmed empirically, both handled here:
+      1. A whole sort can return nothing at one limit but work at a smaller one
+        (limit=200 -> 0 players; limit=60 -> 60). Known since 2026-07-29.
+      2. A single PAGE within an otherwise-working sort can fail at one limit
+        and succeed at another, independent of #1. Measured 2026-07-30 on
+        receiving.receivingYards: page 2 came back completely EMPTY at
+        limit=60 on three separate attempts with a delay between them (so not
+        simple transient flakiness), yet limit=40/30/25/20/15 at that SAME
+        page all returned data immediately. This is not an off-by-one at a
+        fixed offset either — limit=40's page 2 covers a range that also
+        crosses the limit=60 boundary and works fine. So the fix isn't "wait
+        and retry the same request", it's "retry at a different limit."
+
+    Strategy: try each limit in the ladder as a WHOLE walk (all its pages). The
+    first limit whose walk completes fully wins. If none completes fully, keep
+    whichever attempt collected the most players and use that — a partial pool
+    beats an empty one, and this is still reported as `ok=True` (real data came
+    back) rather than the harder failure of page 1 never resolving at all."""
+    best_lines, best_count = [], -1
+    any_page1_ok = False
+    for limit in (limit_each,) + _LIMIT_LADDER:
+        try:
+            page1 = _raw_page(limit, season, sort, 1, _get_fn)
+        except Exception:  # noqa: BLE001
+            page1 = None
+        if not (isinstance(page1, dict) and page1.get("athletes")):
+            continue                      # try the next (smaller) limit
+        any_page1_ok = True
+        lines = parse_byathlete(page1)
+        total_pages = (page1.get("pagination") or {}).get("pages", 1)
+        complete = True
+        for page in range(2, total_pages + 1):
+            got = None
+            for _attempt in range(_PAGE_RETRIES):
+                try:
+                    payload = _raw_page(limit, season, sort, page, _get_fn)
+                except Exception:  # noqa: BLE001
+                    payload = None
+                if isinstance(payload, dict) and payload.get("athletes"):
+                    got = payload
+                    break
+            if got is None:
+                complete = False
+                print(f"[nfl] pool sort {sort!r} page {page}/{total_pages} at "
+                      f"limit={limit} never returned athletes after retry",
+                      flush=True)
+                continue
+            lines.extend(parse_byathlete(got))
+        if complete:
+            return lines, True            # best case: every page came back
+        if len(lines) > best_count:
+            best_lines, best_count = lines, len(lines)
+    if any_page1_ok:
+        return best_lines, True           # partial, but it's real data
+    return [], False
 
 
 def pool_by_position(limit_each=60, season=None, _get_fn=None):
     """A pool that actually spans QB/RB/WR/TE/K, by querying each position group's
-    sort and merging on name (first line wins).
+    sort — PAGINATED, not just the first page — and merging on name (first line
+    wins).
 
-    Each sort that comes back empty is retried at smaller limits. Returns
+    Each sort that comes back completely empty is reported. Returns
     (pool, failed_sorts) so the caller can SEE an incomplete pool instead of
     inferring it from suspiciously low values — a missing position group is
     indistinguishable from "these players are bad" once the numbers are merged."""
     merged, failed = {}, []
     for sort in _POOL_SORTS:
-        lines = []
-        for limit in (limit_each,) + _LIMIT_LADDER:
-            lines = player_pool(limit, season, sort, _get_fn)
-            if lines:
-                break
-        if not lines:
+        lines, ok = _paginated_pool(sort, limit_each, season, _get_fn)
+        if not ok:
             failed.append(sort)
             print(f"[nfl] pool sort {sort!r} returned nothing at every limit",
                   flush=True)
