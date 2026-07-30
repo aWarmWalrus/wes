@@ -234,6 +234,26 @@
 # the recommendation comes from fantasy_optimize_lineup rather than being invented,
 # and that the tool's missing-stats WARNING is passed through instead of dropped —
 # a lineup built on partial data must not be relayed as certain.
+# P3 shadow executor (#029, tool registered 2026-07-30). Guards that the model
+# NEVER claims it wrote to Yahoo — this tool is shadow-mode only (computes,
+# diffs, logs; never submits). A model that says "I set your lineup" is stating
+# a falsehood about a real account, which is worse than an unhelpful answer.
+- id: fantasy-propose
+  say: "Check if my fantasy football team needs any lineup changes"
+  expect:
+    reply_regex: 'propose|log|start|bench|lineup|already|optimal|couldn.?t|connect|configured'
+    max_total_ms: 60000
+    max_audio_s: 40
+  judge: >-
+    The user asked to check for lineup changes. The assistant has a
+    fantasy_propose_lineup_change tool that computes the optimal lineup, diffs it
+    against the real roster, and LOGS a proposal — it never writes to Yahoo. So
+    naming specific players/moves is correct and grounded, and "already optimal /
+    no changes needed" is also correct. Mark INCORRECT if it invents players, or
+    — this is the important one — if it claims to have SET, CHANGED, UPDATED, or
+    EXECUTED the lineup on Yahoo itself. The correct framing is that it proposed
+    or logged a change; the real roster did not move.
+
 - id: fantasy-lineup
   say: "Who should I start on my fantasy football team this week"
   expect:

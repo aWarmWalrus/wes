@@ -78,6 +78,70 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 
 ## Notes
 
+### 2026-07-30 — P3 SHADOW EXECUTOR shipped + real edit-roster recon
+Owner: "continue the epic." Latency explicitly doesn't matter (this runs while
+the owner is inactive), so the next real step was P3 — the gated executor design
+§5 requires before any team writes. Built the **shadow-mode-only** version, which
+the design itself mandates as the prerequisite phase ("shadow mode first...
+writes turn on only after it's trusted"), not a corner cut.
+
+**Shipped, `pc/wes_execute.py`:**
+- `diff_lineup()` — the optimizer's recommendation vs. the REAL current roster,
+  reduced to only the moves that would actually change something (bench-alias
+  slots collapse — recommending BN for someone already on IR isn't a move).
+- `check_guardrails()` — autonomy mode, `actions_allowed`, and the freshness
+  guardrail from `teams.yaml` (§4-§5). Caught a real bug in its own test: the
+  freshness check used `if fresh_min and fetched_at:`, so a fetch at `t=0.0`
+  (falsy!) silently skipped the check — the exact None-vs-zero class of bug that
+  already bit this project once (`value: None` vs `0.0`, 2026-07-29). Fixed to
+  `fetched_at is not None` before it shipped.
+- The action ledger — append-only JSONL, PC-local (`~/wes-pc/fantasy_ledger.jsonl`,
+  never the repo), one line per proposed/blocked/would-execute action.
+- `propose_lineup_change()`, registered as tool **`fantasy_propose_lineup_change`**
+  — advise teams get told to use `fantasy_optimize_lineup` instead; propose/auto
+  teams get a logged, dry-run report.
+- `wes_fantasy.fantasy_optimize_lineup` split into `compute_lineup()` (the raw
+  dict) + a thin formatter, so the executor can diff against the recommendation
+  without re-implementing the NBA/NFL sport dispatch.
+
+**Verified live against the real auto-mode team** (`nfl.l.957011.t.4`), not just
+unit-tested: a real diff (Breece Hall RB→BN, Jaylen Warren BN→RB), a real ledger
+line (`allowed:true, autonomy:auto, dry_run:true, executed:false`), and — through
+an actual turn — Jarvis said *"I've logged this as a proposed change for you, but
+it hasn't been automatically updated on Yahoo"*. New golden case `fantasy-propose`
+guards exactly that property (judge 2/2, explicitly credited for stating it
+couldn't act automatically). 554 tests pass (was 492).
+
+**Why live writes aren't in this module yet — real recon, not a guess.** Did
+read-only DOM recon against the real roster-edit page (`/f1/957011/4`, verified
+non-destructive by reloading after every interaction and confirming no slot
+changed server-side):
+- Each roster row is `<select name="{player_key}">`; option values are that
+  player's eligible slot codes. The edit form POSTs to
+  `/f1/<league>/<team>/editroster`.
+- The submit control is `<input type="hidden" name="jsubmit" value="Save
+  Changes" class="roster-save-btn">` — hidden until JS reveals it.
+- **Setting the `<select>`'s value directly via JS and dispatching a `change`
+  event does NOT reveal the save button.** Yahoo's real UI is a custom popover
+  opened by clicking the position label (`span.pos-label[role=button]`), and
+  *that* interaction is what the site listens for — not the underlying select.
+  So a faithful write needs to drive the popover, closer to how a human uses the
+  page, which is also easier to test step-by-step than a bypass would have been.
+
+Finishing the write path (click the popover, submit, verify the round-trip,
+confirm a bad submission is recoverable) is scoped as its own increment
+deliberately — it fires real writes against a real account and deserves its own
+tested pass rather than being rushed in alongside the executor scaffolding.
+`_submit_lineup` raises `NotImplementedError` rather than no-opping, so a future
+caller that forgets to gate on `WES_YAHOO_LIVE_WRITES` fails loudly instead of
+believing a write happened.
+
+**Kill switch:** even once a real write function exists, it needs
+`WES_YAHOO_LIVE_WRITES=1` explicitly set — mirrors `WES_YAHOO_LIVE` for the
+schema-drift canary. Absent/unset is off, matching how the module ships today:
+the `auto` + guardrail-approved + `LIVE_WRITES=1` + real-submit-fn combination is
+currently unreachable, and that's intended.
+
 ### 2026-07-29 — P2 TOOL REGISTERED + weekly availability. Jarvis answers it live.
 `fantasy_optimize_lineup` is registered and **working through a real turn** — the
 thing held back all offseason. Asked *"Who should I start on my fantasy football

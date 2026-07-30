@@ -45,6 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wes_hosts  # noqa: E402 — host registry (hosts.yaml); repo root on path
 import wes_nba  # noqa: E402 — NBA live data (ESPN free API); same dir on path
 import wes_yahoo  # noqa: E402 — Yahoo fantasy read (browser automation, #029)
+import wes_execute  # noqa: E402 — fantasy gated executor + ledger (#029 P3)
 import wes_fantasy  # noqa: E402 — fantasy valuation engine (#029 P1)
 
 from flask import Flask, Response, request, jsonify
@@ -662,6 +663,34 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "fantasy_propose_lineup_change",
+        "description": (
+            "Check the owner's fantasy team's CURRENT Yahoo roster against the "
+            "optimal lineup and log a proposed change — for propose/auto teams "
+            "only (advise-only teams: use fantasy_optimize_lineup instead, which "
+            "just answers the question). Use for 'check my lineup for changes', "
+            "'run the GM cycle', 'propose lineup moves', 'has anything changed "
+            "since I last set my lineup'. IMPORTANT: this is currently SHADOW-"
+            "MODE ONLY — it computes, diffs against the real roster, and logs the "
+            "proposal, but it CANNOT and DOES NOT write to Yahoo yet (live writes "
+            "aren't built). Never say it set, changed, or executed anything on "
+            "Yahoo — say it proposed/logged a change, and that nothing on the "
+            "real roster moved. If it reports 'already optimal' or 'no changes "
+            "needed', relay that plainly."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team": {
+                    "type": "string",
+                    "description": ("optional team name when several are "
+                                    "configured; omit for the default team"),
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -988,6 +1017,8 @@ def run_tool(name, tool_input):
                 tool_input.get("player", ""), tool_input.get("versus"))
         if name == "fantasy_optimize_lineup":
             return wes_fantasy.fantasy_optimize_lineup(tool_input.get("team"))
+        if name == "fantasy_propose_lineup_change":
+            return wes_execute.propose_lineup_change(tool_input.get("team"))
         return f"unknown tool: {name}"
     except Exception as e:  # noqa: BLE001
         return f"tool error: {e}"

@@ -485,11 +485,21 @@ def _nfl_value_map(league_key, _pool_fn=None, _scoring_fn=None):
     return {_norm_name(p["name"]): p["value"] for p in ranked}, failed
 
 
-def fantasy_optimize_lineup(team=None, _players_fn=None, _playing_fn=None,
-                            _value_fn=None, _slots_fn=None, _valmap_fn=None):
-    """P2 tool entry: recommend the optimal starting lineup for a configured team.
-    ADVISE / DRY-RUN only — it NEVER writes to Yahoo (that's P3's gated executor).
-    Degrades to a string on any problem, never raises into a turn.
+def compute_lineup(team=None, _players_fn=None, _playing_fn=None,
+                   _value_fn=None, _slots_fn=None, _valmap_fn=None):
+    """Shared computation behind the P2 tool AND the P3 executor (#029): resolve
+    the team, fetch the roster, run the sport-specific availability/valuation,
+    and call `optimize_lineup`. Returns a dict on success:
+
+      {"team_key", "name", "sport", "result", "warn"}
+
+    or a plain STRING on any degradation (no team configured, scrape failure,
+    offseason blank positions, nobody playing) — the caller relays that string
+    directly, never treats it as partial success.
+
+    Split out of `fantasy_optimize_lineup` (which now just formats this) so the
+    executor can DIFF the recommendation against the current roster without
+    re-implementing the NBA/NFL dispatch. Read-only: no write, no Yahoo mutation.
 
     Multi-sport. The two sports differ in three places and nowhere else:
       period      NBA = today (per-game locks)   NFL = this week (one Sunday lock)
@@ -548,4 +558,16 @@ def fantasy_optimize_lineup(team=None, _players_fn=None, _playing_fn=None,
     if not any(e["playing"] for e in enriched):
         return no_games
     result = optimize_lineup(enriched, slots, sport)
-    return format_lineup(result, team_name=name) + warn
+    return {"team_key": team_key, "name": name, "sport": sport,
+            "result": result, "warn": warn, "players": enriched}
+
+
+def fantasy_optimize_lineup(team=None, **kwargs):
+    """P2 tool entry: recommend the optimal starting lineup for a configured team.
+    ADVISE / DRY-RUN only — it NEVER writes to Yahoo (that's P3's gated executor,
+    `wes_execute.py`). Degrades to a string on any problem, never raises into a
+    turn. See `compute_lineup` for the sport-dispatch this formats."""
+    out = compute_lineup(team, **kwargs)
+    if isinstance(out, str):
+        return out
+    return format_lineup(out["result"], team_name=out["name"]) + out["warn"]

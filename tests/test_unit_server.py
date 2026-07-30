@@ -185,6 +185,26 @@ class TestRunTool:
         assert "advise" in desc or "advises" in desc
         assert "never" in desc and "yahoo" in desc
 
+    def test_fantasy_propose_lineup_change_is_registered(self):
+        assert "fantasy_propose_lineup_change" in [t["name"] for t in ws.TOOLS]
+
+    def test_fantasy_propose_lineup_change_dispatches(self, monkeypatch):
+        monkeypatch.setattr(ws.wes_execute, "propose_lineup_change",
+                            lambda team=None: f"proposed for {team!r}")
+        assert ws.run_tool("fantasy_propose_lineup_change", {}) \
+            == "proposed for None"
+        assert ws.run_tool("fantasy_propose_lineup_change", {"team": "Pop"}) \
+            == "proposed for 'Pop'"
+
+    def test_propose_lineup_tool_description_says_shadow_mode_only(self):
+        """This tool cannot write to Yahoo yet. If the description ever stops
+        saying so, the model may start claiming it changed a real roster when
+        nothing moved — a false statement about a real account."""
+        tool = next(t for t in ws.TOOLS
+                    if t["name"] == "fantasy_propose_lineup_change")
+        desc = tool["description"].lower()
+        assert "shadow" in desc and "cannot" in desc
+
     def test_nba_schedule_is_registered(self):
         assert "nba_schedule" in [t["name"] for t in ws.TOOLS]
 
