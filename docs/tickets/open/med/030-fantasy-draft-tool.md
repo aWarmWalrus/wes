@@ -5,7 +5,7 @@ status: open
 priority: med
 created: 2026-07-21
 closed:
-tags: [nba, fantasy, yahoo, draft, tools, agentic, actions]
+tags: [nfl, nba, fantasy, yahoo, draft, tools, agentic, actions, multi-sport]
 related: ["#029", docs/fantasy-gm-design.md]
 ---
 
@@ -92,6 +92,48 @@ static roster/scoring scrape #029 P0 already does.
       since the live room can't be unit-tested directly
 
 ## Notes
+
+### 2026-07-23 — NFL is now the FIRST target; dual-sport, sport-specific valuation
+Strategy shift (owner): **the owner is joining a real NFL fantasy league this
+season** (draft Aug/Sep — sooner than NBA's October), so **NFL is the first live
+target**, NBA second. Architecture decision (owner-confirmed):
+- **Draft-room automation is sport-AGNOSTIC** — Yahoo's draft client UI is shared
+  across sports, so the Playwright ingest (live board, on-the-clock, timer) +
+  pick-submit + the draft loop/clock handling are written once, parameterized by
+  sport. This is the high-value shared layer, and NFL being live NOW lets us
+  recon+build it months before NBA season.
+- **Valuation is sport-SPECIFIC behind a common interface.** NBA = roto-category
+  z-scores (built, `wes_fantasy.rank_by_zscore`). NFL fantasy is **points-based**
+  (PPR/half/standard), not categories, so NFL needs its own valuer (projected
+  fantasy points / VORP) + its own player pool (ESPN NFL feed) + position map
+  (QB/RB/WR/TE/K/DEF, bye weeks, sharp positional scarcity). Do NOT force-unify
+  valuation — share only the `value(player)->number` + `positions` interface and
+  the recommender (`best_available`). Matches #029 design's P7 "sport-agnostic
+  adapter seams" intent.
+
+**NFL live-draft recon (2026-07-23):** NFL mock/on-demand drafts ARE live now
+(unlike NBA). Entry path mapped from the football fantasy home:
+- **On-Demand:** `/f1/livedraft_selection` → a **"Draft Now"** button (needs the
+  React SPA hydrated before the click registers — wait, don't click immediately)
+  → navigates to `/f1/livedraft_waiting?dt=standard`, a **matchmaking/"waiting to
+  fill" room** (title "Public League Draft"). Standard on-demand waits to fill
+  (maybe for humans); didn't reach a started room in a ~24s autonomous window.
+- **Mock lobby:** `/f1/424494/mock_lobby` — scheduled mocks (POST
+  `/f1/424494/mock_join`) + an **instant mock** (a `select
+  name="instant_mock_position_424494"` of 1st–Nth pick + a `mock_join` form).
+  The instant route should fill with bots fast, but the position `select` is a
+  custom control my blind `select_option` couldn't operate.
+- **Blocker for the live-room DOM:** getting into a *started* room (board / clock
+  / pick button) needs the interactive config + fill step — textbook
+  **owner-driven recon**. Next: owner runs
+  `python pc\yahoo_draft_recon.py https://football.fantasysports.yahoo.com/f1/424494/mock_lobby`,
+  starts an instant mock, and captures the started-room screens (board, on-the-
+  clock, pick control). Then write the sport-agnostic live-board scraper +
+  pick-submit against that DOM.
+
+**NFL engine work (buildable now, in parallel, no Yahoo):** NFL points-based
+valuer + ESPN NFL player-pool fetch + NFL position map, behind the same
+`best_available` recommender the NBA engine uses.
 
 ### 2026-07-22 — live-room recon: session works, but NO offseason mock drafts
 Ran a recon session against Yahoo with the persisted Playwright profile. Findings:

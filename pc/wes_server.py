@@ -1,4 +1,4 @@
-"""WES Tier 2 service (runs on the PC, DESKTOP-R2PFF9T / 10.0.0.91).
+"""WES Tier 2 service (runs on the PC, DESKTOP-R2PFF9T / DESKTOP-R2PFF9T.local).
 
 Turn-based voice pipeline:
 

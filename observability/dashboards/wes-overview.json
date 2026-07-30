@@ -6,7 +6,7 @@
   "refresh": "10s",
   "time": { "from": "now-1h", "to": "now" },
   "panels": [
-    { "type": "row", "title": "PC (10.0.0.91) — inference host", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }, "id": 100 },
+    { "type": "row", "title": "PC (DESKTOP-R2PFF9T.local) — inference host", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }, "id": 100 },
     {
       "type": "timeseries", "title": "PC CPU utilization", "id": 1,
       "gridPos": { "x": 0, "y": 1, "w": 8, "h": 8 },
@@ -107,7 +107,7 @@
         "refId": "A",
         "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
         "type": "json", "source": "url", "format": "table", "parser": "backend",
-        "url": "http://10.0.0.91:8080/turns?n=15",
+        "url": "http://DESKTOP-R2PFF9T.local:8080/turns?n=15",
         "url_options": { "method": "GET", "data": "" },
         "root_selector": "turns",
         "columns": [

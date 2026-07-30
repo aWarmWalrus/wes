@@ -101,6 +101,103 @@ def _capture(page, tag=""):
           f"players={len(probe.get('players', []))}")
 
 
+import re
+
+_DEBUGGER_RE = re.compile(r"\bdebugger\b")
+DEBUG = os.environ.get("WES_DRAFT_DEBUG") == "1"
+
+# Runs in EVERY page/frame/popup BEFORE any site script (race-free), so it also
+# catches the DYNAMIC anti-debug variants a network rewrite can't — the ones
+# that build the debugger via the Function constructor or eval rather than a
+# literal `debugger;` in a static file (`Function("debugger")()`,
+# `(function(){}).constructor("debugger")()`, `eval("debugger")`).
+_ANTIDEBUG_INIT = r"""
+(() => {
+  const RE = /\bdebugger\b/g, strip = v => typeof v === 'string' ? v.replace(RE, ';') : v;
+  const OF = Function, P = new Proxy(OF, {
+    apply: (t, s, a) => Reflect.apply(t, s, a.map(strip)),
+    construct: (t, a, n) => Reflect.construct(t, a.map(strip), n),
+  });
+  try { window.Function = P; } catch (e) {}
+  try { Object.defineProperty(Function.prototype, 'constructor',
+        { value: P, writable: true, configurable: true }); } catch (e) {}
+  const E = window.eval;
+  try { window.eval = function (s) { return E.call(this, strip(s)); }; } catch (e) {}
+})();
+"""
+
+
+def _neutralize_debugger_traps(context):
+    """Defeat the anti-inspection `debugger;` traps in Yahoo's draft client that
+    freeze the page under automation (Playwright drives Chrome over the DevTools
+    protocol, so `debugger;` pauses; the draft-client popup stays blank). Three
+    layers, because a single one keeps missing this trap:
+      1) init script (above) — neuters DYNAMICALLY built debugger (the likely
+         culprit here: nothing literal in the static scripts to rewrite);
+      2) network rewrite — strips a literal `debugger` from static JS/HTML;
+      3) CDP auto-resume — if a pause still slips through, resume it immediately
+         so the page never stays frozen (and, with WES_DRAFT_DEBUG=1, log WHERE
+         it paused to draft_recon\\debug.log so we can pinpoint the source).
+    All best-effort; any failure falls through so the tool still runs."""
+    try:
+        context.add_init_script(_ANTIDEBUG_INIT)
+    except Exception:  # noqa: BLE001
+        pass
+
+    def _dlog(*a):
+        if not DEBUG:
+            return
+        try:
+            os.makedirs(RECON_DIR, exist_ok=True)
+            with open(os.path.join(RECON_DIR, "debug.log"), "a", encoding="utf-8") as f:
+                f.write(" ".join(str(x) for x in a) + "\n")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def handler(route):
+        try:
+            if route.request.resource_type not in ("script", "document"):
+                return route.continue_()
+            resp = route.fetch()
+            body = resp.text()
+            if "debugger" in body:
+                _dlog("[rewrote debugger in]", route.request.url[:120])
+                body = _DEBUGGER_RE.sub("void 0", body)
+            headers = {k: v for k, v in resp.headers.items()
+                       if k not in ("content-encoding", "content-length")}
+            return route.fulfill(status=resp.status, headers=headers, body=body)
+        except Exception as e:  # noqa: BLE001
+            _dlog("[fetch/route fail]", route.request.url[:100], repr(e)[:50])
+            try:
+                return route.continue_()
+            except Exception:  # noqa: BLE001
+                return
+
+    context.route("**/*", handler)
+
+    def _arm_cdp(pg):
+        _dlog("[page]", getattr(pg, "url", "?"))
+        try:
+            s = context.new_cdp_session(pg)
+            s.send("Debugger.enable")
+
+            def _paused(ev):
+                fr = (ev.get("callFrames") or [{}])[0]
+                _dlog("[PAUSE]", ev.get("reason"),
+                      f"{fr.get('url', '?')[:110]}:{fr.get('location', {}).get('lineNumber', '?')}")
+                try:
+                    s.send("Debugger.resume")
+                except Exception:  # noqa: BLE001
+                    pass
+            s.on("Debugger.paused", _paused)
+        except Exception:  # noqa: BLE001
+            pass
+
+    for pg in context.pages:
+        _arm_cdp(pg)
+    context.on("page", _arm_cdp)  # popups (the draft client) + new tabs
+
+
 def main():
     start = sys.argv[1] if len(sys.argv) > 1 else y.FANTASY_HOME
     if not y.configured():
@@ -109,6 +206,7 @@ def main():
     print(f"Opening the logged-in browser at {start}")
     print("Navigate to the draft page you want to capture, then come back here.")
     with y._Session(headless=False) as page:
+        _neutralize_debugger_traps(page.context)
         try:
             page.goto(start, wait_until="domcontentloaded")
         except Exception as e:  # noqa: BLE001

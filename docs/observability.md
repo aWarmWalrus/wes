@@ -38,8 +38,8 @@ two lightweight exporters so gaming headroom is unaffected.
   ever go down after an exporter update/rename, check for reborn block rules:
   `Get-NetFirewallApplicationFilter | ? Program -match exporter | Get-NetFirewallRule`.
 - Prometheus scrape jobs (`/etc/prometheus/prometheus.yml` on the Pi):
-  `node` (localhost:9100), `pc_windows` (10.0.0.91:9182), `pc_gpu`
-  (10.0.0.91:9835). Validate + apply:
+  `node` (localhost:9100), `pc_windows` (DESKTOP-R2PFF9T.local:9182), `pc_gpu`
+  (DESKTOP-R2PFF9T.local:9835). Validate + apply:
   `promtool check config /etc/prometheus/prometheus.yml && sudo systemctl reload prometheus`.
   Target health: <http://10.0.0.79:9090/targets>.
 
@@ -57,6 +57,17 @@ ssh walrus-pi "sudo cp ~/claude/wes/observability/dashboards/wes-overview.json \
 ```
 
 (Ad-hoc dashboards created in the UI are fine too — they just aren't versioned.)
+
+**mDNS gotcha (the `/turns` panel).** The PC is targeted by its mDNS name
+`DESKTOP-R2PFF9T.local` (its DHCP IP flaps — see `hosts.yaml`). glibc apps
+(`curl`, Prometheus) resolve `.local` via `nss-mdns`, but the **Grafana Infinity
+datasource is Go and Go's default resolver skips mDNS** — it queries upstream DNS
+(`75.75.75.75`) and fails with `no such host`, so the "Recent turns" panel goes
+blank on every IP change. Fix (applied on the Pi, not in the repo): a systemd
+drop-in `/etc/systemd/system/grafana-server.service.d/mdns.conf` sets
+`Environment=GODEBUG=netdns=cgo`, forcing Grafana to use the glibc (getaddrinfo)
+resolver, which honors `nss-mdns`. If `/turns` ever blanks again with a `no such
+host` in `journalctl -u grafana-server`, that drop-in went missing.
 
 Live vs cumulative: gauges (CPU%, VRAM, temp) graph directly; for counters use
 `rate(x[1m])` for live rates and `increase(x[$__range])` for cumulative totals
@@ -119,7 +130,7 @@ reply, which tools ran, escalated y/n, per channel. Pipeline:
   (`yesoreyeram-infinity-datasource`, installed with
   `sudo grafana cli --homepath /usr/share/grafana plugins install ...` +
   restart; provisioned in `/etc/grafana/provisioning/datasources/infinity.yaml`).
-  The table panel polls `http://10.0.0.91:8080/turns?n=15` — it shows the
+  The table panel polls `http://DESKTOP-R2PFF9T.local:8080/turns?n=15` — it shows the
   *current* tail regardless of the dashboard's time range.
 
 ## Alerting — Jarvis DMs the owner (built 2026-07-05)

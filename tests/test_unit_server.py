@@ -134,7 +134,7 @@ class TestRunTool:
 
     def test_lookup_hosts_returns_registry(self):
         out = ws.run_tool("lookup_hosts", {})
-        assert "10.0.0.91" in out and "10.0.0.79" in out  # from hosts.yaml
+        assert "DESKTOP-R2PFF9T.local" in out and "10.0.0.79" in out  # from hosts.yaml
 
     def test_lookup_hosts_is_registered(self):
         names = [t["name"] for t in ws.TOOLS]

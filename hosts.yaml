@@ -8,7 +8,11 @@
 # docs. CLAUDE.md's machines table and docs/observability.md point back to this.
 hosts:
   pc:
-    ip: 10.0.0.91          # 2026-07-22: new Wi-Fi adapter (was 10.0.0.168)
+    # mDNS name, NOT a fixed IP: the PC's Wi-Fi adapter gets a DHCP lease that
+    # flaps between addresses (seen .168 and .91). The Pi resolves this .local
+    # name to whatever the current IP is, so scrapes/URLs survive lease changes.
+    # (2026-07-24; was a hardcoded IP that broke on every renewal.)
+    ip: DESKTOP-R2PFF9T.local
     hostname: DESKTOP-R2PFF9T
     role: PC (RTX 5060 Ti 16GB) — Whisper STT, Gemma LLM/VLM via Ollama, piper TTS
     ports:

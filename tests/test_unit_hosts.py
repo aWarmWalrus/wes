@@ -14,7 +14,7 @@ class TestRegistryFile:
 
     def test_pc_and_pi_present_with_ips(self):
         wes_hosts.load(force=True)
-        assert wes_hosts.ip("pc") == "10.0.0.91"
+        assert wes_hosts.ip("pc") == "DESKTOP-R2PFF9T.local"
         assert wes_hosts.ip("pi") == "10.0.0.79"
 
     def test_required_service_ports_defined(self):
@@ -28,7 +28,7 @@ class TestRegistryFile:
 class TestUrl:
     def test_builds_url_with_path(self):
         assert wes_hosts.url("pi", "pi_state", "/scene") == "http://10.0.0.79:8090/scene"
-        assert wes_hosts.url("pc", "server") == "http://10.0.0.91:8080"
+        assert wes_hosts.url("pc", "server") == "http://DESKTOP-R2PFF9T.local:8080"
 
     def test_unknown_host_or_port_returns_default(self):
         assert wes_hosts.url("nope", "server", default="fb") == "fb"
@@ -58,7 +58,7 @@ class TestSummary:
     def test_summary_is_llm_readable(self):
         wes_hosts.load(force=True)
         s = wes_hosts.summary()
-        assert "10.0.0.91" in s and "10.0.0.79" in s
+        assert "DESKTOP-R2PFF9T.local" in s and "10.0.0.79" in s
         assert "walrus-pi" in s          # alias surfaced
         assert "server 8080" in s        # a port the user might ask about
         assert "pc" in s and "pi" in s
