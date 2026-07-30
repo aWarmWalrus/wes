@@ -234,6 +234,23 @@ class TestOptimizeLineup:
         r = fan.optimize_lineup([self._p("A", ["PG"], 5)], ["PG", "C"])
         assert r["empty_slots"] == ["C"]
 
+    def test_zero_value_player_still_starts_over_an_empty_slot(self):
+        """Regression: a strict value comparison benched a player worth exactly
+        0.0 and reported their slot empty. Caught on the first live NFL run — a
+        real DEF sat while the DEF slot showed as unfilled. Zero-value players
+        are ordinary (no projection data yet), so filling must win ties."""
+        r = fan.optimize_lineup([self._p("Zero", ["C"], 0.0)], ["C", "BN"])
+        assert [s["name"] for s in r["starters"]] == ["Zero"]
+        assert r["empty_slots"] == []
+        assert r["bench"] == []
+
+    def test_tie_break_never_costs_value(self):
+        # Only one slot: the 5 must start, not the 0, even though both fill it.
+        r = fan.optimize_lineup(
+            [self._p("Zero", ["C"], 0.0), self._p("Five", ["C"], 5.0)], ["C"])
+        assert [s["name"] for s in r["starters"]] == ["Five"]
+        assert r["total"] == 5.0
+
     @pytest.mark.parametrize("sport,pos_pool,slot_pool", [
         ("nba", ["PG", "SG", "SF", "PF", "C"],
          ["PG", "SG", "G", "SF", "PF", "F", "C", "UTIL"]),

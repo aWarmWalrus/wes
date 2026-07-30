@@ -78,6 +78,57 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 
 ## Notes
 
+### 2026-07-29 — `wes_yahoo` IS sport-parameterized; NFL read path VERIFIED LIVE
+The last structural blocker is done, and it landed smaller than expected because
+**the sport is already encoded in the Yahoo key** (`nfl.l.957011.t.4`). Deriving
+it there meant **no caller signature changed** — `roster`, `roster_players`,
+`league_scoring`, `league_categories` are all sport-correct with the same
+arguments they always took.
+
+- `_SITES` table (host + url path per sport), `_sport_of(key)`, `_home`,
+  `_league_url`, `_team_url`. Unknown/legacy numeric keys (`466.l.12345`)
+  degrade to NBA, so old config behaves exactly as before.
+- **`my_teams(sport=None)` now scans EVERY sport by default.** Scanning only NBA
+  is precisely how two real NFL leagues stayed invisible.
+- Ownership per league resolved via `_my_team_key()` from the "My Team" nav href.
+- `yahoo_draft_recon.py`'s default start URL moved from basketball to football
+  (#030 is NFL-first; it was silently opening the wrong sport).
+
+**VERIFIED LIVE against `nfl.l.957011.t.4`:** `my_teams()` finds both leagues with
+correct ownership; the roster scrape returns all 15 players with teams, positions,
+slots (`W/R/T`, `K`, `DEF` included) and game times; the optimizer fills all nine
+starting slots. Not a mock — real page, real roster.
+
+**Three bugs only live data could have shown**, all now fixed and tested (the
+DOM extractor previously had *no* test coverage at all):
+1. **`positions` was empty for every NFL player**, so nobody was eligible for any
+   slot and the optimizer benched the entire roster while reporting all nine
+   slots empty. Cause: `.ysf-player-detail` holds `"Bkn - PG,SG"` on basketball
+   but the **game time** (`"Sun 1:25 pm vs Was"`) on football, where team/position
+   lives in `span.Fz-xxs` (`"Phi - QB"`). Now tries candidate selectors and
+   accepts the first with the actual team/position *shape*, guarded by a
+   position-token regex so a game string with a dash can't be misparsed.
+2. **Every healthy NFL player looked injured.** `span.player-status` picks up
+   note chrome ("Video ForecastNo new player Notes") on football. Now filtered —
+   deliberately by rejecting known chrome rather than whitelisting statuses,
+   because an unknown status is harmless (it just isn't in `_OUT_STATUS`) while
+   dropping a real one would start an injured player.
+3. **A zero-value player was benched and its slot reported empty** — a real DEF
+   (Steelers) sat while `DEF` showed unfilled, because the DP's value comparison
+   was strict. Zero-value players are ordinary (no projection data yet). The DP
+   now maximizes `(value, starters_filled)` lexicographically: a pure tie-break
+   that can never cost value.
+
+Also captured `game` per player ("Sun 1:25 pm vs Was") — the raw material for the
+NFL bye-week `playing` check, stored but not yet interpreted (that belongs with
+the weekly-cadence work).
+
+**Still to do for NFL:** `league_scoring` returns "categories: unknown" for this
+H2H-points league, which is correct-but-useless — the NFL valuer needs the
+**points settings** (PPR value, per-stat weights) rather than a category list, so
+`_extract_scoring` needs a points-league branch feeding `wes_nfl.scoring_preset`.
+Then the NFL player pool, weekly cadence, and the P2 tool registration.
+
 ### 2026-07-29 — `nfl.l.957011` set to `auto`: the designated automation target
 **Owner decision:** *"set the H2H league to auto mode — I truly do not care about
 the outcome of that league. I want to try to get it to a spot where we have good

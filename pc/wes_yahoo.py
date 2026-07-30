@@ -52,8 +52,69 @@ HEADLESS = os.environ.get("WES_YAHOO_HEADLESS", "0") == "1"
 # bundled Chromium; "msedge" also works.
 BROWSER_CHANNEL = os.environ.get("WES_YAHOO_BROWSER_CHANNEL", "chrome")
 NAV_TIMEOUT_MS = int(os.environ.get("WES_YAHOO_NAV_TIMEOUT_MS", "20000"))
-FANTASY_HOME = "https://basketball.fantasysports.yahoo.com"
 LOGIN_URL = "https://login.yahoo.com"
+
+# --- per-sport sites (#029 P7) -----------------------------------------------
+# Yahoo puts each sport on its own host AND uses a DIFFERENT url path segment per
+# sport. That asymmetry is the trap: football is "/f1/", NOT "/nfl/", so anyone
+# extending this by analogy from NBA gets 404s. Verified live 2026-07-29 by
+# pc/yahoo_league_discover.py.
+#
+#   NBA: basketball.fantasysports.yahoo.com/nba/<league>/<team>
+#   NFL: football.fantasysports.yahoo.com/f1/<league>/<team>
+#
+# The dotted KEY prefix is Yahoo's game code either way ("nba.l.114020.t.1",
+# "nfl.l.957011.t.4"), which is what teams.yaml records — so every entry point
+# below can derive its sport from the key it was already given, and no caller
+# signature had to change.
+_SITES = {
+    "nba": {"home": "https://basketball.fantasysports.yahoo.com",
+            "path": "nba", "label": "Basketball"},
+    "nfl": {"home": "https://football.fantasysports.yahoo.com",
+            "path": "f1", "label": "Football"},
+}
+DEFAULT_SPORT = "nba"
+# Kept as a module-level name because callers and docs referred to it; it is now
+# just the default sport's home. Prefer _home(sport) / _team_url() in new code.
+FANTASY_HOME = _SITES[DEFAULT_SPORT]["home"]
+
+
+def _site(sport=None):
+    """The site table for `sport`. An unknown/absent sport degrades to NBA so a
+    typo in teams.yaml behaves like the pre-multi-sport code instead of raising."""
+    return _SITES.get(str(sport or DEFAULT_SPORT).lower(), _SITES[DEFAULT_SPORT])
+
+
+def sports():
+    """The sports this module can reach, for callers that enumerate (my_teams)."""
+    return list(_SITES)
+
+
+def _sport_of(key):
+    """Sport from a Yahoo dotted key ('nfl.l.957011.t.4' -> 'nfl').
+
+    Historic NBA keys used the numeric game id instead of a name ("466.l.12345"),
+    and teams.yaml still allows that, so an unrecognized prefix means NBA."""
+    head = str(key or "").split(".", 1)[0].lower()
+    return head if head in _SITES else DEFAULT_SPORT
+
+
+def _home(sport=None):
+    return _site(sport)["home"]
+
+
+def _league_url(key, suffix=""):
+    """Full URL for a league page, sport derived from the key."""
+    s = _site(_sport_of(key))
+    tail = f"/{suffix.lstrip('/')}" if suffix else ""
+    return f"{s['home']}/{s['path']}/{_league_of(key)}{tail}"
+
+
+def _team_url(key, suffix=""):
+    """Full URL for a team page, sport derived from the key."""
+    s = _site(_sport_of(key))
+    tail = f"/{suffix.lstrip('/')}" if suffix else ""
+    return f"{s['home']}/{s['path']}/{_league_of(key)}/{_team_of(key)}{tail}"
 
 _UNAVAILABLE = "I couldn't reach Yahoo Fantasy just now."
 _NOT_CONFIGURED = (
@@ -226,16 +287,62 @@ def _scrape(url, extract):
 # the /players/<id> href), and injury status in `span.player-status`. Team abbr +
 # eligible positions live in `.ysf-player-detail`, which is EMPTY in the offseason
 # (no games) — parsed best-effort, populated in-season (canary verifies).
+# The "<team> - <positions>" cell lives under a DIFFERENT selector per sport, and
+# the NBA one is actively misleading on NFL (verified live 2026-07-29 on
+# nfl.l.957011): `.ysf-player-detail` holds "Bkn - PG,SG" on basketball but the
+# GAME time ("Sun 1:25 pm vs Was") on football, where the team/position pair sits
+# in `span.Fz-xxs` ("Phi - QB"). So try the candidates in order and accept the
+# first whose text actually has the team/position SHAPE, rather than trusting any
+# one selector. Silent failure here is expensive: with no positions, no player is
+# eligible for any slot and the optimizer benches the entire roster.
+_DETAIL_SELECTORS = (".ysf-player-detail", "span.Fz-xxs", ".Fz-xxs")
+# A position token is short and alphanumeric ("PG", "W/R/T", "DEF"); this rejects
+# a game string that happens to contain " - ".
+_POS_RE = re.compile(r"^[A-Za-z0-9/+]{1,6}$")
+
+
 def _detail_team_positions(row):
-    """Best-effort NBA team + eligible positions from the player detail cell.
-    In-season the detail reads like 'Bkn - PG,SG'; offseason it's blank."""
+    """Best-effort (team_abbr, [positions]) for a roster row, either sport.
+    Returns ("", []) when the page doesn't expose it (NBA offseason blanks it)."""
+    for sel in _DETAIL_SELECTORS:
+        el = row.query_selector(sel)
+        text = " ".join((el.inner_text() or "").split()) if el else ""
+        if " - " not in text:
+            continue
+        team, _, pos = text.partition(" - ")
+        positions = [p.strip() for p in re.split(r"[,/]", pos) if p.strip()]
+        # "/" is a separator inside NBA multi-position ("PG/SG") but also part of
+        # NFL slot names; splitting on it is right for POSITIONS, which are
+        # always atomic ("WR", not "W/R/T").
+        if positions and all(_POS_RE.match(p) for p in positions):
+            return team.strip(), positions
+    return "", []
+
+
+def _detail_game(row):
+    """The row's game blurb ('Sun 1:25 pm vs Was'), or "" — the raw material for
+    an NFL "is this player on a bye?" check. Captured, not interpreted: turning
+    it into `playing` belongs with the weekly-cadence work (#029)."""
     el = row.query_selector(".ysf-player-detail")
-    text = (el.inner_text().strip() if el else "")
-    if " - " not in text:
-        return "", []
-    team, _, pos = text.partition(" - ")
-    positions = [p.strip() for p in re.split(r"[,/]", pos) if p.strip()]
-    return team.strip(), positions
+    text = " ".join((el.inner_text() or "").split()) if el else ""
+    return "" if " - " in text else text
+
+
+# Yahoo's status span carries the injury abbreviation ("O", "Q", "IR") — but on
+# football it also picks up player-note chrome ("Video ForecastNo new player
+# Notes"), which would render as a fake injury flag on every healthy player.
+# Drop text that is obviously that chrome; keep anything else VERBATIM rather
+# than whitelisting, because an unrecognized status is safe (it just isn't in
+# _OUT_STATUS, so the player stays startable) while dropping a real one is not.
+_STATUS_JUNK = ("note", "forecast", "video")
+
+
+def _clean_status(text):
+    t = " ".join((text or "").split())
+    low = t.lower()
+    if not t or len(t) > 16 or any(j in low for j in _STATUS_JUNK):
+        return ""
+    return t
 
 
 def _extract_roster(page):
@@ -253,7 +360,7 @@ def _extract_roster(page):
         slot = ((slot_el.get_attribute("data-pos") or slot_el.inner_text())
                 if slot_el else "").strip()
         status_el = row.query_selector("span.player-status")
-        status = (status_el.inner_text().strip() if status_el else "")
+        status = _clean_status(status_el.inner_text() if status_el else "")
         team, positions = _detail_team_positions(row)
         out.append({
             "name": name,
@@ -261,6 +368,7 @@ def _extract_roster(page):
             "positions": positions,
             "slot": slot,
             "status": status,
+            "game": _detail_game(row),
             "player_key": m.group(1) if m else "",
         })
     return out
@@ -282,18 +390,60 @@ def _extract_scoring(page):
     return {"scoring_type": stype, "categories": cats}
 
 
-def _extract_my_teams(page):
-    """DOM -> list[(team_name, team_key)]. Team links on the dashboard look like
-    /nba/<league>/<team>; build a dotted key so roster()/the config agree."""
-    names = {}  # key -> best (non-empty) name seen; a team has several links,
-    #             some with empty text (nav/logo) — keep whichever names it.
-    for a in page.query_selector_all("a[href*='/nba/']"):
+def _my_team_key(page, sport):
+    """The signed-in owner's team key for the league page currently loaded, read
+    from Yahoo's own "My Team" nav link.
+
+    WHY NOT THE DASHBOARD LINKS: the league page links the current week's
+    OPPONENT as well as your own team, so link-scraping alone reports two teams
+    for one league (observed 2026-07-29: nfl.l.957011 showed both t.4 and the
+    opponent t.8). Text markers are no better — "My Team" / "Edit Team" appear in
+    the nav on *every* team's page. Only the nav link's href identifies you.
+    Getting this wrong means managing a stranger's roster, so it is worth the
+    extra navigation."""
+    s = _site(sport)
+    for a in page.query_selector_all("a"):
+        label = " ".join((a.inner_text() or "").split()).lower()
+        if label != "my team":
+            continue
+        href = (a.get_attribute("href") or "").split("?")[0]
+        parts = [p for p in href.split("fantasysports.yahoo.com")[-1].split("/") if p]
+        if len(parts) >= 3 and parts[0] == s["path"] \
+                and parts[1].isdigit() and parts[2].isdigit():
+            return f"{sport}.l.{parts[1]}.t.{parts[2]}"
+    return ""
+
+
+def _extract_league_ids(page, sport):
+    """DOM -> the league ids linked from a dashboard, for one sport."""
+    s = _site(sport)
+    found = []
+    for a in page.query_selector_all(f"a[href*='/{s['path']}/']"):
         tail = (a.get_attribute("href") or "").split(
             "fantasysports.yahoo.com")[-1].split("?")[0]
         parts = [p for p in tail.split("/") if p]
-        if len(parts) >= 3 and parts[0] == "nba" and parts[1].isdigit() \
+        if len(parts) >= 2 and parts[0] == s["path"] and parts[1].isdigit() \
+                and parts[1] not in found:
+            found.append(parts[1])
+    return found
+
+
+def _extract_my_teams(page, sport=DEFAULT_SPORT):
+    """DOM -> list[(team_name, team_key)] for ONE sport's dashboard. Names come
+    from the link text where present; callers enrich blanks from the page title.
+
+    NOTE this may include a team that is NOT yours (see _my_team_key) — it is the
+    candidate set, not the answer. my_teams() resolves ownership per league."""
+    s = _site(sport)
+    names = {}  # key -> best (non-empty) name seen; a team has several links,
+    #             some with empty text (nav/logo) — keep whichever names it.
+    for a in page.query_selector_all(f"a[href*='/{s['path']}/']"):
+        tail = (a.get_attribute("href") or "").split(
+            "fantasysports.yahoo.com")[-1].split("?")[0]
+        parts = [p for p in tail.split("/") if p]
+        if len(parts) >= 3 and parts[0] == s["path"] and parts[1].isdigit() \
                 and parts[2].isdigit():
-            key = f"nba.l.{parts[1]}.t.{parts[2]}"
+            key = f"{sport}.l.{parts[1]}.t.{parts[2]}"
             name = (a.get_attribute("title") or a.inner_text() or "").strip()
             if name or key not in names:
                 names.setdefault(key, "")
@@ -333,44 +483,67 @@ def format_scoring(scoring):
 
 
 # --- entry points (degrade to a string, never raise) ------------------------
-def my_teams():
-    """The owner's fantasy teams for the current NBA season."""
+def my_teams(sport=None):
+    """The owner's fantasy teams. `sport` limits to one ('nba'/'nfl'); None scans
+    every sport in _SITES — the default, because scanning only NBA is exactly how
+    two real NFL leagues stayed invisible until 2026-07-29.
+
+    Ownership is resolved per league from the "My Team" nav link rather than from
+    dashboard link text, so an opponent's team is never reported as yours."""
     if not _have_playwright():
         return _NO_PLAYWRIGHT
     if not has_session():
         return _NOT_CONFIGURED
+    wanted = [sport.lower()] if sport else sports()
+    found = []          # (sport, name, key)
     try:
         with _Session() as page:
-            page.goto(FANTASY_HOME, wait_until="domcontentloaded")
-            teams = _extract_my_teams(page)  # [(name, key)]
-            # Dashboard links don't carry the team name; read it from each team
-            # page title: "<league> - <team> | Fantasy Basketball | ...".
-            enriched = []
-            for name, key in teams:
-                if name == key:
+            for sp in wanted:
+                if sp not in _SITES:
+                    continue
+                try:
+                    page.goto(_home(sp), wait_until="domcontentloaded")
+                except Exception as e:  # noqa: BLE001
+                    print(f"[yahoo] {sp} dashboard failed: {e!r}", flush=True)
+                    continue
+                candidates = dict((k, n) for n, k in _extract_my_teams(page, sp))
+                # Every league the dashboard mentions, including ones whose link
+                # carries no team id (pre-draft leagues do this).
+                for league in _extract_league_ids(page, sp):
+                    league_key = f"{sp}.l.{league}"
                     try:
-                        page.goto(
-                            f"{FANTASY_HOME}/nba/{_league_of(key)}/{_team_of(key)}",
-                            wait_until="domcontentloaded")
-                        title = page.title().split(" | ")[0]
-                        if " - " in title:
-                            name = title.split(" - ")[-1].strip()
+                        page.goto(_league_url(league_key),
+                                  wait_until="domcontentloaded")
                     except Exception:  # noqa: BLE001
-                        pass  # keep the key as the label
-                enriched.append((name, key))
+                        continue
+                    key = _my_team_key(page, sp)
+                    if not key:
+                        continue
+                    name = candidates.get(key, "")
+                    if not name:
+                        # Title reads "<league> - <team> | Fantasy Football | ...".
+                        try:
+                            page.goto(_team_url(key), wait_until="domcontentloaded")
+                            title = page.title().split(" | ")[0]
+                            if " - " in title:
+                                name = title.split(" - ")[-1].strip()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    found.append((sp, name or key, key))
     except Exception as e:  # noqa: BLE001
         print(f"[yahoo] my_teams failed: {e!r}", flush=True)
         return _UNAVAILABLE
-    if not enriched:
-        return "You don't seem to have any NBA fantasy teams this season."
-    return "Your NBA fantasy teams:\n  " + "\n  ".join(
-        f"{n} ({k})" if n != k else k for n, k in enriched)
+    if not found:
+        scanned = "/".join(_site(s)["label"] for s in wanted)
+        return f"You don't seem to have any {scanned} fantasy teams right now."
+    lines = [f"{_site(sp)['label']}: {n} ({k})" if n != k
+             else f"{_site(sp)['label']}: {k}" for sp, n, k in found]
+    return "Your fantasy teams:\n  " + "\n  ".join(lines)
 
 
 def roster(team_key):
-    """A team's current roster as a compact table."""
-    result = _scrape(f"{FANTASY_HOME}/nba/{_league_of(team_key)}/{_team_of(team_key)}",
-                     _extract_roster)
+    """A team's current roster as a compact table. Sport comes from the key."""
+    result = _scrape(_team_url(team_key), _extract_roster)
     if not isinstance(result, list):
         return result
     return format_roster(result)
@@ -380,15 +553,12 @@ def roster_players(team_key):
     """A team's roster as RAW normalized player dicts (list), or a degradation
     string on failure — for the optimizer/valuation engine, which needs the
     structured players, not the formatted string `roster()` returns."""
-    return _scrape(
-        f"{FANTASY_HOME}/nba/{_league_of(team_key)}/{_team_of(team_key)}",
-        _extract_roster)
+    return _scrape(_team_url(team_key), _extract_roster)
 
 
 def league_scoring(league_key):
     """The league's scoring format — what 'value' means in THIS league."""
-    result = _scrape(f"{FANTASY_HOME}/nba/{_league_of(league_key)}/settings",
-                     _extract_scoring)
+    result = _scrape(_league_url(league_key, "settings"), _extract_scoring)
     if not isinstance(result, dict):
         return result
     return format_scoring(result)
@@ -398,8 +568,7 @@ def league_categories(league_key):
     """The league's raw scoring-category list (e.g. ['PTS','REB',...]) for the
     valuation engine, or [] on any failure. Unlike league_scoring (a formatted
     string for the model), this returns the structured list."""
-    result = _scrape(f"{FANTASY_HOME}/nba/{_league_of(league_key)}/settings",
-                     _extract_scoring)
+    result = _scrape(_league_url(league_key, "settings"), _extract_scoring)
     if not isinstance(result, dict):
         return []
     return result.get("categories") or []

@@ -199,7 +199,10 @@ def _neutralize_debugger_traps(context):
 
 
 def main():
-    start = sys.argv[1] if len(sys.argv) > 1 else y.FANTASY_HOME
+    # Default to FOOTBALL, not y.FANTASY_HOME (basketball): #030 is NFL-first,
+    # NFL mock drafts are the ones live today, and the owner's pre-draft league
+    # (nfl.l.424494) is a football league. Pass a URL to override.
+    start = sys.argv[1] if len(sys.argv) > 1 else y._home("nfl")
     if not y.configured():
         print("Yahoo isn't connected — run pc\\yahoo_connect.py first.")
         return 1

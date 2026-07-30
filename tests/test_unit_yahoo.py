@@ -267,6 +267,217 @@ class TestFantasyMyTeam:
         assert wy.fantasy_my_team() == wy._NOT_CONFIGURED
 
 
+class TestMultiSportUrls:
+    """#029 P7: sport comes from the dotted key, so no caller signature changed.
+
+    The asymmetry these pin: NFL is football.../f1/, NOT football.../nfl/. That
+    is the single most likely thing for someone to 'fix' by analogy and break.
+    """
+
+    def test_sport_derived_from_key_prefix(self):
+        assert wy._sport_of("nfl.l.957011.t.4") == "nfl"
+        assert wy._sport_of("nba.l.114020.t.1") == "nba"
+
+    def test_legacy_numeric_and_junk_keys_default_to_nba(self):
+        # Historic NBA keys were "466.l.12345.t.3"; teams.yaml still allows them.
+        assert wy._sport_of("466.l.12345.t.3") == "nba"
+        assert wy._sport_of("") == "nba"
+        assert wy._sport_of(None) == "nba"
+        assert wy._sport_of("quidditch.l.1.t.1") == "nba"
+
+    def test_nfl_team_url_uses_f1_not_nfl(self):
+        url = wy._team_url("nfl.l.957011.t.4")
+        assert url == ("https://football.fantasysports.yahoo.com"
+                       "/f1/957011/4")
+        assert "/nfl/" not in url
+
+    def test_nba_team_url_unchanged(self):
+        assert wy._team_url("nba.l.114020.t.1") == (
+            "https://basketball.fantasysports.yahoo.com/nba/114020/1")
+
+    def test_league_url_and_suffix(self):
+        assert wy._league_url("nfl.l.424494", "settings") == (
+            "https://football.fantasysports.yahoo.com/f1/424494/settings")
+        assert wy._league_url("nba.l.114020") == (
+            "https://basketball.fantasysports.yahoo.com/nba/114020")
+
+    def test_unknown_sport_degrades_to_nba_site(self):
+        assert wy._site("kabaddi")["path"] == "nba"
+        assert wy._site(None)["home"] == wy.FANTASY_HOME
+
+    def test_sports_enumerates_both(self):
+        assert set(wy.sports()) == {"nba", "nfl"}
+
+    def test_roster_navigates_to_the_football_host(self, monkeypatch):
+        """roster() with an NFL key must hit the football site — the whole point
+        of the parameterization, and invisible without checking the URL."""
+        monkeypatch.setattr(wy, "_have_playwright", lambda: True)
+        monkeypatch.setattr(wy, "has_session", lambda: True)
+        seen = []
+
+        class _FakePage:
+            def goto(self, url, *a, **k):
+                seen.append(url)
+
+            def query_selector_all(self, *a, **k):
+                return []
+
+        class _FakeSession:
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return _FakePage()
+
+            def __exit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(wy, "_Session", _FakeSession)
+        wy.roster("nfl.l.957011.t.4")
+        assert seen == ["https://football.fantasysports.yahoo.com/f1/957011/4"]
+
+
+class TestRosterCellParsing:
+    """The 'team - positions' cell and the injury status, both of which parsed
+    WRONG on football until 2026-07-29 and had no coverage at all. Failure here
+    is silent and total: with no positions, no player is eligible for any slot
+    and the optimizer benches the entire roster."""
+
+    class _El:
+        def __init__(self, text):
+            self._t = text
+
+        def inner_text(self):
+            return self._t
+
+    def _row(self, cells):
+        outer = self
+
+        class _Row:
+            def query_selector(self, sel):
+                return outer._El(cells[sel]) if sel in cells else None
+        return _Row()
+
+    def test_nba_shape_from_ysf_player_detail(self):
+        row = self._row({".ysf-player-detail": "Bkn - PG,SG"})
+        assert wy._detail_team_positions(row) == ("Bkn", ["PG", "SG"])
+
+    def test_nfl_shape_from_fz_xxs_when_detail_holds_the_game(self):
+        """The exact live football layout: the NBA selector holds the GAME time,
+        so the parser must fall through to the one that has 'Phi - QB'."""
+        row = self._row({".ysf-player-detail": "Sun 1:25 pm vs Was",
+                         "span.Fz-xxs": "Phi - QB"})
+        assert wy._detail_team_positions(row) == ("Phi", ["QB"])
+
+    def test_game_string_is_captured_separately(self):
+        row = self._row({".ysf-player-detail": "Sun 1:25 pm vs Was",
+                         "span.Fz-xxs": "Phi - QB"})
+        assert wy._detail_game(row) == "Sun 1:25 pm vs Was"
+
+    def test_game_is_empty_when_the_cell_holds_team_positions(self):
+        row = self._row({".ysf-player-detail": "Bkn - PG,SG"})
+        assert wy._detail_game(row) == ""
+
+    def test_a_game_string_containing_a_dash_is_not_read_as_positions(self):
+        # The guard against the fallback matching junk.
+        row = self._row({".ysf-player-detail": "Sun 1:25 pm - vs Washington"})
+        assert wy._detail_team_positions(row) == ("", [])
+
+    def test_missing_cells_degrade_to_blank(self):
+        assert wy._detail_team_positions(self._row({})) == ("", [])
+        assert wy._detail_game(self._row({})) == ""
+
+    def test_offseason_blank_detail(self):
+        row = self._row({".ysf-player-detail": ""})
+        assert wy._detail_team_positions(row) == ("", [])
+
+    @pytest.mark.parametrize("junk", [
+        "Video ForecastNo new player Notes",
+        "No new player Notes",
+        "Video ForecastNew Player Note",
+    ])
+    def test_player_note_chrome_is_not_an_injury_status(self, junk):
+        """Football puts note chrome in the status span; left alone it renders a
+        fake injury flag on every healthy player."""
+        assert wy._clean_status(junk) == ""
+
+    @pytest.mark.parametrize("status", ["O", "Q", "IR", "GTD", "SUSP", "D"])
+    def test_real_statuses_survive(self, status):
+        assert wy._clean_status(status) == status
+
+    def test_unknown_short_status_is_kept_verbatim(self):
+        """Deliberately NOT a whitelist: an unrecognized status is harmless (it
+        just isn't in _OUT_STATUS, so the player stays startable), whereas
+        dropping a real one would silently start an injured player."""
+        assert wy._clean_status("PPD") == "PPD"
+
+    def test_whitespace_collapsed(self):
+        assert wy._clean_status("  O  ") == "O"
+
+
+class TestMyTeamOwnership:
+    """The opponent trap: a league page links the current-week OPPONENT too, so
+    ownership must come from the 'My Team' nav href, never from link text.
+    Observed live 2026-07-29 on nfl.l.957011 (t.4 = owner, t.8 = opponent)."""
+
+    class _Anchor:
+        def __init__(self, text, href):
+            self._t, self._h = text, href
+
+        def inner_text(self):
+            return self._t
+
+        def get_attribute(self, name):
+            return {"href": self._h, "title": None}.get(name)
+
+    def _page(self, anchors):
+        outer = self
+
+        class _P:
+            def query_selector_all(self, sel):
+                return [outer._Anchor(t, h) for t, h in anchors]
+        return _P()
+
+    def test_picks_the_my_team_nav_link_not_the_opponent(self):
+        page = self._page([
+            ("Brickhouse jp", "/f1/957011/8"),      # the opponent, listed first
+            ("My Team", "/f1/957011/4"),            # the truth
+            ("Players", "/f1/957011/players"),
+        ])
+        assert wy._my_team_key(page, "nfl") == "nfl.l.957011.t.4"
+
+    def test_ignores_text_markers_on_other_teams_pages(self):
+        # "Edit Team" appears in nav on every team page — it must not count.
+        page = self._page([("Edit Team", "/f1/957011/8")])
+        assert wy._my_team_key(page, "nfl") == ""
+
+    def test_absolute_hrefs_work_too(self):
+        page = self._page([
+            ("My Team",
+             "https://football.fantasysports.yahoo.com/f1/424494/5?src=nav")])
+        assert wy._my_team_key(page, "nfl") == "nfl.l.424494.t.5"
+
+    def test_no_nav_link_returns_empty_not_a_guess(self):
+        assert wy._my_team_key(self._page([]), "nfl") == ""
+
+    def test_wrong_sport_path_is_rejected(self):
+        # An /nba/ href must not be read as an NFL team.
+        page = self._page([("My Team", "/nba/114020/1")])
+        assert wy._my_team_key(page, "nfl") == ""
+
+    def test_extract_league_ids_dedupes(self):
+        page = self._page([
+            ("a", "/f1/957011/4"), ("b", "/f1/957011/8"),
+            ("c", "/f1/424494/5"), ("d", "/f1/424494"),
+        ])
+        assert wy._extract_league_ids(page, "nfl") == ["957011", "424494"]
+
+    def test_extract_my_teams_builds_sport_prefixed_keys(self):
+        page = self._page([("Charles's Pop", "/f1/957011/4")])
+        assert wy._extract_my_teams(page, "nfl") == [
+            ("Charles's Pop", "nfl.l.957011.t.4")]
+
+
 class TestKeyHelpers:
     def test_league_and_team_extracted_from_yahoo_key(self):
         assert wy._league_of("466.l.12345.t.3") == "12345"

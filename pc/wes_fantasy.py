@@ -283,21 +283,30 @@ def optimize_lineup(players, slots, sport=None):
 
     @functools.lru_cache(maxsize=None)
     def best(i, caps):
-        """(max value, assignment tuple) for players i.. given remaining caps.
-        assignment[k] = slot-type index for player i+k, or None if benched."""
+        """(max value, starters used, assignment tuple) for players i.. given
+        remaining caps. assignment[k] = slot-type index for player i+k, or None
+        if benched.
+
+        Maximizes (value, starters_filled) LEXICOGRAPHICALLY. The second term is
+        a tie-break only — it can never cost value — and it exists because a
+        strict value comparison benches a player worth exactly 0.0 and reports
+        their slot empty, which is both useless and looks like a bug. Zero-value
+        players are ordinary in practice (pre-season, or any player the valuer
+        has no stats for), and a real DEF was benched this way on the first live
+        run. Filling a slot is never worse than leaving it open."""
         if i == len(startable):
-            return 0.0, ()
-        bv, ba = best(i + 1, caps)          # option A: bench player i
-        best_v, best_a = bv, (None,) + ba
+            return 0.0, 0, ()
+        bv, bc, ba = best(i + 1, caps)      # option A: bench player i
+        best_v, best_c, best_a = bv, bc, (None,) + ba
         for ti in range(len(order)):        # option B: start in an eligible open slot
             if caps[ti] > 0 and elig[i][ti]:
                 nxt = caps[:ti] + (caps[ti] - 1,) + caps[ti + 1:]
-                v, a = best(i + 1, nxt)
-                if val[i] + v > best_v:
-                    best_v, best_a = val[i] + v, (ti,) + a
-        return best_v, best_a
+                v, c, a = best(i + 1, nxt)
+                if (val[i] + v, c + 1) > (best_v, best_c):
+                    best_v, best_c, best_a = val[i] + v, c + 1, (ti,) + a
+        return best_v, best_c, best_a
 
-    total, assign = best(0, cap0)
+    total, _, assign = best(0, cap0)
     best.cache_clear()  # closure cache — drop it so nothing lingers between calls
 
     starters, used = [], list(cap0)
