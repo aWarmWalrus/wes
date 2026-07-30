@@ -78,6 +78,44 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 
 ## Notes
 
+### 2026-07-29 — `nfl.l.957011` set to `auto`: the designated automation target
+**Owner decision:** *"set the H2H league to auto mode — I truly do not care about
+the outcome of that league. I want to try to get it to a spot where we have good
+automation for daily management."* So `Charles's Pop` (`nfl.l.957011.t.4`) now
+runs `autonomy: auto` with `actions_allowed: [set_lineup, waiver_claim]` in
+`~/wes-pc/teams.yaml`.
+
+This **deliberately skips design §5's "shadow-soak before auto" gate**, and that
+is the right call here rather than a shortcut: the league's entire purpose is to
+*be* the soak. Real league, real roster, real locks, no stakes. The rule stands
+for every other team — the NBA league remains `propose`, `Teletubbies` remains
+`advise`.
+
+**It is currently INERT and that matters for planning.** Nothing in the codebase
+reads `autonomy` or `actions_allowed` yet — grep finds one *comment* in
+`wes_yahoo.py` and no logic. So this is a standing instruction for when P3
+lands, not a live capability. The consequence to remember: **when P3 ships, this
+team starts acting with no further gate.** Intended here; must not be copied to
+a league whose outcome matters.
+
+Two deliberate limits, neither about protecting this roster's outcome:
+- **`trade` excluded.** "I don't care about the outcome" covers this roster, but
+  trades are negotiations with other real people in a real league — a different
+  question from a bad lineup, and P6's reasoning bar doesn't exist. Waiver
+  claims are impersonal (FAAB / priority), so they're in scope.
+- **Caps kept non-zero but finite** (`max_faab_bid_pct: 25`,
+  `max_moves_per_week: 6`). These bound the blast radius of an executor *bug*, so
+  a runaway loop stays small and obvious instead of flooding the league with
+  moves and producing soak data too noisy to learn from.
+
+**Cadence correction worth carrying forward:** the owner asked for "daily
+management", but **NFL lineups are weekly** — one main lock (Sun ~1pm ET) plus
+TNF/MNF. The genuinely *daily* work in an NFL league is waiver-wire and injury
+monitoring, not lineup setting. True daily lineup optimization is the **NBA**
+league's shape (per-game locks, late October). So: build the weekly lineup loop +
+daily waiver/injury watch here first, and the daily-lineup cadence arrives with
+NBA — the two are complementary, not a rebuild.
+
 ### 2026-07-29 (later) — TWO real NFL leagues found; one is ALREADY DRAFTED
 The owner mentioned an NFL league they'd "accidentally joined" and asked whether
 it was documented anywhere. **It wasn't — anywhere.** `my_teams()` only scrapes
