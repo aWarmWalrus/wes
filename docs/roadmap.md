@@ -23,10 +23,16 @@ since 2026-07-05); Claude Haiku is error-fallback only. Details in
 
 ## Current focus
 
-The live queue is `docs/tickets/INDEX.md`. As of 2026-07-06 the top items are
-the three issues diagnosed from the turn log — Discord vision hallucination
-(#001), unexecuted escalation promises (#002), and voice tool-turn latency
-(#003) — followed by smart-home controls (#004) and scheduled actions (#005).
+The live queue is `docs/tickets/INDEX.md` — read it there, not here. As of
+2026-07-29 the high-priority items are boot/service reliability (#032, from the
+2026-07-28 silent 24h outage), the Fantasy GM epic (#029, P0-P2 engine shipped,
+in-season work pending) and the planner (#028, Option A shipped). The three
+turn-log issues that headed this list on 2026-07-06 — Discord vision
+hallucination (#001), unexecuted escalation promises (#002), voice tool-turn
+latency (#003) — all shipped and live in `done/2026-07/`.
+
+Session hygiene: `docs/startup-checklist.md` — verify services, pins, and
+metrics freshness before trusting the system's state.
 
 ## History (project context, not tasks)
 

@@ -22,10 +22,10 @@ Claude Haiku is the error-fallback/optional backend.
 
 ## Machines & layout
 
-| Tier | Host | LAN IP | Role |
+| Tier | Host | LAN address | Role |
 |------|------|--------|------|
 | 1 | `raspberrypi` (alias `walrus-pi`) | 10.0.0.79 | Pi 5 + Hailo-8 — wake word, audio, vision |
-| 2 | `DESKTOP-R2PFF9T` | 10.0.0.91 | PC (RTX 5060 Ti 16GB) — STT, LLM, TTS |
+| 2 | `DESKTOP-R2PFF9T` | DESKTOP-R2PFF9T.local | PC (RTX 5060 Ti 16GB) — STT, LLM, TTS |
 
 > **`hosts.yaml` (repo root) is the single source of truth** for IPs and service
 > ports — read at runtime via `wes_hosts.py` by the server, bot, and Pi client
@@ -113,6 +113,10 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   persistent-silence** stability fix, Google Cast/`catt`, `speak.py`, output modes.
 - `docs/vision.md` — on-device vision: Hailo `look` (YOLOv8s), Gemma `describe_scene`,
   face recognition + clothing-color disambiguation, wake-word vision prefetch.
+- `docs/startup-checklist.md` — **run at the top of a session / after any
+  reboot**: are the services actually running, is the model pinned, are the
+  nightly metrics fresh, did anything die at boot. Exists because a dead service
+  is silent here (see ticket #032).
 - `docs/setup.md` — PC venv + dependency pins + auto-start task; Pi client + mic setup.
 - `docs/hardware.md` — Pi/Hailo/camera specs (PERIPHERALS.md and PROJECT.md, both
   stale early-stage docs, were folded into this + the rest of `docs/` and removed).

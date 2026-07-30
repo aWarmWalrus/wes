@@ -5,9 +5,11 @@
 - venv: `C:\Users\awarm\wes-pc\.venv` (Windows; `Z:\` is the Pi's Linux share).
 - voice model: `C:\Users\awarm\wes-pc\voices\en_GB-alan-medium.onnx` (British male,
   22050 Hz — matches the Pi player). `en_US-amy-medium` also present but unused.
-- deps: `flask anthropic faster-whisper piper-tts pychromecast pytest discord.py
-  prometheus-client pyyaml`
-  **plus two pins**:
+- deps: **`pc/requirements.txt`** is the pinned list (direct deps only;
+  transitive float). Rebuild with
+  `...\.venv\Scripts\python.exe -m pip install -r Z:\wes\pc\requirements.txt`,
+  then `playwright install chromium`.
+  Two pins are **load-bearing** — don't bump without re-testing on this PC:
   - **`ctranslate2==4.4.0`** — 4.8.0 segfaults (`0xC0000005`) on model load on this PC.
   - **`onnxruntime==1.20.1`** — 1.27.0's DLL init fails (piper needs onnxruntime).
 - STT runs on **CPU int8** by default (`WES_WHISPER_MODEL=tiny.en` in the launcher).

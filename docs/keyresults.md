@@ -4,6 +4,14 @@ Reviewed and refreshed periodically (not every session) — a snapshot of what "
 looks like right now, not a full backlog. The live task queue is `docs/tickets/`
 (this file cross-references ticket ids).
 
+> **Stale as of 2026-07-29 — needs an owner decision.** This cycle's 4-6 week
+> horizon (started 2026-07-03) has elapsed with KR2-KR4 untouched: the actual
+> work went to NBA/fantasy domain features (#027, #029, #030), the planner
+> (#028) and adaptive escalation (#026), while the UX-polish KRs stayed at the
+> bottom of `open/low/`. Either re-commit to them or replace this section with
+> the cycle the project is really running. Left as-is rather than rewritten,
+> because picking the next cycle isn't a bookkeeping call.
+
 ## Current focus: UX polish (~4-6 week horizon, started 2026-07-03)
 
 - **KR1 — Repo hygiene**: git-tracked, clean working tree, no orphaned files at root.

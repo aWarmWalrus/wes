@@ -2,17 +2,18 @@
 
 The current WES work queue — **open tickets only** (closed ones live in
 `done/`, out of context). One line each; open the file for full context.
-Conventions + workflow: `README.md`. Next free id: **032** (open here;
+Conventions + workflow: `README.md`. Next free id: **033** (open here;
 001-003 + 014-024 shipped in `done/2026-07/`).
 
 ## High priority
 
+- [032](open/high/032-services-die-at-boot-z-drive-race.md) — **Boot reliability bug**: after the 2026-07-28 reboot all three logon tasks died instantly (`Z:\` not mapped yet → `can't open file 'Z:\\wes\\pc\\wes_server.py'`), taking voice + Discord down ~24h **silently** — launcher exit code masked it (`LastTaskResult 0`) and the metrics-missing alert couldn't be delivered because the Discord bot was down too. Fix: UNC/wait-for-path in the launchers, propagate exit codes, and a watchdog that doesn't share fate with the services. Manual mitigation: `docs/startup-checklist.md`
 - [029](open/high/029-fantasy-gm-autopilot.md) — **Fantasy GM epic**: Jarvis autonomously manages Yahoo NBA teams (read → value → optimize → gated execute), per-team autonomy. Official Yahoo API abandoned (approval + no-caching ToS) → **Playwright browser automation**. **P0+P1 shipped, P2 engine done (2026-07-21)** — `fantasy_my_team` + `fantasy_player_value` live; P2 optimizer (`optimize_lineup`, exact + property-tested, in `pc/wes_fantasy.py`) built but tool registration deferred to in-season (offseason = no games / blank positions). **Next: in-season, wire the P2 tool + shadow-soak; then P3 executor.** Roadmap in `docs/fantasy-gm-design.md`
 - [028](open/high/028-planner-multistep-reasoning.md) — Planner/orchestrator for ambiguous + multi-step queries; sibling to #026. **Option A shipped 2026-07-21** — `nba_schedule` + `nba_top_performers` tools close the two named example queries; full ReAct/plan-execute (B/C) still open, blocked on #026's routing decision. Not on #029's critical path (design §8.1)
 
 ## Medium priority
 
-- [030](open/med/030-fantasy-draft-tool.md) — Fantasy draft tool: **autonomous** end-to-end Yahoo draft agent for AI-agent-run leagues. **Decision engine DONE 2026-07-21** — real per-league z-scores (`rank_by_zscore` in `wes_fantasy`, the deferred population fetch, via ESPN byathlete) + `best_available` positional-need recommender in new `wes_draft.py`, live-verified. **Remaining: the live Yahoo draft-room automation** (read board, submit picks on the clock, deadline fallback) — needs a recon session vs a real draft-room DOM; + mock-draft test harness
+- [030](open/med/030-fantasy-draft-tool.md) — Fantasy draft tool: **autonomous** end-to-end Yahoo draft agent, now **multi-sport, NFL-first** (owner joining a real NFL league this season; NBA second). Sport-agnostic draft-room automation + common recommender; **valuation sport-specific** (NBA roto z-scores DONE in `wes_draft`/`wes_fantasy`; NFL points-based valuer TODO). **NFL mock drafts are LIVE now** — entry path mapped (`livedraft_selection`→Draft Now→waiting-room; `mock_lobby` instant-mock); live-room DOM capture is an owner-driven `yahoo_draft_recon.py` run away. Then write the shared live-board scraper + pick-submit
 - [004](open/med/004-smart-home-controls.md) — Smart home tools: Hue-direct first, Home Assistant later (feasibility confirmed)
 - [005](open/med/005-scheduled-actions.md) — Scheduled actions: timers, reminders, recurring routines
 - [012](open/med/012-durable-agentic-memory.md) — Unified durable memory: Phase 1 (MEMORY.md + remember/forget) shipped; remaining = nightly consolidation, temporal facts, per-person notes
