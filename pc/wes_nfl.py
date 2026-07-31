@@ -95,7 +95,14 @@ _ALIASES = {
 NOT_MODELLED = (
     "IDP (individual defensive players: DL/LB/DB slots) — Yahoo's default "
     "redraft leagues use a single team DEF slot, and the optimizer's NFL table "
-    "has no IDP slots either. Add both together if a league needs them.",
+    "has no IDP slots either. Add both together if a league needs them. (Team "
+    "DEF itself IS modelled as of 2026-07-30 — see parse_byteam/defence_pool.)",
+    "MATCHUP adjustment. Every value here is a season aggregate, so a defence "
+    "(or any player) is valued the same regardless of who they face this week. "
+    "The opponent is available — wes_yahoo captures it in each roster row's "
+    "`game` field ('Sun 1:25 pm vs Was') — but it is currently parsed only as a "
+    "binary is-this-player-on-a-bye check and the opponent name is discarded. "
+    "Real matchup adjustment needs projections, below.",
     "Bonus thresholds (e.g. +3 for a 300-yard passing game) and decimal-yardage "
     "leagues — both are extra scoring keys, not new logic.",
     "Projections. This scores a stat line that already exists. Valuing a player "
@@ -431,6 +438,127 @@ def per_game(line):
                              for k, v in (line.get("cats") or {}).items()}}
 
 
+# --- team DEFENCES (the Yahoo "DEF" slot) ------------------------------------
+# byathlete is per-ATHLETE, so a team defence has no row there — which is why
+# DEF sat at value 0 (and showed up in every "no stats found" warning) until
+# 2026-07-30. `byteam` is the team-level sibling: 32 teams, same category/labels
+# shape, so `_zip_categories` below reads it the same way.
+_BYTEAM = ("https://site.web.api.espn.com/apis/common/v3/sports/football/"
+           "nfl/statistics/byteam")
+
+# *** THE TRAP, and it is a nastier version of the byathlete one. ***
+# Every category appears TWICE per team, distinguished ONLY by `splitId`:
+#   splitId "0"   -> "Own <Category>"      what this team's offence did
+#   splitId "900" -> "Opponent <Category>" what was done AGAINST them
+# For a fantasy DEFENCE the stats you want are split across BOTH sides:
+#   sacks MADE       = Opponent passing.sacks     (the opposing QB got sacked)
+#   sacks TAKEN      = Own passing.sacks          (NOT a defensive stat)
+#   points ALLOWED   = Opponent passing.totalPoints
+#   INTs MADE        = Own defensiveinterceptions.interceptions
+# Note `defensiveinterceptions` inverts relative to the others — "Own defensive
+# interceptions" really is the picks this team's defence caught. Reading the
+# name alone would get sacks right and interceptions backwards, or vice versa.
+# Getting any of this wrong INVERTS a defence's value while looking completely
+# plausible, so the mapping below was verified against real 2025 output rather
+# than trusted: it ranks Seattle (292 allowed) and Houston (295) as the best
+# defences and Dallas (511) as the worst, and puts Denver top for sacks at 68 —
+# all consistent with reality. A backwards mapping would have surfaced Dallas
+# as elite.
+_OWN, _OPP = "0", "900"
+
+
+def _zip_categories(container, labels):
+    """{(category, splitId): {label: value}} for one team's category blocks."""
+    out = {}
+    for cat in container.get("categories", []):
+        names = labels.get(cat.get("name"), [])
+        out[(cat.get("name"), str(cat.get("splitId", _OWN)))] = dict(
+            zip(names, cat.get("values") or []))
+    return out
+
+
+def parse_byteam(payload):
+    """ESPN NFL `byteam` JSON -> one stat-line dict per team defence, in the
+    SAME shape as `parse_byathlete` (name/season/gp/team/positions/cats) so the
+    rest of the engine — ranking, the optimizer, the diff, the summary — treats
+    a defence exactly like any other player. Pure.
+
+    `positions` is ["DEF"] to match Yahoo's DEF slot eligibility. `name` is the
+    team NICKNAME ("Steelers"), because that is what Yahoo puts in the roster
+    row and therefore what the name-matching in `wes_fantasy._nfl_value_map`
+    has to line up with — the full "Pittsburgh Steelers" would never match."""
+    if not isinstance(payload, dict):
+        return []
+    season = str((payload.get("requestedSeason") or {}).get("displayName", ""))
+    labels = {c.get("name"): (c.get("names") or [])
+              for c in payload.get("categories", [])}
+    out = []
+    for t in payload.get("teams", []):
+        team = t.get("team") or {}
+        # `name` is the nickname ("Steelers"); displayName is the full name.
+        nickname = team.get("name") or team.get("displayName") or ""
+        if not nickname:
+            continue
+        blocks = _zip_categories(t, labels)
+        own_pass = blocks.get(("passing", _OWN), {})
+        opp_pass = blocks.get(("passing", _OPP), {})
+        own_int = blocks.get(("defensiveinterceptions", _OWN), {})
+        own_gen = blocks.get(("general", _OWN), {})
+        opp_ret = blocks.get(("returning", _OPP), {})
+
+        cats = {}
+        for key, val in (
+            ("Sack", opp_pass.get("sacks")),              # sacks WE made
+            ("DefInt", own_int.get("interceptions")),      # picks WE caught
+            ("PtsAllowed", opp_pass.get("totalPoints")),   # points WE allowed
+            # Fumbles the opponent lost are fumbles we recovered.
+            ("FumRec", own_gen.get("fumblesRecovered")),
+            # Return TDs scored against the opposing coverage. ESPN reports
+            # kick/punt return TDs separately; a DEF/ST unit scores both.
+            ("DefRetTD", _sum_opt(opp_ret.get("kickReturnTouchdowns"),
+                                  opp_ret.get("puntReturnTouchdowns"))),
+        ):
+            if _num(val):
+                cats[key] = round(float(val), 3)
+        out.append({
+            "name": nickname,
+            "season": season,
+            "gp": own_gen.get("gamesPlayed"),
+            "team": nickname,
+            "positions": ["DEF"],
+            "cats": cats,
+        })
+    return out
+
+
+def _sum_opt(*vals):
+    """Sum the numeric values, or None if none of them are numeric — so a
+    missing ESPN field stays UNKNOWN rather than silently becoming a real 0."""
+    nums = [float(v) for v in vals if _num(v)]
+    return sum(nums) if nums else None
+
+
+def defence_pool(season=None, _get_fn=None):
+    """All 32 team defences as stat lines. Live/network — degrades to `[]` on
+    any failure, like `player_pool`, so a bad ESPN response never breaks a turn.
+
+    NOTE `PtsAllowed` here is a SEASON TOTAL. `fantasy_points` runs it through
+    the per-GAME tier ladder, so this line must be converted with `per_game()`
+    before scoring or the ladder sees ~400 points allowed and returns the
+    worst-possible tier for every defence. `_nfl_value_map` already applies
+    `per_game` to the whole pool, which is why that works out — but anything
+    calling this directly has to do the same."""
+    import urllib.parse
+    get = _get_fn or _get_json
+    params = {"region": "us", "lang": "en", "contentorigin": "espn", "limit": 40}
+    if season:
+        params["season"] = int(season)
+    try:
+        return parse_byteam(get(_BYTEAM + "?" + urllib.parse.urlencode(params)))
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _get_json(url):
     """ESPN JSON via the shared raw layer (#034).
 
@@ -563,15 +691,19 @@ def _paginated_pool(sort, limit_each, season, _get_fn):
     return [], False
 
 
-def pool_by_position(limit_each=60, season=None, _get_fn=None):
-    """A pool that actually spans QB/RB/WR/TE/K, by querying each position group's
-    sort — PAGINATED, not just the first page — and merging on name (first line
-    wins).
+def pool_by_position(limit_each=60, season=None, _get_fn=None,
+                     _defence_fn=None):
+    """A pool spanning QB/RB/WR/TE/K **and team DEF**, by querying each position
+    group's sort — PAGINATED, not just the first page — plus the separate
+    team-defence endpoint, merging on name (first line wins).
 
-    Each sort that comes back completely empty is reported. Returns
+    Each source that comes back completely empty is reported. Returns
     (pool, failed_sorts) so the caller can SEE an incomplete pool instead of
     inferring it from suspiciously low values — a missing position group is
-    indistinguishable from "these players are bad" once the numbers are merged."""
+    indistinguishable from "these players are bad" once the numbers are merged.
+    Defences come from a DIFFERENT endpoint (`byteam`, not `byathlete`), so a
+    defence failure is reported under its own name rather than pretending one
+    of the athlete sorts broke."""
     merged, failed = {}, []
     for sort in _POOL_SORTS:
         lines, ok = _paginated_pool(sort, limit_each, season, _get_fn)
@@ -582,4 +714,11 @@ def pool_by_position(limit_each=60, season=None, _get_fn=None):
             continue
         for line in lines:
             merged.setdefault(line["name"], line)
+
+    defences = (_defence_fn or defence_pool)(season, _get_fn)
+    if not defences:
+        failed.append("team_defences")
+        print("[nfl] team defence pool returned nothing", flush=True)
+    for line in defences:
+        merged.setdefault(line["name"], line)
     return list(merged.values()), failed

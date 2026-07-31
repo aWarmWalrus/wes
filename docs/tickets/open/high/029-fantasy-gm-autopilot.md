@@ -189,6 +189,65 @@ The next time its recommended lineup differs from Yahoo's, calling
 roster**. Reachable today only via that tool being invoked in conversation —
 #005 (scheduling) doesn't exist yet, so nothing runs this unattended.
 
+### 2026-07-30 — Team DEF valuation: the last data gap closed
+Owner asked for team defence valuation, and — good instinct — asked **which
+layer it would affect before building**. Answered from `docs/data-architecture.md`
+and the actual code, not memory: **three of five layers, and only one of them
+substantially.**
+
+| Layer | Change | Why |
+|---|---|---|
+| 1 raw | **none** | `wes_http.get_json` already covers it — same host, same caching. The #034 payoff. |
+| 2 fantasy data | **new** | `parse_byteam` — normalize 32 teams into the existing stat-line contract. |
+| 3 regression | **small** | `fantasy_points` already scored `Sack`/`DefInt`/`PtsAllowed`; the tier ladder was built. Just needed DEFs in the pool. |
+| 4 decision | **none** | `optimize_lineup`'s NFL table already had a `DEF` slot with correct eligibility. |
+| 5 model | **none** | `summarize_moves`, the tool, the DM path all read `value` generically. |
+
+That one new parser + wiring was the whole job, which is a fair sign the
+boundaries from #034 are holding.
+
+**The trap, and it's a nastier variant of the byathlete one.** Each category
+appears TWICE per team, distinguished only by `splitId` (`"0"` = Own, `"900"` =
+Opponent), and a fantasy defence needs stats from **both** sides:
+- sacks **made** = `Opponent passing.sacks` (the opposing QB got sacked)
+- sacks **taken** = `Own passing.sacks` — not a defensive stat at all
+- points **allowed** = `Opponent passing.totalPoints`
+- INTs **made** = `Own defensiveinterceptions.interceptions` — this one
+  **inverts** relative to the others
+
+So no single rule works; the mapping is explicit per field. Verified against
+real 2025 output rather than trusted: it ranks Seattle (292 allowed) and
+Houston (295) best and Dallas (511) worst, Denver top for sacks at 68 — all
+consistent with reality. A backwards mapping would have surfaced Dallas as
+elite while looking entirely plausible.
+
+**A second, subtler ordering trap**, now pinned by a test: `PtsAllowed` is a
+SEASON TOTAL but the tier ladder is per-GAME. Fed raw, 292 points allowed hits
+the worst tier (−4) and an elite defence scores like a terrible one; per-game
+(17.2) hits the correct +1 tier. `_nfl_value_map` already applies `per_game`
+to the whole pool so the live path was correct by construction, but nothing
+*stated* that dependency — `defence_pool`'s docstring and a test now do.
+
+**Live result:** pool 278 → **310** (all 32 defences), correctly ranked
+(Texans 7.89, Seahawks 7.06 top; Jets 1.00 bottom), and **the Steelers went
+from 0 to 6.0** on the real roster. The "no stats found" warning dropped from
+4 players to **2** — only genuine rookies with no 2025 stats remain, which is
+honest rather than fixable.
+
+623 tests pass (was 607). Four pre-existing pool tests legitimately started
+reporting `team_defences` as failed (their fake fetchers only serve athlete
+payloads) — updated to stub the separate defence source rather than weakened.
+
+**Asked and answered: does anything project for specific matchups? No.**
+Grepped the regression layer: zero projection or matchup logic. Values are
+season aggregates throughout; the only "Projected" string is a *label* on a
+backward-looking sum (arguably misleading wording, noted). The opponent IS
+already flowing in — `wes_yahoo` captures `"Sun 1:25 pm vs Was"` per roster
+row — but it's used solely as a binary bye check and the opponent name is
+discarded. So matchup adjustment is a genuinely unbuilt feature with its data
+source already half-present, now recorded in `NOT_MODELLED` instead of being
+implied by omission.
+
 ### 2026-07-30 (very last) — Discord DM on a real write: the gap CLOSED
 Owner: *"oh yeah it should message that to me via discord."*
 

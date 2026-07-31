@@ -535,14 +535,176 @@ class TestPagination:
             if "page=3" in url:
                 return page3
             return page1
-        pool, failed = nfl.pool_by_position(_get_fn=fetch)
+        pool, failed = nfl.pool_by_position(_get_fn=fetch,
+                                            _defence_fn=lambda s, g: [])
         tes = [p for p in pool if p["positions"] == ["TE"]]
         assert len(tes) == 150
         # The other three sorts legitimately returned nothing here (by design
         # of this test), and that must be visible, not swallowed.
         assert set(failed) == {"passing.passingYards:desc",
                                "rushing.rushingYards:desc",
-                               "kicking.fieldGoalsMade:desc"}
+                               "kicking.fieldGoalsMade:desc",
+                               "team_defences"}   # stubbed empty above
+
+
+def _byteam_payload(teams):
+    """Minimal byteam-shaped payload. `teams` is a list of dicts:
+    {name, own: {(cat): {label: val}}, opp: {(cat): {label: val}}}."""
+    # Label lists must line up positionally with the values, like ESPN's.
+    labels = {"passing": ["sacks", "totalPoints"],
+             "defensiveinterceptions": ["interceptions"],
+             "general": ["gamesPlayed", "fumblesRecovered"],
+             "returning": ["kickReturnTouchdowns", "puntReturnTouchdowns"]}
+    out_teams = []
+    for t in teams:
+        cats = []
+        for split, blocks in (("0", t.get("own", {})), ("900", t.get("opp", {}))):
+            for cat, pairs in blocks.items():
+                cats.append({"name": cat, "splitId": split,
+                            "values": [pairs.get(l) for l in labels[cat]]})
+        out_teams.append({"team": {"name": t["name"]}, "categories": cats})
+    return {"requestedSeason": {"displayName": "2025"},
+           "categories": [{"name": k, "names": v} for k, v in labels.items()],
+           "teams": out_teams}
+
+
+class TestParseByteam:
+    """Team defences (#029). The Own/Opponent split is the whole difficulty:
+    reading the wrong side inverts a defence's value while looking plausible."""
+
+    PAYLOAD = _byteam_payload([{
+        "name": "Seahawks",
+        "own": {"passing": {"sacks": 30.0, "totalPoints": 400.0},
+               "defensiveinterceptions": {"interceptions": 18.0},
+               "general": {"gamesPlayed": 17.0, "fumblesRecovered": 9.0}},
+        "opp": {"passing": {"sacks": 47.0, "totalPoints": 292.0},
+               "returning": {"kickReturnTouchdowns": 1.0,
+                             "puntReturnTouchdowns": 2.0}},
+    }])
+
+    def test_sacks_come_from_the_OPPONENT_split(self):
+        """Opponent passing.sacks = the opposing QB got sacked = OUR defence
+        made them. Own passing.sacks is our own QB being sacked, which is not
+        a defensive stat at all."""
+        line = nfl.parse_byteam(self.PAYLOAD)[0]
+        assert line["cats"]["Sack"] == 47.0      # not 30.0
+
+    def test_points_allowed_come_from_the_OPPONENT_split(self):
+        line = nfl.parse_byteam(self.PAYLOAD)[0]
+        assert line["cats"]["PtsAllowed"] == 292.0   # not our own 400 scored
+
+    def test_interceptions_come_from_the_OWN_split(self):
+        """defensiveinterceptions INVERTS relative to the others — "Own
+        defensive interceptions" really is the picks our defence caught. This
+        asymmetry is why the mapping is explicit per-field, not a rule."""
+        line = nfl.parse_byteam(self.PAYLOAD)[0]
+        assert line["cats"]["DefInt"] == 18.0
+
+    def test_return_touchdowns_sum_kick_and_punt(self):
+        line = nfl.parse_byteam(self.PAYLOAD)[0]
+        assert line["cats"]["DefRetTD"] == 3.0
+
+    def test_shape_matches_a_player_stat_line(self):
+        """A defence must be indistinguishable from any other player to the
+        optimizer, the diff and the summary — same keys, DEF position."""
+        line = nfl.parse_byteam(self.PAYLOAD)[0]
+        assert line["positions"] == ["DEF"]
+        assert line["name"] == "Seahawks"      # nickname, matching Yahoo's row
+        assert line["gp"] == 17.0
+        assert set(line) >= {"name", "season", "gp", "team", "positions", "cats"}
+
+    def test_position_is_eligible_for_the_yahoo_def_slot(self):
+        line = nfl.parse_byteam(self.PAYLOAD)[0]
+        assert line["positions"][0] in fan._SPORTS["nfl"]["eligibility"]
+
+    def test_junk_payload_degrades_to_empty(self):
+        assert nfl.parse_byteam(None) == []
+        assert nfl.parse_byteam({}) == []
+        assert nfl.parse_byteam({"teams": [{}]}) == []   # no name -> skipped
+
+    def test_missing_fields_are_omitted_not_zeroed(self):
+        """An absent ESPN field must stay UNKNOWN rather than becoming a real
+        0 — the None-vs-zero rule this codebase already learned twice."""
+        payload = _byteam_payload([{"name": "X", "own": {}, "opp": {}}])
+        line = nfl.parse_byteam(payload)[0]
+        assert line["cats"] == {}
+
+    def test_sum_opt_returns_none_when_nothing_is_numeric(self):
+        assert nfl._sum_opt(None, None) is None
+        assert nfl._sum_opt(None, 2.0) == 2.0
+
+
+class TestDefenceScoring:
+    def test_a_defence_scores_through_the_normal_valuer(self):
+        line = nfl.parse_byteam(TestParseByteam.PAYLOAD)[0]
+        assert nfl.fantasy_points(line["cats"]) != 0
+
+    def test_per_game_is_REQUIRED_before_the_points_allowed_ladder(self):
+        """The subtle one, and the reason defence_pool's docstring warns about
+        it: PtsAllowed is a SEASON TOTAL, but the tier ladder is per-GAME. Fed
+        raw, 292 points allowed lands in the worst tier (-4) and an elite
+        defence scores like a terrible one. Per-game (17.2) lands in the +1
+        tier, which is correct. _nfl_value_map applies per_game to the whole
+        pool, so the live path is right — this pins WHY."""
+        line = nfl.parse_byteam(TestParseByteam.PAYLOAD)[0]
+        raw = nfl.fantasy_points(line["cats"])
+        pg = nfl.fantasy_points(nfl.per_game(line)["cats"])
+        assert nfl.points_allowed_value(292.0) == -4.0    # worst tier
+        assert nfl.points_allowed_value(292.0 / 17) == 1.0  # correct tier
+        assert pg < raw   # the raw number is inflated by the wrong-tier sacks etc.
+
+    def test_a_stingy_defence_outranks_a_leaky_one(self):
+        stingy = _byteam_payload([{
+            "name": "Good", "own": {"defensiveinterceptions": {"interceptions": 18.0},
+                                    "general": {"gamesPlayed": 17.0}},
+            "opp": {"passing": {"sacks": 47.0, "totalPoints": 292.0}}}])
+        leaky = _byteam_payload([{
+            "name": "Bad", "own": {"defensiveinterceptions": {"interceptions": 5.0},
+                                   "general": {"gamesPlayed": 17.0}},
+            "opp": {"passing": {"sacks": 20.0, "totalPoints": 511.0}}}])
+        pool = [nfl.per_game(l) for l in
+               nfl.parse_byteam(stingy) + nfl.parse_byteam(leaky)]
+        ranked = nfl.rank_by_points(pool)
+        assert ranked[0]["name"] == "Good"
+
+
+class TestDefencePool:
+    def test_uses_the_byteam_endpoint(self):
+        seen = {}
+
+        def fake(url):
+            seen["url"] = url
+            return TestParseByteam.PAYLOAD
+        nfl.defence_pool(_get_fn=fake)
+        assert "byteam" in seen["url"]
+
+    def test_network_failure_degrades_to_empty(self):
+        def boom(url):
+            raise OSError("espn down")
+        assert nfl.defence_pool(_get_fn=boom) == []
+
+    def test_pool_by_position_includes_defences(self):
+        """The payoff: DEF used to be absent from the pool entirely, which is
+        why a real rostered defence valued at 0 and appeared in every "no stats
+        found" warning."""
+        def fake(url):
+            if "byteam" in url:
+                return TestParseByteam.PAYLOAD
+            return BYATHLETE_PAYLOAD
+        pool, failed = nfl.pool_by_position(_get_fn=fake)
+        assert failed == []
+        assert any(p["positions"] == ["DEF"] for p in pool)
+
+    def test_a_defence_failure_is_reported_under_its_own_name(self):
+        """Defences come from a different endpoint, so a defence outage must
+        not masquerade as one of the athlete sorts failing."""
+        def fake(url):
+            if "byteam" in url:
+                raise OSError("byteam down")
+            return BYATHLETE_PAYLOAD
+        pool, failed = nfl.pool_by_position(_get_fn=fake)
+        assert failed == ["team_defences"]
+        assert pool   # the athlete side still came back
 
 
 class TestPlayerPool:
@@ -571,11 +733,14 @@ class TestPlayerPool:
         def fake(url):
             calls.append(url)
             return BYATHLETE_PAYLOAD
-        pool, failed = nfl.pool_by_position(_get_fn=fake)
+        pool, failed = nfl.pool_by_position(
+            _get_fn=fake, _defence_fn=lambda s, g: [{"name": "D",
+                                                     "positions": ["DEF"]}])
         assert len(calls) == len(nfl._POOL_SORTS)     # one query per group
         assert failed == []
-        # Same payload four times must not produce duplicates.
-        assert len(pool) == len(BYATHLETE_PAYLOAD["athletes"])
+        # Same payload four times must not produce duplicates (+1 for the
+        # stubbed defence, which comes from a separate source).
+        assert len(pool) == len(BYATHLETE_PAYLOAD["athletes"]) + 1
         assert len({p["name"] for p in pool}) == len(pool)
 
     def test_empty_sort_is_retried_at_a_smaller_limit(self):
@@ -589,7 +754,9 @@ class TestPlayerPool:
             if "receiving" in url and "limit=200" in url:
                 return {"athletes": []}
             return BYATHLETE_PAYLOAD
-        pool, failed = nfl.pool_by_position(limit_each=200, _get_fn=picky)
+        pool, failed = nfl.pool_by_position(
+            limit_each=200, _get_fn=picky,
+            _defence_fn=lambda s, g: [{"name": "D", "positions": ["DEF"]}])
         assert failed == []                          # recovered, not given up on
         assert any("receiving" in c and "limit=60" in c for c in calls)
         assert pool
@@ -601,7 +768,9 @@ class TestPlayerPool:
             if "receiving" in url:
                 raise OSError("espn hates receivers")
             return BYATHLETE_PAYLOAD
-        pool, failed = nfl.pool_by_position(_get_fn=broken)
+        pool, failed = nfl.pool_by_position(
+            _get_fn=broken,
+            _defence_fn=lambda s, g: [{"name": "D", "positions": ["DEF"]}])
         assert failed == ["receiving.receivingYards:desc"]
         assert pool                                   # partial pool still ranks
 
