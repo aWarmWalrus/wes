@@ -243,7 +243,12 @@ tickets (#030+) as they start.
   independently by the scraper. Discord approve/reject for `propose` and
   after-action DM reports are **not built** — `propose` mode currently logs a
   shadow proposal only (no Discord round-trip yet), and a real `auto`-mode write
-  has no notification path (deliberately deferred, not an oversight).
+  has no notification path (deliberately deferred, not an oversight). **The
+  content of an after-action report exists now, though the DM does not**:
+  `wes_execute.summarize_moves()` (added 2026-07-30) explains every move in
+  plain language — value comparison, or availability when that's the real
+  driver — wired into both the tool's reply and the ledger, so the scheduled
+  log already reads like a report; it just isn't pushed anywhere yet.
 - **P4 — Scheduling + monitoring. PARTIALLY SHIPPED 2026-07-30.** Per-team
   pre-lock scheduled run: **"WES Fantasy GM"** (Windows Task Scheduler — the
   same plain-cron mechanism as Nightly Eval, not #005's general in-app

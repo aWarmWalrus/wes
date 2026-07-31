@@ -18,16 +18,29 @@ import wes_execute as ex  # noqa: E402
 
 
 class TestDiffLineup:
-    def _p(self, name, slot, key="k1"):
-        return {"name": name, "slot": slot, "player_key": key}
+    def _p(self, name, slot, key="k1", value=None, playing=None):
+        return {"name": name, "slot": slot, "player_key": key,
+               "value": value, "playing": playing}
 
     def test_a_starter_who_should_move_is_a_move(self):
-        players = [self._p("A", "BN", "1")]
+        players = [self._p("A", "BN", "1", value=19.3, playing=True)]
         result = {"starters": [{"slot": "QB", "name": "A", "value": 10}],
                   "bench": []}
         moves = ex.diff_lineup(players, result)
         assert moves == [{"player_key": "1", "name": "A",
-                          "from_slot": "BN", "to_slot": "QB"}]
+                          "from_slot": "BN", "to_slot": "QB",
+                          "value": 19.3, "playing": True}]
+
+    def test_diff_carries_value_and_playing_for_the_why_summary(self):
+        """diff_lineup must pass through value/playing unchanged — this is the
+        raw material summarize_moves() explains; if it goes missing, every
+        summary silently loses its reasoning."""
+        players = [self._p("A", "BN", "1", value=7.5, playing=False)]
+        result = {"starters": [{"slot": "QB", "name": "A", "value": 10}],
+                  "bench": []}
+        moves = ex.diff_lineup(players, result)
+        assert moves[0]["value"] == 7.5
+        assert moves[0]["playing"] is False
 
     def test_a_player_already_in_the_right_slot_is_not_a_move(self):
         players = [self._p("A", "QB", "1")]
@@ -36,11 +49,12 @@ class TestDiffLineup:
         assert ex.diff_lineup(players, result) == []
 
     def test_a_bench_recommendation_for_a_current_starter_is_a_move(self):
-        players = [self._p("A", "QB", "1")]
+        players = [self._p("A", "QB", "1", value=5.0, playing=True)]
         result = {"starters": [], "bench": ["A"]}
         moves = ex.diff_lineup(players, result)
         assert moves == [{"player_key": "1", "name": "A",
-                          "from_slot": "QB", "to_slot": "BN"}]
+                          "from_slot": "QB", "to_slot": "BN",
+                          "value": 5.0, "playing": True}]
 
     @pytest.mark.parametrize("alias", ["IR", "IL", "IL+", "BE", "NA"])
     def test_bench_aliases_collapse_so_ir_to_bn_is_not_a_spurious_move(self, alias):
@@ -288,6 +302,72 @@ class TestExecuteSwapTargeting:
         page = self._Page(None, [])
         with pytest.raises(RuntimeError):
             ex._execute_swap(page, "Ghost", None, "QB", {})
+
+
+class TestSummarizeMoves:
+    """The WHY explanation — pure, reads only value/playing already attached
+    to each move by diff_lineup. Grounded in the real numbers from 2026-07-30's
+    live verification (Breece Hall 11.85, Cam Skattebo 14.46) so the wording is
+    checked against a real scenario, not an invented one."""
+
+    def _m(self, name, from_slot, to_slot, value=None, playing=True, key="k"):
+        return {"player_key": key, "name": name, "from_slot": from_slot,
+               "to_slot": to_slot, "value": value, "playing": playing}
+
+    def test_a_value_based_swap_reads_as_started_over(self):
+        moves = [
+            self._m("Cam Skattebo", "BN", "RB", value=14.46, playing=True),
+            self._m("Breece Hall", "RB", "BN", value=11.85, playing=True),
+        ]
+        lines = ex.summarize_moves(moves)
+        assert lines == ["Started Cam Skattebo (14.46 pts) at RB over "
+                         "Breece Hall (11.85 pts)."]
+
+    def test_an_availability_based_swap_leads_with_the_bye_not_the_value(self):
+        """Even if the benched player's raw value looks fine, a bye/no-game is
+        the real reason and must be stated as such, not buried."""
+        moves = [
+            self._m("Jaylen Warren", "BN", "RB", value=12.3, playing=True),
+            self._m("Breece Hall", "RB", "BN", value=99.0, playing=False),
+        ]
+        lines = ex.summarize_moves(moves)
+        assert lines == ["Benched Breece Hall (99 pts) (no game this week) "
+                         "for Jaylen Warren (12.3 pts) at RB."]
+
+    def test_filling_a_previously_open_slot_has_no_partner(self):
+        moves = [self._m("A", "BN", "QB", value=19.3, playing=True)]
+        assert ex.summarize_moves(moves) == [
+            "Started A (19.3 pts) at QB (the slot was open)."]
+
+    def test_a_lone_bench_move_with_no_replacement(self):
+        moves = [self._m("A", "QB", "BN", value=5.0, playing=True)]
+        assert ex.summarize_moves(moves) == ["Benched A (5 pts)."]
+
+    def test_a_lone_bench_move_for_a_bye_player(self):
+        moves = [self._m("A", "QB", "BN", value=5.0, playing=False)]
+        assert ex.summarize_moves(moves) == [
+            "Benched A (5 pts) (no game this week)."]
+
+    def test_missing_value_degrades_to_the_name_alone(self):
+        """Unknown-value players (see #029's unknown_value note) must still
+        produce a readable line, not a crash or a literal 'None pts'."""
+        moves = [self._m("A", "BN", "QB", value=None, playing=True)]
+        assert ex.summarize_moves(moves) == ["Started A at QB (the slot was open)."]
+
+    def test_multiple_independent_swaps_each_get_their_own_line(self):
+        moves = [
+            self._m("A", "BN", "QB", value=20.0),
+            self._m("B", "QB", "BN", value=10.0),
+            self._m("C", "BN", "WR", value=15.0),
+            self._m("D", "WR", "BN", value=5.0),
+        ]
+        lines = ex.summarize_moves(moves)
+        assert len(lines) == 2
+        assert any("A" in l and "B" in l for l in lines)
+        assert any("C" in l and "D" in l for l in lines)
+
+    def test_empty_moves_produces_no_lines(self):
+        assert ex.summarize_moves([]) == []
 
 
 class TestGuardrails:

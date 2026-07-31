@@ -90,12 +90,14 @@ def _norm_slot(s):
 
 def diff_lineup(players, result):
     """The moves needed to turn the CURRENT Yahoo roster into the optimizer's
-    recommendation. `players` is `roster_players()` output (has name/slot/
-    player_key); `result` is `optimize_lineup()`'s dict.
+    recommendation. `players` is `compute_lineup`'s enriched player list (has
+    name/slot/player_key AND value/playing — the WHY, carried through so the
+    ledger and any summary never have to re-derive or guess it); `result` is
+    `optimize_lineup()`'s dict.
 
-    Returns [{"player_key","name","from_slot","to_slot"}], skipping anyone whose
-    current slot already matches (including bench-alias collapses — moving IR to
-    BN isn't a real move). Pure — no network, no clock."""
+    Returns [{"player_key","name","from_slot","to_slot","value","playing"}],
+    skipping anyone whose current slot already matches (including bench-alias
+    collapses — moving IR to BN isn't a real move). Pure — no network, no clock."""
     target = {s["name"]: s["slot"] for s in result.get("starters", [])}
     for name in result.get("bench", []):
         target[name] = "BN"
@@ -106,8 +108,63 @@ def diff_lineup(players, result):
         have = _norm_slot(p.get("slot"))
         if want and _norm_slot(want) != have:
             moves.append({"player_key": p.get("player_key", ""), "name": name,
-                         "from_slot": p.get("slot", ""), "to_slot": want})
+                         "from_slot": p.get("slot", ""), "to_slot": want,
+                         "value": p.get("value"), "playing": p.get("playing")})
     return moves
+
+
+def _fmt_player(m):
+    val = m.get("value")
+    return f"{m['name']} ({val:g} pts)" if val is not None else m["name"]
+
+
+def summarize_moves(moves):
+    """Human-readable WHY for a `diff_lineup` move list — the model-layer
+    explanation (docs/data-architecture.md layer 5) of what changed and why,
+    reading only value/playing already attached to each move; it invents
+    nothing new.
+
+    Pairs moves into swaps where the slot TYPES trade (A moves into B's old
+    slot type and vice versa) for a natural "X over Y" sentence; anything left
+    over (a fill into a previously-open slot, or a bench-only move with no
+    counterpart) gets its own line. This pairing is PRESENTATION ONLY — unlike
+    `_plan_swaps`' similar-looking pairing, a wrong guess here just reads a
+    little oddly, it never clicks a real row, so the row-identity ambiguity
+    that makes `_plan_swaps` target by browser DOM identity doesn't apply here.
+
+    Availability is stated as the reason whenever the player COMING OFF a
+    starting slot wasn't playing (bye/no game) — that's the real driver
+    regardless of the value numbers; otherwise the value comparison is the
+    reason, which is the honest default (this engine has no other signal)."""
+    remaining = list(moves)
+    lines = []
+    while remaining:
+        m = remaining.pop(0)
+        want, have = _norm_slot(m["to_slot"]), _norm_slot(m["from_slot"])
+        partner = None
+        for i, other in enumerate(remaining):
+            if _norm_slot(other["from_slot"]) == want \
+                    and _norm_slot(other["to_slot"]) == have:
+                partner = other
+                del remaining[i]
+                break
+        if partner:
+            m_starts = want != "BN"
+            starter, benched = (m, partner) if m_starts else (partner, m)
+            if benched.get("playing") is False:
+                lines.append(f"Benched {_fmt_player(benched)} (no game this "
+                             f"week) for {_fmt_player(starter)} at "
+                             f"{starter['to_slot']}.")
+            else:
+                lines.append(f"Started {_fmt_player(starter)} at "
+                             f"{starter['to_slot']} over {_fmt_player(benched)}.")
+        elif want == "BN":
+            reason = " (no game this week)" if m.get("playing") is False else ""
+            lines.append(f"Benched {_fmt_player(m)}{reason}.")
+        else:
+            lines.append(f"Started {_fmt_player(m)} at {m['to_slot']} "
+                         f"(the slot was open).")
+    return lines
 
 
 def check_guardrails(team, action_type, _now=None):
@@ -357,6 +414,9 @@ def propose_lineup_change(team=None, _compute_fn=None, _submit_fn=None,
     mode = str(chosen.get("autonomy") or "advise").lower()
     move_lines = "\n".join(f"  {m['name']}: {m['from_slot'] or '(none)'} -> "
                            f"{m['to_slot']}" for m in moves)
+    why = summarize_moves(moves)
+    why_lines = "\n".join(f"  {line}" for line in why)
+    entry["why"] = why   # kept in the ledger too, not just the reply
 
     if mode == "auto" and LIVE_WRITES:
         submit = _submit_fn or _submit_lineup
@@ -364,7 +424,8 @@ def propose_lineup_change(team=None, _compute_fn=None, _submit_fn=None,
             submit(out["team_key"], moves)
             entry["executed"], entry["dry_run"] = True, False
             _append_ledger(entry, _ledger_path)
-            return f"Set the lineup for {out['name']}:\n{move_lines}"
+            return (f"Set the lineup for {out['name']}:\n{move_lines}\n"
+                    f"Why:\n{why_lines}")
         except (ValueError, RuntimeError) as e:
             # ValueError from _plan_swaps means nothing touched the page yet —
             # safe. RuntimeError can come from mid-plan (a swap partway through
@@ -379,12 +440,13 @@ def propose_lineup_change(team=None, _compute_fn=None, _submit_fn=None,
             return (f"Tried to update the lineup for {out['name']} but hit an "
                     f"error partway through: {e}. The real roster on Yahoo may "
                     f"not match what you expect — please check it directly "
-                    f"before trusting it.\nIntended:\n{move_lines}")
+                    f"before trusting it.\nIntended:\n{move_lines}\n"
+                    f"Why:\n{why_lines}")
 
     _append_ledger(entry, _ledger_path)
     if mode == "auto":
         return (f"Would set the lineup for {out['name']} (auto mode, shadow "
-                f"run — live writes are off):\n{move_lines}")
+                f"run — live writes are off):\n{move_lines}\nWhy:\n{why_lines}")
     return (f"Proposed lineup change for {out['name']} (needs your approval — "
            f"Discord approve/reject isn't wired up yet, this is a shadow "
-           f"run):\n{move_lines}")
+           f"run):\n{move_lines}\nWhy:\n{why_lines}")

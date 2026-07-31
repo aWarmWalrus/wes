@@ -189,6 +189,40 @@ The next time its recommended lineup differs from Yahoo's, calling
 roster**. Reachable today only via that tool being invoked in conversation —
 #005 (scheduling) doesn't exist yet, so nothing runs this unattended.
 
+### 2026-07-30 (last) — WHY, not just what: summarize_moves()
+Owner: *"can the daily/weekly workflow also include a task to summarize the
+changes that were made and why?"*
+
+`diff_lineup` now carries `value`/`playing` through on every move (it already
+had this data available from `compute_lineup`'s enriched roster — just
+wasn't threading it through). `wes_execute.summarize_moves()` (pure, model-
+layer per `docs/data-architecture.md`) turns that into readable sentences:
+pairs moves that trade slot types into one "Started X (14.46 pts) at RB over Y
+(11.85 pts)" line, and — when the benched player wasn't playing — leads with
+that instead of the value comparison, since availability is the real driver
+regardless of what the numbers say. Test wording is grounded in the exact real
+Hall/Skattebo numbers from the 2026-07-30 live write, not invented figures.
+
+Wired into `propose_lineup_change`'s reply (a "Why:" section after the move
+list) AND into the ledger (`entry["why"]`) — so both the conversational answer
+to "why did you change my lineup" and the permanent audit trail carry the
+reasoning, and since `fantasy_gm_run.py` already forwards whatever
+`propose_lineup_change` returns verbatim into the scheduled log, **the
+daily/weekly log now contains the WHY with zero runner changes**. Tool
+description updated so the model knows to relay it rather than just repeat
+raw slot moves.
+
+**This directly narrows, but does not close, one of the gaps stated
+above:** the log now contains a genuine explanation, but nothing pushes it to
+the owner — an `[EXECUTED]` real write with a full "why" section still just
+sits in `logs/fantasy_gm_last.log` until someone reads it. DM-on-real-write is
+still the natural next increment.
+
+595 tests pass (was 586). Verified against real live-computed data (not just
+synthetic test dicts): diffed the actual current recommendation against a
+locally-perturbed copy of the real roster (read-only, no write risk) and
+confirmed `summarize_moves` produces a correct sentence from real values.
+
 ### 2026-07-30 (last) — P4 scheduling: "WES Fantasy GM" task, verified end-to-end
 Owner: *"let's schedule it and then update docs and wrap this up."* Built
 `pc/fantasy_gm_run.py` — iterates `wes_yahoo.configured_teams()`, runs
