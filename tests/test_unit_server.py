@@ -709,6 +709,21 @@ class TestWebSearch:
         assert "search_web" in names
         assert "escalate_hard" not in names
 
+    def test_use_tools_false_sends_no_tools_at_all(self, monkeypatch):
+        """Phrasing-only work (announce for a fantasy write report) must carry
+        NO schemas — a rewrite-this-sentence task that calls a tool has
+        misunderstood its job. Also the single largest per-call context saving
+        available (~2.5k tokens), but correctness is the reason."""
+        monkeypatch.setattr(ws, "WEB_SEARCH", True)
+        monkeypatch.setattr(ws, "ESCALATE", True)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        assert ws._local_toolset(use_tools=False) == []
+        # ...and the handoff tools must not sneak back in either.
+        assert ws._local_toolset(deep=True, use_tools=False) == []
+
+    def test_use_tools_defaults_true_so_existing_callers_are_unchanged(self):
+        assert ws._local_toolset() != []
+
     def test_router_hands_search_web_to_claude_with_web(self, monkeypatch):
         monkeypatch.setattr(ws, "WEB_SEARCH", True)
         monkeypatch.setattr(ws, "WEB_SEARCH_ACK", "")  # no ack prefix in the assert
@@ -1154,8 +1169,9 @@ class TestAnnounce:
     def test_announce_frames_event_and_records_both_sides(self, monkeypatch):
         seen = {}
 
-        def fake_think(text, channel="voice"):
+        def fake_think(text, channel="voice", use_tools=True):
             seen["text"], seen["channel"] = text, channel
+            seen["use_tools"] = use_tools
             return "Heads up — your GPU is running hot."
 
         monkeypatch.setattr(ws, "think", fake_think)
@@ -1164,6 +1180,9 @@ class TestAnnounce:
         # The framing marks it as unprompted so Jarvis doesn't reply as if asked.
         assert ws.ANNOUNCE_FRAMING in seen["text"]
         assert "GPUHot" in seen["text"] and seen["channel"] == "discord"
+        # An ALERT keeps its tools: "GPU is hot" may legitimately warrant
+        # checking the current temperature. Only self-contained events opt out.
+        assert seen["use_tools"] is True
         # Both sides land in memory: the trigger (compact marker, not the verbose
         # framing) and Jarvis's own words — so "what was that?" has context.
         conv = ws.conversation_context("discord")
@@ -1173,13 +1192,59 @@ class TestAnnounce:
         assert conv[-1]["content"] == "Heads up — your GPU is running hot."
 
     def test_announce_route(self, monkeypatch):
-        monkeypatch.setattr(ws, "think",
-                            lambda text, channel="voice": "Notified.")
+        monkeypatch.setattr(
+            ws, "think",
+            lambda text, channel="voice", use_tools=True: "Notified.")
         with ws.app.test_client() as c:
             r = c.post("/announce",
                        json={"event": "TargetDown on pc_gpu.", "channel": "discord"})
         assert r.status_code == 200 and r.get_json()["reply"] == "Notified."
         assert ws.conversation_context("discord")[-1]["content"] == "Notified."
+
+    def test_announce_can_opt_out_of_tools_for_self_contained_events(
+            self, monkeypatch):
+        """A fantasy write report (#029) describes something that already
+        happened and is fully described in the event text, so a tool call is
+        wrong by definition — ANNOUNCE_FRAMING already forbids inventing
+        detail beyond what's given."""
+        seen = {}
+
+        def fake_think(text, channel="voice", use_tools=True):
+            seen["use_tools"] = use_tools
+            return "Swapped Skattebo in for Hall."
+
+        monkeypatch.setattr(ws, "think", fake_think)
+        ws.announce("WES changed the lineup.", channel="discord",
+                    use_tools=False)
+        assert seen["use_tools"] is False
+
+    def test_announce_route_passes_use_tools_through(self, monkeypatch):
+        seen = {}
+
+        def fake_think(text, channel="voice", use_tools=True):
+            seen["use_tools"] = use_tools
+            return "Notified."
+
+        monkeypatch.setattr(ws, "think", fake_think)
+        with ws.app.test_client() as c:
+            r = c.post("/announce", json={"event": "wrote the lineup",
+                                          "use_tools": False})
+        assert r.status_code == 200
+        assert seen["use_tools"] is False
+
+    def test_announce_route_defaults_to_tools_on(self, monkeypatch):
+        """Existing callers (the alert watcher) send no flag and must be
+        completely unaffected."""
+        seen = {}
+
+        def fake_think(text, channel="voice", use_tools=True):
+            seen["use_tools"] = use_tools
+            return "Notified."
+
+        monkeypatch.setattr(ws, "think", fake_think)
+        with ws.app.test_client() as c:
+            c.post("/announce", json={"event": "TargetDown on pc_gpu."})
+        assert seen["use_tools"] is True
 
     def test_announce_empty_event_is_400(self):
         with ws.app.test_client() as c:

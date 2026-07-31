@@ -313,7 +313,12 @@ def explain_fantasy_event(entry):
     'why did you bench him' — has context). Blocking; run off the event loop."""
     return _post_json(
         "/announce",
-        {"event": describe_fantasy_event(entry), "channel": CONV_CHANNEL},
+        # use_tools=False: the event text already contains every fact needed
+        # (moves + the WHY summary), and ANNOUNCE_FRAMING forbids inventing
+        # anything beyond it — so a tool call here would be wrong by
+        # definition. Alerts keep their tools; see wes_server.announce.
+        {"event": describe_fantasy_event(entry), "channel": CONV_CHANNEL,
+         "use_tools": False},
     )["reply"]
 
 

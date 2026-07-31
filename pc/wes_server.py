@@ -804,13 +804,21 @@ def _web_search_available():
     return WEB_SEARCH and bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
-def _local_toolset(deep=False):
+def _local_toolset(deep=False, use_tools=True):
     """Tools for the router: the shared TOOLS, plus the handoff functions when
     their targets exist. `search_web` (→ Haiku + web search, live info) is
     offered in BOTH the fast router and the deep tier — even the 12b deep tier
     can't reach the web itself. `escalate_hard` (→ local 12b+thinking, hard
     reasoning) is offered only to the FAST router: the deep tier already IS that
-    reasoning escalation, so it must not recurse into itself."""
+    reasoning escalation, so it must not recurse into itself.
+
+    `use_tools=False` sends NO tools at all — for pure phrasing work where a
+    tool call would be wrong by definition (see `announce`). The full schema is
+    ~2.5k tokens, so this is also the single largest per-call context saving
+    available, but correctness is the reason: a rewrite-this-sentence task that
+    calls a tool has misunderstood its job."""
+    if not use_tools:
+        return []
     tools = _ollama_tools() if TOOLS_ENABLED else []
     if _web_search_available():
         tools = tools + [WEB_SEARCH_TOOL]
@@ -1542,7 +1550,7 @@ def _is_unkept_promise(reply):
     return True
 
 
-def _think_local(transcript, channel="voice"):
+def _think_local(transcript, channel="voice", use_tools=True):
     """One-shot local reply — same tool loop as streaming, joined. Without tools
     gemma4 hallucinates tool output (fake times, literal '{tool_output}').
     Runs buffered: no text reaches the user until the reply is complete, so a
@@ -1556,7 +1564,7 @@ def _think_local(transcript, channel="voice"):
     deep = _channel_deep(channel)
     parts = []
     for delta in _stream_local(transcript, channel=channel, buffered=True,
-                               deep=deep):
+                               deep=deep, use_tools=use_tools):
         if delta is RESET:
             parts.clear()
         else:
@@ -1593,7 +1601,7 @@ def _stream_escalation(transcript, channel="voice", effort="deep"):
 
 
 def _stream_local(transcript, channel="voice", deep=False, buffered=False,
-                  source="router", effort="deep"):
+                  source="router", effort="deep", use_tools=True):
     """Stream a local reply with the same tool loop the Claude path runs.
     Yields text deltas; runs requested tools between rounds. deep=True is the
     escalation tier: ESCALATE_MODEL with thinking enabled (thinking streams in
@@ -1607,7 +1615,7 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False,
         + conversation_context(channel)
         + [{"role": "user", "content": transcript}]
     )
-    tools = _local_toolset(deep=deep)
+    tools = _local_toolset(deep=deep, use_tools=use_tools)
     model = ESCALATE_MODEL if deep else None
     # Deep tier sizes its think flag + generation budget from the router's
     # requested effort (#026); the fast router is a fixed thinking-off / 512.
@@ -1720,26 +1728,43 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False,
             })
 
 
-def think(transcript, channel="voice"):
-    """Get a reply from the configured LLM backend."""
+def think(transcript, channel="voice", use_tools=True):
+    """Get a reply from the configured LLM backend.
+
+    `use_tools=False` runs the turn with NO tool schemas — for phrasing-only
+    work (see `announce`). The Claude fallback path never sends tools anyway,
+    so the flag only affects the local backend."""
     _turn_begin()
     if LLM_BACKEND == "local":
         try:
-            return _think_local(transcript, channel=channel)
+            return _think_local(transcript, channel=channel,
+                                use_tools=use_tools)
         except Exception as e:  # noqa: BLE001
             print(f"[llm] local error: {e!r} -> falling back to Claude", flush=True)
     return _think_claude(transcript, channel=channel)
 
 
-def announce(event, channel="discord"):
+def announce(event, channel="discord", use_tools=True):
     """Have Jarvis phrase an internal system event as a proactive, natural
     message to the owner, then record it into the channel's conversation
     memory so a follow-up ("what was that?") has context. Returns the text.
 
     The recorded user-side is a compact '[system event] ...' marker, not the
     verbose framing instructions — future context sees what triggered Jarvis,
-    not the meta-prompt."""
-    reply = think(ANNOUNCE_FRAMING + event, channel=channel)
+    not the meta-prompt.
+
+    `use_tools` is per-CALLER, not a blanket setting, because the two current
+    callers genuinely differ:
+      - a monitoring ALERT may legitimately want a tool ("GPU is hot" → check
+        the current temperature), so it keeps them (the default);
+      - a fantasy WRITE REPORT (#029) describes something that already
+        happened and is fully described in the event text, so a tool call
+        there is wrong by definition — ANNOUNCE_FRAMING already says "do not
+        invent any detail beyond what is given", and a tool call is exactly
+        that. It passes use_tools=False, which also drops ~2.5k tokens of
+        schema from a sentence-rewriting task."""
+    reply = think(ANNOUNCE_FRAMING + event, channel=channel,
+                  use_tools=use_tools)
     record_turn(f"[system event] {event}", reply, channel=channel)
     return reply
 
@@ -2147,18 +2172,23 @@ def respond_text():
 
 @app.route("/announce", methods=["POST"])
 def announce_route():
-    """Body: JSON {"event": str, "channel"?: str}. Jarvis proactively phrases
-    an internal system event (a monitoring alert today; scheduled actions
-    later) as a natural message to the owner, records it in that channel's
-    memory, and returns {reply}. The caller (the Discord bot) delivers it and
-    supplies the event context — see docs/observability.md."""
+    """Body: JSON {"event": str, "channel"?: str, "use_tools"?: bool}. Jarvis
+    proactively phrases an internal system event (a monitoring alert, or a
+    fantasy write report) as a natural message to the owner, records it in that
+    channel's memory, and returns {reply}. The caller (the Discord bot)
+    delivers it and supplies the event context — see docs/observability.md.
+
+    `use_tools` defaults TRUE so existing callers (alerts) are unchanged; a
+    caller whose event is already self-contained passes false — see
+    `announce`."""
     data = request.get_json(silent=True) or {}
     event = (data.get("event") or "").strip()
     channel = (data.get("channel") or "discord").strip() or "discord"
+    use_tools = data.get("use_tools", True) is not False
     if not event:
         return jsonify(error='empty event; POST JSON {"event": ...}'), 400
-    print(f"[announce] ({channel}) {event!r}", flush=True)
-    reply = announce(event, channel=channel)
+    print(f"[announce] ({channel}, tools={use_tools}) {event!r}", flush=True)
+    reply = announce(event, channel=channel, use_tools=use_tools)
     print(f"[announce] reply: {reply!r}", flush=True)
     return jsonify(reply=reply)
 
