@@ -144,22 +144,28 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
 - `docs/memory-design.md` — long-term memory design (OpenClaw-style file-based
   MEMORY.md + remember/forget tools + nightly consolidation); exploration only,
   not yet built.
-- `docs/fantasy-gm-design.md` — Fantasy GM epic (#029): autonomous Yahoo NBA
-  team management (read → value → optimize → gated execute), per-team autonomy
-  config + rails; phased roadmap. **P0 + P1 shipped 2026-07-20** —
-  `fantasy_my_team` scrapes the owner's real roster + scoring via Playwright;
-  `fantasy_player_value` (engine: `pc/wes_fantasy.py`) values players against the
-  league's roto cats from real ESPN stats. **P2 optimizer ENGINE done
-  2026-07-21** (`wes_fantasy.optimize_lineup`, exact + property-tested) but
-  **tool registration deferred to in-season** — offseason Yahoo leaves eligible
-  positions blank, so `fantasy_optimize_lineup` can't produce a real lineup yet.
-  **P7 pulled forward 2026-07-29 — NFL FIRST** (season ~Sept 10 vs NBA's late
-  Oct, so the epic is no longer blocked on the offseason): `optimize_lineup` is
-  multi-sport (`_SPORTS` tables + `infer_sport`; the solver needed no change —
-  NFL flex ≡ NBA G/F) and `pc/wes_nfl.py` adds points-based valuation
-  (`rank_by_points`, same contract as `rank_by_zscore`). Left: sport-parameterize
-  `wes_yahoo.py` (basketball-hardcoded; post-draft), NFL player pool, weekly
-  cadence. Next: wire the tool + shadow-soak once the season opens, then P3 executor.
+- `docs/fantasy-gm-design.md` — Fantasy GM epic (#029): autonomous Yahoo
+  fantasy team management (read → value → optimize → gated execute), per-team
+  autonomy config + rails. **P0-P4 all shipped 2026-07-30**, live and
+  writing for real. NFL-first (P7 pulled forward — season ~Sept 10 vs NBA's
+  late Oct; `_SPORTS`/`_SITES` tables make the engine multi-sport, NBA
+  unchanged by default). `pc/wes_yahoo.py` reads real rosters + league scoring
+  settings; `pc/wes_nfl.py` values players from a paginated ESPN pool;
+  `pc/wes_fantasy.py` optimizes the lineup; `pc/wes_execute.py` (P3) diffs
+  against the real roster and **writes it to Yahoo for real** — gated by
+  per-team `autonomy`/`actions_allowed` in `teams.yaml` and the
+  `WES_YAHOO_LIVE_WRITES` kill switch (**ON**, surfaced at `GET /health` as
+  `fantasy_live_writes`). Every write re-verifies the roster afterward and
+  targets swaps by player, never by slot type (a real mistake during
+  development taught that lesson directly — see the ticket). Scheduled task
+  **"WES Fantasy GM"** (P4; Windows Task Scheduler, NOT #005 — that's a
+  separate, still-unbuilt general scheduler) runs it daily 6am PT + Sunday
+  9:15am PT pre-lock, log-only. Currently live on one real team
+  (`nfl.l.957011.t.4`, `autonomy: auto`, the owner's deliberately-chosen
+  "don't care about the outcome" league). Open gaps: no DM notification on a
+  real write, no `propose`-mode Discord approve/reject, no Thu/Mon pre-lock
+  check, no team-DEF valuation. Draft automation (#030) deprioritized —
+  owner will draft manually. Full history + every finding: ticket #029.
   Platform pivoted from the official Yahoo API to browser automation (API access
   now requires a no-caching DocuSign).
 - `docs/tickets/open/med/030-fantasy-draft-tool.md` — Fantasy DRAFT epic (#030):

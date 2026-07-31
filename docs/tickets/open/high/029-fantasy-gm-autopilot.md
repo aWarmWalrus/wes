@@ -189,6 +189,57 @@ The next time its recommended lineup differs from Yahoo's, calling
 roster**. Reachable today only via that tool being invoked in conversation —
 #005 (scheduling) doesn't exist yet, so nothing runs this unattended.
 
+### 2026-07-30 (last) — P4 scheduling: "WES Fantasy GM" task, verified end-to-end
+Owner: *"let's schedule it and then update docs and wrap this up."* Built
+`pc/fantasy_gm_run.py` — iterates `wes_yahoo.configured_teams()`, runs
+`wes_execute.propose_lineup_change` for every `propose`/`auto` team (skips
+`advise` — it can never act, so running it would just be a wasted scrape),
+never lets one team's exception stop the rest of the cycle. 8 new tests, all
+injected/network-free.
+
+**This is NOT ticket #005.** #005 is a general, conversation-triggered
+scheduling capability ("set a reminder", user-defined recurring routines) and
+remains unbuilt. What shipped here is a narrow, fantasy-specific entry in
+**Windows Task Scheduler** — the exact same plain-cron mechanism this project
+already uses for "WES Nightly Eval" and "WES Exporters", not a new in-app
+scheduler. Registering it needed the owner's explicit approval (harness-blocked
+my first attempt, correctly — a new persistent OS-level automation is exactly
+the kind of thing that should require a human's go-ahead) and the owner ran the
+`Register-ScheduledTask` command themselves.
+
+**Cadence, and why:** owner corrected my first guess (8 AM) after checking the
+league's real settings — `Waiver Type: Continual rolling list` +
+`Weekly Waivers Game Time - Tuesday` — so claims clear weekly on Tuesday, not
+daily; I hadn't captured the exact hour. Landed on **daily 6:00 AM PT** (safely
+covers whenever Tuesday's clear happens, plus catches injury/roster news other
+days) **+ Sunday 9:15 AM PT** (~45min before the main NFL slate locks at
+10:00 AM PT / 1:00 PM ET).
+
+**Verified through the actual Windows Task Scheduler mechanism**, not just by
+running the Python script directly (the `wes-reload` skill's own lesson: the
+scheduled-task environment is not your shell). `Start-ScheduledTask` →
+`LastTaskResult 0` → `logs/fantasy_gm.log`: `"2026-07-30 21:56  ok"` →
+`logs/fantasy_gm_last.log`: `"Charles's Pop: No lineup changes needed for
+Charles's Pop — already optimal."` — correctly skipped the advise-only
+`Teletubbies` team, correctly found nothing to do (the lineup was already
+right), no unnecessary write.
+
+**What's genuinely still open, stated plainly rather than left implicit:**
+- **No notification on a real write.** A scheduled `[EXECUTED]` write sits in a
+  log file until someone reads it. The design's own §5 calls for an
+  "after-action report" — building that (through the already-running Discord
+  bot, likely via a poll-and-DM pattern like the existing alert watcher) is the
+  natural next increment, not done here.
+- **`propose` mode has no Discord approve/reject loop.** It logs a shadow
+  proposal and nothing more — matches what P3's ticket entry already said, not
+  a new gap.
+- **The 9:15 AM Sunday check only covers the main slate.** Thursday and Monday
+  night locks (~5:15 PM PT) have no dedicated pre-lock check yet — the daily
+  6 AM run is the only coverage for those, and it's many hours ahead of a
+  Monday-afternoon inactive-list update.
+- **Team DEF valuation** and the **draft automation** (#030, now low priority)
+  are unchanged from earlier entries in this ticket.
+
 ### 2026-07-30 (later) — ESPN pool DEPTH fixed: pagination + a second, real quirk
 The pool-depth gap flagged after the first live run (only 12 TEs, Jake Ferguson
 missing) is substantially closed. `pool_by_position` now walks EVERY page of

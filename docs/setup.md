@@ -87,6 +87,30 @@ Register-ScheduledTask -TaskName "WES Nightly Eval" -Action $action `
   -Trigger (New-ScheduledTaskTrigger -Daily -At 3:30AM)
 ```
 
+### Fantasy GM task (#029 P3)
+
+Scheduled task **"WES Fantasy GM"** (daily 6:00 AM PT + Sunday 9:15 AM PT — the
+main NFL slate locks 10:00 AM PT, so this is a ~45min pre-lock check; 6 AM
+covers the Tuesday weekly-waiver clear + general injury news) runs
+`C:\Users\awarm\wes-pc\run_fantasy_gm.ps1`: `pc\fantasy_gm_run.py` calls
+`wes_execute.propose_lineup_change` for every configured team whose autonomy is
+`propose` or `auto` (never `advise` — that mode can't act, so running it would
+just be a wasted scrape). **Log-only by design**, same house rule as Nightly
+Eval — WES never speaks on its own initiative for a routine run. One line per
+run in `logs\fantasy_gm.log`; full output in `logs\fantasy_gm_last.log`. A REAL
+Yahoo write is marked `[EXECUTED]` in the detail log so it's grep-able, but
+nothing DMs the owner about it yet — a deliberately deferred next step (ticket
+#029), not an oversight. To re-register:
+
+```powershell
+$action = New-ScheduledTaskAction -Execute "powershell.exe" `
+  -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\Users\awarm\wes-pc\run_fantasy_gm.ps1'
+$principal = New-ScheduledTaskPrincipal -UserId "awarm" -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName "WES Fantasy GM" -Action $action -Principal $principal `
+  -Trigger @((New-ScheduledTaskTrigger -Daily -At "06:00"),
+             (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At "09:15"))
+```
+
 ## Tier 1 (Pi) client
 
 Deps in `~/wes/.venv` — pinned list in **`pi/requirements.txt`**

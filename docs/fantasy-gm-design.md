@@ -230,17 +230,28 @@ tickets (#030+) as they start.
   registration + golden case + shadow soak DEFERRED to in-season, when Yahoo shows
   eligible positions and games exist. Real z-scores still deferred; the interim
   spread-normalized scalar orders players for now.)*
-- **P3 — Executor + autonomy config + rails.** The gated executor (§5), Yahoo
-  `set_lineup` write **via scripted Playwright clicks** (the optimizer decides the
-  move; the script replays it — the LLM never free-drives the page, §10), per-team
-  modes (§4), guardrails, action ledger, Discord approve/reject for `propose`,
-  after-action reports. Wire P2 to actually set the lineup under each team's mode.
-  **`propose`-mode writes come first**; browser `auto`-mode is held until the write
-  script is proven in shadow (§10). **Accept:** `propose` DMs a proposal → approve
-  → lineup set on Yahoo + logged; `auto` sets it and notifies; guardrails block a
-  disallowed move.
-- **P4 — Scheduling + monitoring.** Per-team pre-lock scheduled run, injury/news
-  watch + late swap (§6). **Accept:** lineups are managed daily per each team's
+- **P3 — Executor + autonomy config + rails. SHIPPED 2026-07-30.** The gated
+  executor (§5) is `pc/wes_execute.py`: `_plan_swaps` (pure) turns a lineup diff
+  into Yahoo swap-click operations, `_execute_swap` drives ONE swap (targets by
+  PLAYER, never by slot type — see the ticket #029 notes for the real mistake
+  that made this non-negotiable), `_submit_lineup` re-verifies the roster after
+  every write. Per-team modes (§4) and guardrails (actions_allowed, freshness)
+  are enforced in `check_guardrails`; the action ledger is append-only JSONL,
+  PC-local. **Live writes are ON** (`WES_YAHOO_LIVE_WRITES=1`, surfaced at
+  `GET /health` as `fantasy_live_writes`) — owner's explicit call, verified
+  through a real write to the real `Charles's Pop` roster, confirmed
+  independently by the scraper. Discord approve/reject for `propose` and
+  after-action DM reports are **not built** — `propose` mode currently logs a
+  shadow proposal only (no Discord round-trip yet), and a real `auto`-mode write
+  has no notification path (deliberately deferred, not an oversight).
+- **P4 — Scheduling + monitoring. PARTIALLY SHIPPED 2026-07-30.** Per-team
+  pre-lock scheduled run: **"WES Fantasy GM"** (Windows Task Scheduler — the
+  same plain-cron mechanism as Nightly Eval, not #005's general in-app
+  scheduler) runs `pc/fantasy_gm_run.py` daily 6 AM PT + Sunday 9:15 AM PT
+  (~45min before the main NFL slate locks). Log-only, matching the house rule;
+  a real write is marked `[EXECUTED]` in the log. Verified end-to-end through
+  the actual scheduled task (`Start-ScheduledTask`), not just the Python script.
+  Injury/news watch + late swap (§6) — **not built**. **Accept:** lineups are managed daily per each team's
   mode with no manual trigger.
 - **P5 — Waiver / FAAB engine.** FA evaluation vs roster, schedule streaming,
   FAAB bid sizing, add/drop proposals + execution under mode/guardrails,
