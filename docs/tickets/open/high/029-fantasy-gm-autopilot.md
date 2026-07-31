@@ -157,11 +157,37 @@ convergence, the exact same-type-target bug reproduced as a plan-level test),
 picks the right one of two same-typed candidates), and the honest-failure
 message path.
 
-**What's genuinely still open:** the kill switch stays off in the real
-environment — turning it on for unattended (scheduled) runs is a deliberate
-future decision, not an oversight. Multi-slot batch moves (3+ interacting
-swaps) are covered by the pure planner's tests but not yet exercised live.
-Team DEF valuation and #005 (scheduling) are unchanged.
+### 2026-07-30 (final) — LIVE WRITES TURNED ON: owner's explicit call
+Owner: *"turn it on! live writes for real is what I want."* Set two places
+deliberately, matching this project's pattern for other real flags/secrets:
+`setx WES_YAHOO_LIVE_WRITES 1` (PC user env) AND hardcoded in
+`run_server.ps1` with a comment explaining exactly what it does and how to
+turn it back off — so the live service never depends on a scheduled task's
+env-snapshot timing, the same reasoning already applied to `ANTHROPIC_API_KEY`.
+
+**Also added `fantasy_live_writes` to `/health`.** A safety-critical flag
+shouldn't require guessing whether a launcher env var actually reached the
+running process — checked directly rather than trusted by analogy:
+
+```
+GET /health -> {"fantasy_live_writes": true, ...}
+```
+
+**Verified through an actual turn**, not just the health check: *"Check if my
+fantasy football team Charles needs any lineup changes"* → *"Your fantasy
+team, Charles's Pop, is already optimal and doesn't need any lineup
+changes."* Ledger entry confirms the real path ran and correctly found
+nothing to do: `"allowed": true, "moves": [], "reason": "lineup already
+matches the recommendation", "executed": false, "dry_run": true` — no
+spurious write attempted where none was needed. 578 tests still pass
+(unchanged — this was a config + observability change, not new logic).
+
+**Current real state:** `nfl.l.957011.t.4` ("Charles's Pop") is `autonomy:
+auto`, guardrails allow `set_lineup` + `waiver_claim`, and live writes are ON.
+The next time its recommended lineup differs from Yahoo's, calling
+`fantasy_propose_lineup_change` for that team **will really change the
+roster**. Reachable today only via that tool being invoked in conversation —
+#005 (scheduling) doesn't exist yet, so nothing runs this unattended.
 
 ### 2026-07-30 (later) — ESPN pool DEPTH fixed: pagination + a second, real quirk
 The pool-depth gap flagged after the first live run (only 12 TEs, Jake Ferguson

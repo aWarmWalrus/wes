@@ -2080,6 +2080,12 @@ def health():
         ),
         output=OUTPUT_MODE,
         cast_device=CAST_DEVICE if OUTPUT_MODE == "cast" else None,
+        # #029 P3: whether this process can ACTUALLY write fantasy lineup
+        # changes to Yahoo (still gated per-team by teams.yaml autonomy +
+        # guardrails on top of this). Surfaced here because it's exactly the
+        # kind of safety-critical flag that shouldn't require guessing whether
+        # a launcher env var actually reached the running process.
+        fantasy_live_writes=wes_execute.LIVE_WRITES,
     )
 
 
