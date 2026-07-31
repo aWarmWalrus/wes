@@ -287,3 +287,182 @@ class TestAlertWatcher:
 
         asyncio.run(wd.alert_watch(FakeClient()))
         assert any("🚨" in m for m in sent)  # DMs still delivered
+
+
+class TestFantasyWatcher:
+    """The Yahoo-write notifier (#029): watches wes_execute's ledger file for a
+    real write, phrases it via Jarvis, and DMs the owner — the "content exists,
+    doesn't get pushed" gap the owner asked to close."""
+
+    def _entry(self, executed=True, reason="", ts=100.0):
+        return {
+            "ts": ts, "team_key": "nfl.l.957011.t.4", "name": "Charles's Pop",
+            "sport": "nfl", "action_type": "set_lineup", "autonomy": "auto",
+            "moves": [{"player_key": "1", "name": "Cam Skattebo",
+                      "from_slot": "BN", "to_slot": "RB"},
+                     {"player_key": "2", "name": "Breece Hall",
+                      "from_slot": "RB", "to_slot": "BN"}],
+            "why": ["Started Cam Skattebo (14.46 pts) at RB over "
+                   "Breece Hall (11.85 pts)."],
+            "allowed": True, "reason": reason, "executed": executed,
+            "dry_run": False,
+        }
+
+    def test_fetch_only_returns_real_or_partial_writes(self, tmp_path, monkeypatch):
+        path = tmp_path / "ledger.jsonl"
+        lines = [
+            self._entry(executed=False, ts=1.0),   # routine no-op — excluded
+            self._entry(executed=True, ts=2.0),     # real write — included
+            self._entry(executed="unknown", ts=3.0),  # partial — included
+        ]
+        path.write_text("\n".join(json.dumps(l) for l in lines), encoding="utf-8")
+        monkeypatch.setattr(wd.wes_execute, "LEDGER_FILE", str(path))
+        out = wd.fetch_new_fantasy_events(0.0)
+        assert [e["ts"] for e in out] == [2.0, 3.0]
+
+    def test_fetch_respects_since_ts(self, tmp_path, monkeypatch):
+        path = tmp_path / "ledger.jsonl"
+        path.write_text(json.dumps(self._entry(ts=5.0)), encoding="utf-8")
+        monkeypatch.setattr(wd.wes_execute, "LEDGER_FILE", str(path))
+        assert wd.fetch_new_fantasy_events(10.0) == []
+        assert len(wd.fetch_new_fantasy_events(1.0)) == 1
+
+    def test_fetch_missing_ledger_is_empty_not_an_error(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wd.wes_execute, "LEDGER_FILE",
+                            str(tmp_path / "nope.jsonl"))
+        assert wd.fetch_new_fantasy_events(0.0) == []
+
+    def test_fetch_tolerates_a_corrupt_line(self, tmp_path, monkeypatch):
+        path = tmp_path / "ledger.jsonl"
+        path.write_text("not json\n" + json.dumps(self._entry(ts=2.0)),
+                        encoding="utf-8")
+        monkeypatch.setattr(wd.wes_execute, "LEDGER_FILE", str(path))
+        out = wd.fetch_new_fantasy_events(0.0)
+        assert len(out) == 1
+
+    def test_describe_real_write_reports_not_proposes(self):
+        """This already happened — the phrasing instruction must say so, not
+        ask for approval (that would be a lie about a completed action)."""
+        desc = wd.describe_fantasy_event(self._entry())
+        assert "already happened" in desc or "you're reporting it" in desc
+        assert "Cam Skattebo" in desc and "Breece Hall" in desc
+        assert "14.46" in desc  # the real WHY, not re-derived or invented
+
+    def test_describe_partial_failure_is_cautious_not_definitive(self):
+        entry = self._entry(executed="unknown", reason="mid-plan error: X")
+        desc = wd.describe_fantasy_event(entry)
+        assert "inconsistent" in desc.lower() or "may be" in desc.lower()
+        assert "do not imply" in desc.lower()
+
+    def test_raw_summary_fallback_names_the_moves(self):
+        text = wd.raw_fantasy_summary(self._entry())
+        assert "Cam Skattebo" in text and "🏈" in text
+
+    def test_raw_summary_partial_failure_uses_warning_tone(self):
+        text = wd.raw_fantasy_summary(self._entry(executed="unknown"))
+        assert "⚠️" in text and "check it directly" in text.lower()
+
+    def test_explain_fantasy_event_posts_announce(self, monkeypatch):
+        seen = {}
+
+        def fake_post(path, body, timeout=120):
+            seen["path"], seen["body"] = path, body
+            return {"reply": "Set Skattebo over Hall for the RB spot."}
+        monkeypatch.setattr(wd, "_post_json", fake_post)
+        out = wd.explain_fantasy_event(self._entry())
+        assert seen["path"] == "/announce"
+        assert seen["body"]["channel"] == wd.CONV_CHANNEL
+        assert out == "Set Skattebo over Hall for the RB spot."
+
+    def test_watcher_dms_a_real_write_then_falls_back_on_server_down(
+            self, tmp_path, monkeypatch):
+        import asyncio
+        import time as _time
+
+        path = tmp_path / "ledger.jsonl"
+        # Must be AFTER `seen_ts` (real time.time() captured when the watcher
+        # starts) to survive the filter — a hardcoded "large-looking" constant
+        # like 999999999 is actually BEFORE the real current epoch (~1.78e9).
+        path.write_text(json.dumps(self._entry(ts=_time.time() + 1000)),
+                        encoding="utf-8")
+        monkeypatch.setattr(wd.wes_execute, "LEDGER_FILE", str(path))
+        monkeypatch.setattr(wd, "FANTASY_POLL_S", 0.001)
+
+        def boom(entry):
+            raise OSError("server down")
+        monkeypatch.setattr(wd, "explain_fantasy_event", boom)
+
+        sent = []
+        n = {"i": 0}
+
+        class FakeUser:
+            async def send(self, t):
+                sent.append(t)
+
+        class FakeClient:
+            async def wait_until_ready(self):
+                pass
+
+            def is_closed(self):
+                n["i"] += 1
+                return n["i"] > 2
+
+            async def fetch_user(self, uid):
+                return FakeUser()
+
+        asyncio.run(wd.fantasy_watch(FakeClient()))
+        assert any("🏈" in m and "Cam Skattebo" in m for m in sent)
+
+    def test_watcher_does_not_replay_old_history_on_startup(
+            self, tmp_path, monkeypatch):
+        """seen_ts is seeded to 'now' — an entry from before the bot started
+        must not be DMed on the first poll."""
+        import asyncio
+
+        path = tmp_path / "ledger.jsonl"
+        path.write_text(json.dumps(self._entry(ts=1.0)), encoding="utf-8")
+        monkeypatch.setattr(wd.wes_execute, "LEDGER_FILE", str(path))
+        monkeypatch.setattr(wd, "FANTASY_POLL_S", 0.001)
+
+        sent = []
+        n = {"i": 0}
+
+        class FakeUser:
+            async def send(self, t):
+                sent.append(t)
+
+        class FakeClient:
+            async def wait_until_ready(self):
+                pass
+
+            def is_closed(self):
+                n["i"] += 1
+                return n["i"] > 2
+
+            async def fetch_user(self, uid):
+                return FakeUser()
+
+        asyncio.run(wd.fantasy_watch(FakeClient()))
+        assert sent == []
+
+    def test_watcher_survives_a_poll_exception(self, monkeypatch):
+        """A crash reading the ledger must not kill the watcher — same
+        must-never-die rule as alert_watch."""
+        import asyncio
+
+        def boom(since_ts):
+            raise OSError("disk error")
+        monkeypatch.setattr(wd, "fetch_new_fantasy_events", boom)
+        monkeypatch.setattr(wd, "FANTASY_POLL_S", 0.001)
+
+        n = {"i": 0}
+
+        class FakeClient:
+            async def wait_until_ready(self):
+                pass
+
+            def is_closed(self):
+                n["i"] += 1
+                return n["i"] > 3
+
+        asyncio.run(wd.fantasy_watch(FakeClient()))   # must not raise

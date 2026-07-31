@@ -79,6 +79,9 @@ Get-Content C:\Users\awarm\wes-pc\logs\server.log -Tail 20   # server log
 - `pc/wes_discord.py` — Discord frontend: owner-allowlisted DMs → `POST /respond_text`
   (text-only, own conversation channel). Runs as scheduled task "WES Discord"
   (`WES_DISCORD_TOKEN` + `_OWNER_ID` from PC user env; see `docs/setup.md`).
+  Also runs two background watchers in the same process: `alert_watch` (Prometheus
+  alerts) and `fantasy_watch` (#029 — DMs the owner when a real Yahoo fantasy
+  write happens, polling `wes_execute`'s ledger). Both phrase via `/announce`.
 - `hosts.yaml` + `wes_hosts.py` (repo root) — the host registry (IPs/ports) and
   its loader; imported by server, bot, and Pi client. Jarvis reaches it via the
   `lookup_hosts` tool.
@@ -160,12 +163,16 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   development taught that lesson directly — see the ticket). Scheduled task
   **"WES Fantasy GM"** (P4; Windows Task Scheduler, NOT #005 — that's a
   separate, still-unbuilt general scheduler) runs it daily 6am PT + Sunday
-  9:15am PT pre-lock, log-only. Currently live on one real team
-  (`nfl.l.957011.t.4`, `autonomy: auto`, the owner's deliberately-chosen
-  "don't care about the outcome" league). Open gaps: no DM notification on a
-  real write, no `propose`-mode Discord approve/reject, no Thu/Mon pre-lock
-  check, no team-DEF valuation. Draft automation (#030) deprioritized —
-  owner will draft manually. Full history + every finding: ticket #029.
+  9:15am PT pre-lock, log-only. Every write is explained
+  (`wes_execute.summarize_moves` — value comparison, or availability when
+  that's the real driver) and DMed to the owner via `wes_discord.fantasy_watch`
+  (a sibling of the alert watcher — polls the ledger, phrases via Jarvis).
+  **Feature-complete for its original scope as of 2026-07-30**, live on one
+  real team (`nfl.l.957011.t.4`, `autonomy: auto`, the owner's deliberately-
+  chosen "don't care about the outcome" league). Open, named extensions: no
+  `propose`-mode Discord approve/reject, no Thu/Mon pre-lock check, no
+  team-DEF valuation. Draft automation (#030) deprioritized — owner will
+  draft manually. Full history + every finding: ticket #029.
   Platform pivoted from the official Yahoo API to browser automation (API access
   now requires a no-caching DocuSign).
 - `docs/tickets/open/med/030-fantasy-draft-tool.md` — Fantasy DRAFT epic (#030):

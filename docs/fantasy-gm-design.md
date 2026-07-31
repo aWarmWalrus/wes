@@ -241,14 +241,13 @@ tickets (#030+) as they start.
   `GET /health` as `fantasy_live_writes`) — owner's explicit call, verified
   through a real write to the real `Charles's Pop` roster, confirmed
   independently by the scraper. Discord approve/reject for `propose` and
-  after-action DM reports are **not built** — `propose` mode currently logs a
-  shadow proposal only (no Discord round-trip yet), and a real `auto`-mode write
-  has no notification path (deliberately deferred, not an oversight). **The
-  content of an after-action report exists now, though the DM does not**:
-  `wes_execute.summarize_moves()` (added 2026-07-30) explains every move in
-  plain language — value comparison, or availability when that's the real
-  driver — wired into both the tool's reply and the ledger, so the scheduled
-  log already reads like a report; it just isn't pushed anywhere yet.
+  **after-action DM reports SHIP 2026-07-30**: `wes_discord.fantasy_watch`
+  polls the action ledger and DMs the owner (via `/announce`, so it's phrased
+  by Jarvis and grounded in `wes_execute.summarize_moves()`'s real reasoning,
+  never invented) whenever a real write happens or partially fails — a direct
+  sibling of the existing Prometheus alert watcher. `propose` mode still has
+  no Discord approve/reject round-trip (it logs a shadow proposal only) — that
+  remains open.
 - **P4 — Scheduling + monitoring. PARTIALLY SHIPPED 2026-07-30.** Per-team
   pre-lock scheduled run: **"WES Fantasy GM"** (Windows Task Scheduler — the
   same plain-cron mechanism as Nightly Eval, not #005's general in-app

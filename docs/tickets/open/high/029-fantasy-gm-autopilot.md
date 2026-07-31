@@ -189,6 +189,53 @@ The next time its recommended lineup differs from Yahoo's, calling
 roster**. Reachable today only via that tool being invoked in conversation —
 #005 (scheduling) doesn't exist yet, so nothing runs this unattended.
 
+### 2026-07-30 (very last) — Discord DM on a real write: the gap CLOSED
+Owner: *"oh yeah it should message that to me via discord."*
+
+Closes the one gap named twice in this ticket's recent entries. Added
+`fantasy_watch(client)` to `pc/wes_discord.py` — a **direct sibling of
+`alert_watch`**, same shape, same DM mechanism, same "must never die"
+try/except, same in-memory `seen_ts` (no persistent state, no replay of
+history from before the bot started). It polls `wes_execute.LEDGER_FILE`
+(the same file the scheduled task's runs already write to — zero coupling
+beyond the file path) for entries with `executed in (True, "unknown")`,
+phrases each one via `/announce` (Jarvis, grounded in the real moves + the
+`why` already computed by `summarize_moves` — never re-derived or invented),
+and DMs the owner. Falls back to a plain-text summary if the server can't be
+reached, so a write is never silently lost the way an alert wouldn't be.
+
+**One real distinction from alerts, handled deliberately:** an alert describes
+an ongoing STATE ("X is still firing"); a fantasy write is a completed ACTION.
+`describe_fantasy_event`'s prompt to Jarvis says so explicitly — *"this
+already happened, you're reporting it, not proposing it"* — so the phrased DM
+can't accidentally read as a pending question needing approval. A distinct,
+more cautious wording covers the `executed: "unknown"` case (a write that
+failed partway through): *"do not imply it definitely succeeded or definitely
+failed"* — matches `propose_lineup_change`'s own honesty about that state.
+
+13 new tests (`TestFantasyWatcher` in `test_unit_discord.py`), following the
+exact `TestAlertWatcher` pattern (`FakeClient`/`FakeUser`, `asyncio.run`).
+607 tests pass (was 595). **Verified against the real running bot**, not just
+unit tests: reloaded "WES Discord" and confirmed the startup log —
+
+```
+[fantasy] watching C:\Users\awarm\wes-pc\fantasy_ledger.jsonl every 60s
+```
+
+— running alongside the existing `[alerts]` watcher in the same real process.
+Did not fabricate a fake ledger entry to force a live DM test — the ledger is
+a truthful audit trail of the real account and shouldn't be polluted with a
+synthetic entry just to watch a notification fire; correctness is covered by
+the unit tests instead.
+
+**#029 is now, honestly, feature-complete for its original scope**: read real
+data → value it under real league scoring → compute the real optimal lineup →
+write it to Yahoo for real when warranted → check automatically before every
+lock → explain why → tell the owner when it actually acted. What's left
+(Thu/Mon pre-lock checks, `propose`-mode Discord approve/reject, team DEF
+valuation, the draft automation in #030) are real, named, separate
+extensions — not gaps in what was asked for this session.
+
 ### 2026-07-30 (last) — WHY, not just what: summarize_moves()
 Owner: *"can the daily/weekly workflow also include a task to summarize the
 changes that were made and why?"*
