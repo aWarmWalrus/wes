@@ -65,6 +65,231 @@ class TestDiffLineup:
         assert ex.diff_lineup(players, result) == []
 
 
+class TestDomSlot:
+    def test_flex_slash_becomes_underscore(self):
+        """Empirically confirmed against a real Yahoo flex row 2026-07-30 —
+        this is not a guess."""
+        assert ex._dom_slot("W/R/T") == "W_R_T"
+
+    def test_single_word_slots_are_unchanged(self):
+        assert ex._dom_slot("QB") == "QB"
+        assert ex._dom_slot("RB") == "RB"
+
+    def test_bench_aliases_collapse_first(self):
+        assert ex._dom_slot("IR") == "BN"
+
+
+class TestPlanSwaps:
+    """Pure planning logic — no browser. This is the layer that has to be
+    right before anything clicks a real account: a wrong plan here is a wrong
+    write there, with no chance to notice until it's already happened (the
+    exact failure recon surfaced: targeting by slot TYPE swapped the wrong
+    player when two RB starters existed)."""
+
+    def test_single_move_to_an_empty_slot(self):
+        moves = [{"name": "A", "from_slot": "BN", "to_slot": "QB"}]
+        current = {"A": "BN"}
+        plan = ex._plan_swaps(moves, current)
+        assert plan == [("A", None, "QB")]
+
+    def test_a_pair_of_moves_that_satisfy_each_other_becomes_one_swap(self):
+        """The exact real scenario: A wants B's slot AND B wants A's — must
+        collapse to ONE Yahoo swap, not two independent (and ambiguous) ones."""
+        moves = [{"name": "A", "from_slot": "BN", "to_slot": "QB"},
+                {"name": "B", "from_slot": "QB", "to_slot": "BN"}]
+        current = {"A": "BN", "B": "QB"}
+        plan = ex._plan_swaps(moves, current)
+        assert plan == [("A", "B", "QB")]   # B satisfied as a side effect
+
+    def test_already_in_place_generates_no_swap(self):
+        moves = [{"name": "A", "from_slot": "QB", "to_slot": "QB"}]
+        assert ex._plan_swaps(moves, {"A": "QB"}) == []
+
+    def test_two_same_type_targets_pick_the_correct_named_partner(self):
+        """The recon bug, reproduced as a plan-level test: two RB starters
+        exist (B and C); only B is supposed to leave. The plan must name B as
+        the partner, never C — targeting by type alone is exactly what went
+        wrong live."""
+        moves = [{"name": "A", "from_slot": "BN", "to_slot": "RB"},
+                {"name": "B", "from_slot": "RB", "to_slot": "BN"}]
+        current = {"A": "BN", "B": "RB", "C": "RB"}   # C stays put
+        plan = ex._plan_swaps(moves, current)
+        assert plan == [("A", "B", "RB")]
+        assert "C" not in [p[0] for p in plan] and "C" not in [p[1] for p in plan]
+
+    def test_flex_target_uses_the_dom_underscore_spelling(self):
+        moves = [{"name": "A", "from_slot": "BN", "to_slot": "W/R/T"}]
+        plan = ex._plan_swaps(moves, {"A": "BN"})
+        assert plan == [("A", None, "W_R_T")]
+
+    def test_bench_alias_current_slot_matches_bn_target(self):
+        """A player on IR moving to a plain BN target: IR already normalizes to
+        BN, so this must be a no-op, not a spurious swap."""
+        moves = [{"name": "A", "from_slot": "IR", "to_slot": "BN"}]
+        assert ex._plan_swaps(moves, {"A": "IR"}) == []
+
+    def test_three_way_chain_resolves(self):
+        """A -> B's slot, B -> C's slot, C -> A's slot: not a simple pair, but
+        must still converge via a bounded sequence of pairwise swaps."""
+        moves = [{"name": "A", "from_slot": "QB", "to_slot": "RB"},
+                {"name": "B", "from_slot": "RB", "to_slot": "WR"},
+                {"name": "C", "from_slot": "WR", "to_slot": "QB"}]
+        current = {"A": "QB", "B": "RB", "C": "WR"}
+        plan = ex._plan_swaps(moves, current)
+        # Simulate the plan against `current` and check the END STATE is right,
+        # rather than asserting exact swap order (several valid orders exist).
+        sim = dict(current)
+        for name, partner, dom_type in plan:
+            old = sim[name]
+            sim[name] = next(m["to_slot"] for m in moves if m["name"] == name)
+            if partner:
+                sim[partner] = old
+        assert ex._norm_slot(sim["A"]) == "RB"
+        assert ex._norm_slot(sim["B"]) == "WR"
+        assert ex._norm_slot(sim["C"]) == "QB"
+
+    def test_a_genuinely_impossible_move_is_not_caught_at_planning_time(self):
+        """Documented honest limit: _plan_swaps only sees OCCUPIED slots (no
+        total-capacity figure), so it can't tell "a real empty slot exists"
+        from "every slot of this type is full". It TRUSTS moves came from a
+        capacity-valid optimizer run — true in normal use, since diff_lineup
+        derives from optimize_lineup against this same roster. B occupying QB
+        and staying put makes this move structurally impossible, but planning
+        can't see that; it produces a (wrong) best-effort plan targeting an
+        assumed empty QB slot."""
+        moves = [{"name": "A", "from_slot": "BN", "to_slot": "QB"}]
+        current = {"A": "BN", "B": "QB"}
+        plan = ex._plan_swaps(moves, current)
+        assert plan == [("A", None, "QB")]   # optimistic, and that's the point
+
+    def test_that_same_impossible_case_IS_caught_at_execution_time(self):
+        """The safety net one layer down: _execute_swap looks for a REAL empty
+        swaptarget row and finds none (only B, who isn't leaving, occupies QB),
+        so it raises rather than clicking something wrong. The system as a
+        whole still never half-applies silently — planning's blind spot is
+        covered by execution's verification."""
+        class _Row:
+            def query_selector(self, sel):
+                return self
+
+            def get_attribute(self, name):
+                return "k_a"
+
+            def evaluate_handle(self, *a, **k):
+                class _H:
+                    def as_element(_self):
+                        return self
+                return _H()
+
+            def scroll_into_view_if_needed(self):
+                pass
+
+            def click(self):
+                pass
+
+        class _Page:
+            def query_selector(self, sel):
+                return _Row()
+
+            def query_selector_all(self, sel):
+                return []   # B (staying at QB) never became a swaptarget
+
+            def wait_for_timeout(self, ms):
+                pass
+
+            def keyboard(self):
+                return self
+
+            def press(self, key):
+                pass
+
+        page = _Page()
+        page.keyboard = page
+        with pytest.raises(RuntimeError):
+            ex._execute_swap(page, "A", None, "QB", {"A": "k_a"})
+
+    def test_empty_moves_list_is_an_empty_plan(self):
+        assert ex._plan_swaps([], {"A": "QB"}) == []
+
+
+class TestExecuteSwapTargeting:
+    """_execute_swap must match a target by PLAYER NAME text, never by slot
+    type alone — a fake DOM with two same-typed swaptargets proves it picks
+    the right one."""
+
+    class _El:
+        def __init__(self, text, pos, has_label=True):
+            self._t, self._pos, self._has_label = text, pos, has_label
+            self.clicked = False
+
+        def inner_text(self):
+            return self._t
+
+        def get_attribute(self, name):
+            return {"data-pos": self._pos}.get(name)
+
+        def query_selector(self, sel):
+            return self if self._has_label else None
+
+        def scroll_into_view_if_needed(self):
+            pass
+
+        def click(self):
+            self.clicked = True
+
+        def evaluate_handle(self, *_a, **_k):
+            class _H:
+                def as_element(_self):
+                    return self
+            return _H()
+
+    class _Page:
+        def __init__(self, select_owner_row, targets):
+            self._row = select_owner_row
+            self._targets = targets
+            self.escaped = False
+
+        def query_selector(self, sel):
+            return self._row if sel.startswith("select") else None
+
+        def query_selector_all(self, sel):
+            return self._targets
+
+        def wait_for_timeout(self, ms):
+            pass
+
+        def keyboard(self):
+            return self
+
+        def press(self, key):
+            self.escaped = True
+
+    def test_picks_the_target_matching_the_named_partner(self):
+        row = self._El("A's row", "BN")
+        b_target = self._El("RB\nPlayer B stats...", "RB")
+        c_target = self._El("RB\nPlayer C stats...", "RB")   # same type, wrong player
+        page = self._Page(row, [b_target, c_target])
+        page.keyboard = page   # simple stand-in
+
+        ex._execute_swap(page, "A", "Player B", "RB", {"A": "k1"})
+        assert b_target.clicked is True
+        assert c_target.clicked is False
+
+    def test_no_matching_target_raises_and_never_clicks_save(self):
+        row = self._El("A's row", "BN")
+        wrong = self._El("RB\nSomeone Else", "RB")
+        page = self._Page(row, [wrong])
+        page.keyboard = page
+
+        with pytest.raises(RuntimeError):
+            ex._execute_swap(page, "A", "Player B", "RB", {"A": "k1"})
+
+    def test_missing_player_key_raises(self):
+        page = self._Page(None, [])
+        with pytest.raises(RuntimeError):
+            ex._execute_swap(page, "Ghost", None, "QB", {})
+
+
 class TestGuardrails:
     def test_advise_teams_refuse_everything(self):
         allowed, reason = ex.check_guardrails({"autonomy": "advise"}, "set_lineup")
@@ -145,11 +370,12 @@ class TestLiveWritesKillSwitch:
         importlib.reload(ex)
         assert ex.LIVE_WRITES is False
 
-    def test_submit_lineup_is_not_implemented(self):
-        """The placeholder RAISES rather than no-ops, so a caller that forgets
-        to check LIVE_WRITES fails loudly instead of believing a write happened."""
-        with pytest.raises(NotImplementedError):
-            ex._submit_lineup("k", [])
+    def test_submit_lineup_requires_a_readable_roster_first(self):
+        """_submit_lineup now does real work (2026-07-30), but it must refuse
+        to even PLAN a write against a roster it couldn't read — never guess
+        at a real account's current state."""
+        with pytest.raises(RuntimeError):
+            ex._submit_lineup("k", [], _roster_fn=lambda k: "couldn't reach Yahoo")
 
 
 class TestProposeLineupChange:
@@ -206,16 +432,25 @@ class TestProposeLineupChange:
                                        _ledger_path=str(tmp_path / "l.jsonl"))
         assert "auto mode" in out and "live writes are off" in out
 
-    def test_auto_team_with_live_writes_but_no_submit_fn_still_does_not_execute(
+    def test_a_write_failure_partway_through_is_reported_honestly(
             self, monkeypatch, tmp_path):
-        """LIVE_WRITES=1 alone must not be enough — _submit_lineup itself raises
-        NotImplementedError, so this stays inert until a real write function
-        exists, matching the module's documented status."""
+        """When the REAL _submit_lineup (no override) hits an error, the
+        message must not claim success AND must not claim nothing happened —
+        a mid-plan failure can leave the roster in an intermediate state, so
+        the honest thing is to say there was an error and point at Yahoo
+        directly. Exercises the real default path via propose_lineup_change,
+        with wes_yahoo.roster_players mocked so this stays network-free."""
         monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex.wes_yahoo, "roster_players",
+                            lambda k: "couldn't reach Yahoo Fantasy just now.")
         self._team(monkeypatch, autonomy="auto")
+        path = tmp_path / "l.jsonl"
         out = ex.propose_lineup_change(_compute_fn=self._compute(),
-                                       _ledger_path=str(tmp_path / "l.jsonl"))
-        assert "not available" in out or "aren't built yet" in out
+                                       _ledger_path=str(path))
+        assert "error" in out.lower()
+        assert "check" in out.lower() or "verify" in out.lower()
+        logged = json.loads(path.read_text().strip().splitlines()[-1])
+        assert logged["executed"] == "unknown"
 
     def test_auto_team_with_live_writes_and_a_working_submit_fn_executes(
             self, monkeypatch, tmp_path):

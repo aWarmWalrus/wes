@@ -196,14 +196,17 @@ class TestRunTool:
         assert ws.run_tool("fantasy_propose_lineup_change", {"team": "Pop"}) \
             == "proposed for 'Pop'"
 
-    def test_propose_lineup_tool_description_says_shadow_mode_only(self):
-        """This tool cannot write to Yahoo yet. If the description ever stops
-        saying so, the model may start claiming it changed a real roster when
-        nothing moved — a false statement about a real account."""
+    def test_propose_lineup_tool_description_never_lets_the_model_assume(self):
+        """This tool CAN write to Yahoo now (2026-07-30), but whether a given
+        call actually does depends on config the model can't see. The
+        description must tell the model to relay whatever the tool's own reply
+        says, never to assume either way — a false claim about a real account
+        (in either direction) is the failure this guards."""
         tool = next(t for t in ws.TOOLS
                     if t["name"] == "fantasy_propose_lineup_change")
         desc = tool["description"].lower()
-        assert "shadow" in desc and "cannot" in desc
+        assert "never assume" in desc
+        assert "reply" in desc or "reports" in desc
 
     def test_nba_schedule_is_registered(self):
         assert "nba_schedule" in [t["name"] for t in ws.TOOLS]

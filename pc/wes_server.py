@@ -667,17 +667,21 @@ TOOLS = [
         "name": "fantasy_propose_lineup_change",
         "description": (
             "Check the owner's fantasy team's CURRENT Yahoo roster against the "
-            "optimal lineup and log a proposed change — for propose/auto teams "
-            "only (advise-only teams: use fantasy_optimize_lineup instead, which "
-            "just answers the question). Use for 'check my lineup for changes', "
-            "'run the GM cycle', 'propose lineup moves', 'has anything changed "
-            "since I last set my lineup'. IMPORTANT: this is currently SHADOW-"
-            "MODE ONLY — it computes, diffs against the real roster, and logs the "
-            "proposal, but it CANNOT and DOES NOT write to Yahoo yet (live writes "
-            "aren't built). Never say it set, changed, or executed anything on "
-            "Yahoo — say it proposed/logged a change, and that nothing on the "
-            "real roster moved. If it reports 'already optimal' or 'no changes "
-            "needed', relay that plainly."
+            "optimal lineup, and either propose or ACTUALLY MAKE the change — "
+            "for propose/auto teams only (advise-only teams: use "
+            "fantasy_optimize_lineup instead, which just answers the question). "
+            "Use for 'check my lineup for changes', 'run the GM cycle', 'set my "
+            "lineup', 'fix my roster', 'has anything changed since I last set my "
+            "lineup'. IMPORTANT: whether this WRITES to Yahoo depends on the "
+            "team's config, not on what you ask for — the tool's own reply tells "
+            "you which happened ('Set the lineup for...' means it really wrote "
+            "to Yahoo; 'Proposed'/'Would set'/'shadow run' means it only "
+            "computed and logged, nothing moved on the real roster). ALWAYS "
+            "relay exactly which one it reports — never assume either way, and "
+            "never claim a write happened unless the reply says so. If it "
+            "reports an error partway through a write, say so plainly and tell "
+            "the owner to check the real roster on Yahoo directly. If it reports "
+            "'already optimal' or 'no changes needed', relay that plainly."
         ),
         "input_schema": {
             "type": "object",

@@ -78,6 +78,91 @@ and handles edge cases. #028's planner serves the *ad-hoc* channel instead.
 
 ## Notes
 
+### 2026-07-30 (later still) — LIVE WRITES WORK: real mechanism found, a real
+### mistake made and corrected, then the FIRST verified live write via the GM tool
+Owner upgraded the model mid-session specifically to push on the write-path
+recon that had stalled. This entry is the honest full account, including a real
+error against the owner's actual account — recorded because it directly shaped
+the safety design, not glossed over.
+
+**The mechanism, found via screenshots (not blind DOM queries this time):**
+clicking a player's position badge selects them as swap SOURCE; Yahoo then adds
+class `swaptarget` (visually, turns GREEN) to every legal destination row and
+dims everything else. Clicking a `swaptarget` row performs the swap
+**instantly** — confirmed via an independent scraper read, not just the
+browser — no separate "Save Changes" step. The `jsubmit`/"Save Changes" hidden
+input found in earlier recon plays no role in this flow.
+
+**A real mistake, corrected honestly.** Two starting RB slots render with the
+*same* `data-pos`, so a swap target cannot be identified by slot type alone.
+Testing the occupied↔occupied case (Breece Hall ↔ Jaylen Warren), a
+type-based target match landed on the WRONG row — it swapped Hall with **Cam
+Skattebo** instead, benching the wrong player on the owner's real team. Caught
+immediately via an independent post-write check (the scraper, not just the
+browser), disclosed to the owner right away, and the harness itself blocked my
+first attempt at a one-off revert script (correctly — a live write needs real
+gating). Owner's instruction: fix it using the actual GM tooling, not a
+throwaway script. **That instruction is why `_submit_lineup` targets every swap
+by PLAYER, never by slot type** — the bug that caused the mistake is exactly
+the bug the shipped code refuses to make.
+
+**Shipped, `pc/wes_execute.py`:**
+- `_plan_swaps()` — PURE (no browser) planning: turns `diff_lineup`'s moves into
+  an ordered list of swap operations, pairing moves that satisfy each other
+  (A wants B's slot AND B wants to leave it → one Yahoo swap resolves both).
+  Documented honest limit: it only sees OCCUPIED slots (Yahoo's scraper never
+  reports a truly empty row), so it can't independently verify total slot
+  capacity — it trusts moves came from a capacity-valid `optimize_lineup` run,
+  true in normal use. A genuinely impossible move set isn't caught here; it's
+  caught one layer down.
+- `_dom_slot()` — translates the pipeline's slash-spelled slots ("W/R/T") to
+  Yahoo's underscore-spelled row `data-pos` ("W_R_T"). Empirically confirmed
+  against a real flex slot, not guessed.
+- `_execute_swap()` — drives ONE swap: click source, click the target matched
+  by **player name text**, or by "(Empty)" + slot type if the target is a
+  vacant slot. Raises `RuntimeError` with a specific reason on anything
+  unexpected — the safety net for `_plan_swaps`'s honest blind spot.
+- `_submit_lineup()` — orchestrates: reads the real roster, plans, executes
+  each swap in one session, then **re-reads the roster and verifies** every
+  move landed correctly before returning. Never assumes a click worked because
+  it didn't throw.
+- `propose_lineup_change()` — a write failure partway through is now reported
+  as "hit an error, the real roster may not match what you expect, check
+  Yahoo directly" (`executed: "unknown"` in the ledger) rather than implying
+  either success or total rollback — a mid-plan failure has no verification
+  pass to fall back on, so overclaiming either way would be dishonest.
+- Tool description updated: the tool now genuinely can write, so the model is
+  told to relay exactly what the tool's OWN reply says happened (`"Set the
+  lineup..."` vs `"Proposed..."` vs an error), never to assume.
+
+**VERIFIED LIVE, the whole pipeline, for real** — not a mock: with
+`WES_YAHOO_LIVE_WRITES=1`, `propose_lineup_change("Charles")` computed the
+current recommendation, diffed it against the (accidentally-wrong) real
+roster, planned two swaps, executed them, verified, and returned *"Set the
+lineup for Charles's Pop: Breece Hall RB→BN, Cam Skattebo BN→RB."* Confirmed
+independently via the scraper: roster now reads Jaylen Warren RB, Cam Skattebo
+RB, Breece Hall BN — everyone else untouched — matching exactly what the
+optimizer had recommended *before* any of this session's writes. Ledger entry:
+`"allowed": true, "executed": true, "dry_run": false`.
+
+**Kill switch confirmed off by default** for every other process — the one
+script that set `WES_YAHOO_LIVE_WRITES=1` did so only in its own process
+environment, never persisted, and a fresh check afterward confirmed
+`ex.LIVE_WRITES == False` everywhere else, including the live server (reloaded
+clean after this landed).
+
+578 tests pass (was 562), including new coverage: `_plan_swaps` (pairing,
+convergence, the exact same-type-target bug reproduced as a plan-level test),
+`_execute_swap` (targets by name, never by type, with a fake DOM proving it
+picks the right one of two same-typed candidates), and the honest-failure
+message path.
+
+**What's genuinely still open:** the kill switch stays off in the real
+environment — turning it on for unattended (scheduled) runs is a deliberate
+future decision, not an oversight. Multi-slot batch moves (3+ interacting
+swaps) are covered by the pure planner's tests but not yet exercised live.
+Team DEF valuation and #005 (scheduling) are unchanged.
+
 ### 2026-07-30 (later) — ESPN pool DEPTH fixed: pagination + a second, real quirk
 The pool-depth gap flagged after the first live run (only 12 TEs, Jake Ferguson
 missing) is substantially closed. `pool_by_position` now walks EVERY page of
