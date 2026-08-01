@@ -89,9 +89,14 @@ Register-ScheduledTask -TaskName "WES Nightly Eval" -Action $action `
 
 ### Fantasy GM task (#029 P3)
 
-Scheduled task **"WES Fantasy GM"** (daily 6:00 AM PT + Sunday 9:15 AM PT — the
-main NFL slate locks 10:00 AM PT, so this is a ~45min pre-lock check; 6 AM
-covers the Tuesday weekly-waiver clear + general injury news) runs
+Scheduled task **"WES Fantasy GM"** — four triggers, all Pacific:
+- **daily 6:00 AM** — covers the Tuesday weekly-waiver clear + general injury news
+- **Sunday 9:15 AM** — the main slate locks 10:00 AM PT (~45min pre-lock)
+- **Thursday + Monday 4:30 PM** — TNF/MNF kick 8:15 PM ET = 5:15 PM PT (same
+  ~45min lead). Added 2026-07-31; without these, a Thursday-night starter ruled
+  out during the day was only caught by the following 6 AM run, hours too late.
+
+Runs
 `C:\Users\awarm\wes-pc\run_fantasy_gm.ps1`: `pc\fantasy_gm_run.py` calls
 `wes_execute.propose_lineup_change` for every configured team whose autonomy is
 `propose` or `auto` (never `advise` — that mode can't act, so running it would
@@ -108,7 +113,19 @@ $action = New-ScheduledTaskAction -Execute "powershell.exe" `
 $principal = New-ScheduledTaskPrincipal -UserId "awarm" -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName "WES Fantasy GM" -Action $action -Principal $principal `
   -Trigger @((New-ScheduledTaskTrigger -Daily -At "06:00"),
-             (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At "09:15"))
+             (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At "09:15"),
+             (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Thursday -At "16:30"),
+             (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At "16:30"))
+```
+
+To add triggers to the EXISTING task without re-registering it (how the
+Thu/Mon ones were added — `Set-ScheduledTask` replaces the whole trigger set,
+so pass the existing ones back too):
+
+```powershell
+$t = Get-ScheduledTask -TaskName "WES Fantasy GM"
+Set-ScheduledTask -TaskName "WES Fantasy GM" -Trigger ($t.Triggers +
+  (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Thursday -At "16:30"))
 ```
 
 ## Tier 1 (Pi) client

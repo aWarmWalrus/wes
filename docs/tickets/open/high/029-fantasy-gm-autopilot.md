@@ -189,6 +189,66 @@ The next time its recommended lineup differs from Yahoo's, calling
 roster**. Reachable today only via that tool being invoked in conversation —
 #005 (scheduling) doesn't exist yet, so nothing runs this unattended.
 
+### 2026-07-31 — Thu/Mon pre-lock triggers; injury + IL/IR behaviour characterized
+**First fully unattended run happened**: the task fired itself at 06:00 on
+2026-07-31 (`LastTaskResult 0`), correctly skipped the advise-only team, found
+the lineup already optimal, and made no write. The whole loop works with no
+human in it.
+
+**Added Thursday + Monday 4:30 PM PT triggers** (TNF/MNF kick 8:15 PM ET =
+5:15 PM PT, so the same ~45min lead the Sunday trigger has). Without them a
+Thursday-night starter ruled out during the day was only caught by the next
+06:00 run — hours after kickoff. Added via `Set-ScheduledTask` on the existing
+task (it REPLACES the whole trigger set, so the existing triggers must be
+passed back in — noted in `docs/setup.md`).
+
+**Injury handling, traced rather than assumed:**
+- ✅ An injured starter is benched and a healthy backup promoted — `IR`/`O`/
+  `OUT`/`D`/`SUSP`/`PUP`/`NFI`/`NA`/`DNP` are all in the NFL out-status set.
+  `Q`/`QUESTIONABLE` is deliberately NOT, since questionable players routinely
+  play.
+- ⚠️ **Never observed working.** Checked the live roster: every status is
+  currently `''` (preseason). No real injury designation has ever flowed
+  through this code — the out-list comes from Yahoo's documented abbreviations,
+  not a captured example, exactly like the bye-week check. The first real
+  injury is also the first real test.
+- ⚠️ **Timing gaps remain even with the new triggers.** An injury announced
+  after a pre-lock run but before kickoff is still missed; NFL inactives drop
+  ~90min before games. The design's §6 injury/news watch is what would close
+  that, and it isn't built.
+- ⚠️ Valuation ignores injury entirely — a season-ending IR player still ranks
+  on full-season stats. Harmless for start/sit (the status check handles it),
+  but it would matter for waivers.
+
+**TRADES are handled well, essentially for free.** The roster is re-scraped
+from Yahoo every run and nothing is cached across runs, so a traded-away player
+simply isn't in the next scrape, an acquired player appears and gets valued
+like anyone else, and a player traded to a different NFL team keeps their
+ESPN-name-keyed stats. No trade-specific code exists or is needed — a real
+benefit of holding no roster state.
+
+**IL/IR, probed directly (see the behaviour, not the intent):**
+- ✅ Won't start an IR-designated player.
+- ✅ Won't emit spurious IR↔BN moves — `IR`/`IL`/`IL+`/`NA` all normalize to
+  `BN` for diffing, so "IR → bench" correctly registers as no move.
+- ✅ WILL activate a recovered player sitting in IR (probe: `Recovered IR→QB`).
+  Never executed against Yahoo though, and real IL activation usually needs an
+  open roster spot, so it may fail in practice.
+- ❌ **Never puts anyone ON IR.** The optimizer only ever emits real starting
+  slots or `BN`; `IR` is never a target (probe confirms). An injured starter
+  goes to the BENCH, not the IL — so the league's two IR slots stay permanently
+  empty and a long-term injury occupies a bench spot forever.
+
+That last one is a genuine gap but correctly *out* of P2/P3's scope: moving a
+player to IL is a ROSTER action, not a lineup action, and it only pays off if
+you can add a replacement — i.e. it's coupled to `waiver_claim`, which doesn't
+exist. **It should be built together with waivers AND with the currently
+unenforced guardrails** (`never_drop`, `max_moves_per_week`, `max_faab_bid_pct`
+are declared in `teams.yaml` and read by NO code — verified by grep). Those
+three are harmless today because `set_lineup` neither drops anyone nor spends
+FAAB, but `waiver_claim` is already in the team's `actions_allowed`, so the day
+waivers ship those guardrails would silently not apply unless wired first.
+
 ### 2026-07-30 — Team DEF valuation: the last data gap closed
 Owner asked for team defence valuation, and — good instinct — asked **which
 layer it would affect before building**. Answered from `docs/data-architecture.md`
