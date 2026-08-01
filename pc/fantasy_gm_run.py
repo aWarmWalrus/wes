@@ -43,16 +43,22 @@ def run_all(_teams_fn=None, _propose_fn=None, _roster_fn=None):
     ROSTER check. Returns True if every team's cycle completed without raising
     (regardless of what it decided to do); False if any team's cycle errored.
 
-    The roster check runs with execute=False — always, regardless of autonomy.
-    A drop is irreversible, so the scheduled job may SUGGEST one but never make
-    one on its own; the owner asks for it explicitly (#035). Its ledger entry is
-    what the Discord bot turns into a DM, and only when the suggestion has
-    CHANGED, so a standing recommendation doesn't nag every morning."""
+    Both checks now honour PER-ACTION autonomy (`wes_execute.autonomy_for`), so
+    a team can run its lineups unattended while still asking before a drop —
+    which is the whole reason the per-action form exists. A team with
+    `add_drop: auto` WILL make an irreversible drop on this scheduled run with
+    nobody watching; `max_moves_per_week` is what bounds that, and it is the
+    only thing that does. Either way the ledger entry is what the Discord bot
+    turns into a DM, and only when it has CHANGED, so a standing recommendation
+    doesn't nag every morning."""
     teams_fn = _teams_fn or wes_yahoo.configured_teams
     propose = _propose_fn or wes_execute.propose_lineup_change
     roster = _roster_fn or wes_execute.propose_roster_moves
-    teams = [t for t in teams_fn() if str(t.get("autonomy", "")).lower() in
-            ("propose", "auto")]
+    # A team is in scope if ANY action is above advise-only — the per-action map
+    # means "is this team live" is no longer a single field to read.
+    teams = [t for t in teams_fn()
+             if any(wes_execute.autonomy_for(t, a) in ("propose", "auto")
+                    for a in ("set_lineup", "add_drop"))]
     if not teams:
         print("[fantasy-gm] no propose/auto teams configured — nothing to do")
         return True

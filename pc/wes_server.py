@@ -673,12 +673,14 @@ TOOLS = [
             "slumping', 'any waiver moves', 'check the free agents', 'should I "
             "make a roster move'. By default this ONLY RECOMMENDS — it does not "
             "drop or add anyone. Dropping a player is PERMANENT (another "
-            "manager can claim them immediately), so unlike lineup changes it "
-            "never acts on its own. Only pass execute=true if the owner has "
-            "clearly asked you to actually make the move in this message; if "
-            "there is any doubt, recommend instead and ask. Relay exactly what "
-            "the reply says happened — 'Recommendation only' means nothing was "
-            "changed."
+            "manager can claim them immediately). To actually make a move you "
+            "must pass BOTH names in `approve`: the player to drop and the "
+            "player to add. Only do that when the owner has clearly said yes to "
+            "that specific pair in this message ('yes, drop X for Y', 'do it') "
+            "— never invent names, and if there is any doubt, call this with no "
+            "`approve` to get a recommendation and ask them first. Relay "
+            "exactly what the reply says happened — 'Recommendation only' means "
+            "nothing was changed."
         ),
         "input_schema": {
             "type": "object",
@@ -688,11 +690,18 @@ TOOLS = [
                     "description": ("optional team name when several are "
                                     "configured; omit for the default team"),
                 },
-                "execute": {
-                    "type": "boolean",
-                    "description": ("actually perform the drop/add. PERMANENT. "
-                                    "Only true when the owner explicitly asked "
-                                    "to make the move, not merely to check."),
+                "approve": {
+                    "type": "object",
+                    "description": ("the owner's approval of ONE specific move. "
+                                    "PERMANENT. Omit entirely to just get a "
+                                    "recommendation."),
+                    "properties": {
+                        "drop": {"type": "string",
+                                 "description": "player to drop, by name"},
+                        "add": {"type": "string",
+                                "description": "player to add, by name"},
+                    },
+                    "required": ["drop", "add"],
                 },
             },
             "required": [],
@@ -1070,12 +1079,16 @@ def run_tool(name, tool_input):
         if name == "fantasy_propose_lineup_change":
             return wes_execute.propose_lineup_change(tool_input.get("team"))
         if name == "fantasy_roster_moves":
-            # `execute` must be EXPLICITLY true — anything else (absent, null,
-            # the string "false", a stray truthy value) means recommend only,
-            # because the action it gates is irreversible.
-            return wes_execute.propose_roster_moves(
-                tool_input.get("team"),
-                execute=tool_input.get("execute") is True)
+            # Only a well-formed {drop, add} pair authorises a write. Anything
+            # else — absent, null, a bare string, half filled in — is recommend
+            # only, because the action it gates is irreversible. The names are
+            # then checked against the live recommendation downstream, so a
+            # hallucinated player refuses instead of dropping someone else.
+            ap = tool_input.get("approve")
+            if not (isinstance(ap, dict) and ap.get("drop") and ap.get("add")):
+                ap = None
+            return wes_execute.propose_roster_moves(tool_input.get("team"),
+                                                    approve=ap)
         return f"unknown tool: {name}"
     except Exception as e:  # noqa: BLE001
         return f"tool error: {e}"

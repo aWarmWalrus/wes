@@ -370,6 +370,36 @@ class TestSummarizeMoves:
         assert ex.summarize_moves([]) == []
 
 
+class TestAutonomyFor:
+    """Per-action autonomy (2026-08-01). Risk is per action, not per team."""
+
+    def test_scalar_applies_to_every_action(self):
+        """Back-compat: the original scalar form still means what it did."""
+        t = {"autonomy": "auto"}
+        assert ex.autonomy_for(t, "set_lineup") == "auto"
+        assert ex.autonomy_for(t, "add_drop") == "auto"
+
+    def test_per_action_map_is_read_per_action(self):
+        t = {"autonomy": {"set_lineup": "auto", "add_drop": "propose"}}
+        assert ex.autonomy_for(t, "set_lineup") == "auto"
+        assert ex.autonomy_for(t, "add_drop") == "propose"
+
+    def test_an_action_absent_from_the_map_is_advise(self):
+        """Not mentioning an action has NOT granted it — the safe reading, and
+        the one that matters when a new action type is added later."""
+        assert ex.autonomy_for({"autonomy": {"set_lineup": "auto"}},
+                               "add_drop") == "advise"
+
+    def test_missing_or_junk_autonomy_is_advise(self):
+        for t in ({}, {"autonomy": None}, {"autonomy": "banana"},
+                  {"autonomy": {"add_drop": "yolo"}}, {"autonomy": 7}):
+            assert ex.autonomy_for(t, "add_drop") == "advise"
+
+    def test_case_insensitive(self):
+        assert ex.autonomy_for({"autonomy": {"add_drop": "AUTO"}},
+                               "add_drop") == "auto"
+
+
 class TestGuardrails:
     def test_advise_teams_refuse_everything(self):
         allowed, reason = ex.check_guardrails({"autonomy": "advise"}, "set_lineup")
@@ -824,8 +854,11 @@ class TestIlCandidates:
 
 
 class TestProposeRosterMoves:
-    """The #035 entry point. execute defaults FALSE even for an auto team,
-    because a drop is irreversible."""
+    """The #035 entry point. A write needs either `autonomy.add_drop: auto` or
+    an explicit `approve={"drop","add"}` naming the pair — never a bare flag,
+    because a flag authorises "whatever is top of the list right now"."""
+
+    APPROVE = {"drop": "Slumping", "add": "Hot"}
 
     ROSTER = [{"name": "Slumping", "positions": ["WR"], "slot": "BN",
                "status": "", "player_key": "d1"}]
@@ -836,7 +869,10 @@ class TestProposeRosterMoves:
             {"name": "Hot", "positions": ["WR"], "gp": 10,
              "cats": {"RecYds": 2000}, "espn_id": "e2"}]
 
-    def _cfg(self, monkeypatch, autonomy="auto", **guard):
+    # Default to add_drop:propose — "recommend, but ask before dropping" is the
+    # interesting middle case and the one most tests here are about. Full auto
+    # gets its own explicit tests.
+    def _cfg(self, monkeypatch, autonomy={"add_drop": "propose"}, **guard):
         monkeypatch.setattr(
             ex.wes_yahoo, "_resolve_team",
             lambda t=None: ({"team_key": "nfl.l.1.t.1", "league_key": "nfl.l.1",
@@ -864,12 +900,12 @@ class TestProposeRosterMoves:
         assert "Recommendation only" in out
         assert "Slumping" in out and "Hot" in out
 
-    def test_never_executes_without_being_asked_even_on_auto(
+    def test_propose_mode_never_writes_without_an_approval(
             self, monkeypatch, tmp_path):
-        """The key safety property: unlike lineups, autonomy alone must not
-        trigger an irreversible write."""
+        """`add_drop: propose` recommends and waits. Nothing about being in
+        propose mode may itself trigger the irreversible write."""
         monkeypatch.setattr(ex, "LIVE_WRITES", True)
-        self._cfg(monkeypatch, autonomy="auto")
+        self._cfg(monkeypatch, autonomy={"add_drop": "propose"})
         called = []
         out = ex.propose_roster_moves(
             "Test", **self._kw(tmp_path,
@@ -882,7 +918,7 @@ class TestProposeRosterMoves:
         self._cfg(monkeypatch, never_drop=["Slumping"])
         called = []
         out = ex.propose_roster_moves(
-            "Test", execute=True,
+            "Test", approve=self.APPROVE,
             **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
         # Protected players aren't even proposed, so there's nothing to execute.
         assert called == [] and "No roster moves" in out
@@ -893,7 +929,7 @@ class TestProposeRosterMoves:
         self._cfg(monkeypatch, max_moves_per_week=1)
         called = []
         out = ex.propose_roster_moves(
-            "Test", execute=True,
+            "Test", approve=self.APPROVE,
             **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
         assert called == [] and "max_moves_per_week" in out
 
@@ -902,7 +938,7 @@ class TestProposeRosterMoves:
         self._cfg(monkeypatch)
         called = []
         out = ex.propose_roster_moves(
-            "Test", execute=True,
+            "Test", approve=self.APPROVE,
             **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
         assert called == [] and "live writes are off" in out
 
@@ -913,7 +949,7 @@ class TestProposeRosterMoves:
         called = []
         path = tmp_path / "l.jsonl"
         out = ex.propose_roster_moves(
-            "Test", execute=True,
+            "Test", approve=self.APPROVE,
             **self._kw(tmp_path, _ledger_path=str(path),
                        _submit_fn=lambda tk, a, d: called.append((tk, a, d))))
         assert len(called) == 1
@@ -921,6 +957,98 @@ class TestProposeRosterMoves:
         assert "Made this roster move" in out
         logged = json.loads(path.read_text().strip().splitlines()[-1])
         assert logged["executed"] is True
+
+    def test_full_auto_writes_without_any_approval(self, monkeypatch, tmp_path):
+        """`autonomy.add_drop: auto` is TRUE full auto — the scheduled run makes
+        the drop unattended. This is the capability the per-action config exists
+        to express; before it, autonomy could not say this at all."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 0)
+        self._cfg(monkeypatch, autonomy={"add_drop": "auto"})
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", **self._kw(tmp_path,
+                               _submit_fn=lambda tk, a, d: called.append((a, d))))
+        assert called == [("a1", "d1")]
+        assert "Made this roster move" in out
+
+    def test_lineup_auto_does_not_grant_add_drop(self, monkeypatch, tmp_path):
+        """The whole point of per-action autonomy: running lineups unattended
+        must NOT imply permission to drop anyone."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        self._cfg(monkeypatch, autonomy={"set_lineup": "auto"})
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", **self._kw(tmp_path,
+                               _submit_fn=lambda *a: called.append(1)))
+        assert called == []
+        assert "Recommendation only" in out
+
+    def test_a_stale_approval_is_refused_rather_than_substituted(
+            self, monkeypatch, tmp_path):
+        """THE reason approval names players instead of being a bare flag. The
+        owner approved a pair; by the time it runs, that pair is not what the
+        engine would do. It must refuse — not drop whoever is top of the list.
+        A cached-empty ESPN page really did shift recs[0] between a suggestion
+        and its approval (#035, 2026-07-31)."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 0)
+        self._cfg(monkeypatch)
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", approve={"drop": "Someone Else", "add": "Hot"},
+            **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
+        assert called == []                       # nobody was dropped
+        assert "didn't make that move" in out
+        assert "Slumping" in out                  # what it WOULD do, to re-ask
+
+    def test_approval_matches_a_lower_ranked_recommendation(
+            self, monkeypatch, tmp_path):
+        """Approving the second-best move is legitimate — the owner may prefer
+        it. It executes THAT pair, not the top one."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 0)
+        self._cfg(monkeypatch)
+        roster = self.ROSTER + [{"name": "Slumping2", "positions": ["WR"],
+                                 "slot": "BN", "status": "",
+                                 "player_key": "d2"}]
+        avail = self.AVAIL + [{"name": "Hot2", "positions": ["WR"],
+                               "is_free_agent": True, "player_key": "a2"}]
+        pool = self.POOL + [
+            {"name": "Slumping2", "positions": ["WR"], "gp": 10,
+             "cats": {"RecYds": 400}, "espn_id": "e3"},
+            {"name": "Hot2", "positions": ["WR"], "gp": 10,
+             "cats": {"RecYds": 1500}, "espn_id": "e4"}]
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", approve={"drop": "Slumping2", "add": "Hot2"},
+            **self._kw(tmp_path, _roster_fn=lambda k: roster,
+                       _fa_fn=lambda k: avail, _pool_fn=lambda: (pool, []),
+                       _submit_fn=lambda tk, a, d: called.append((a, d))))
+        assert called == [("a2", "d2")]
+        assert "Made this roster move" in out
+
+    def test_a_half_filled_approval_is_refused(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        self._cfg(monkeypatch)
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", approve={"drop": "Slumping"},
+            **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
+        assert called == [] and "both halves" in out
+
+    def test_approval_tolerates_punctuation_and_case(self, monkeypatch, tmp_path):
+        """The name comes back through a 12b, so it round-trips through text.
+        Matching is normalized for the same reason never_drop is."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 0)
+        self._cfg(monkeypatch)
+        called = []
+        ex.propose_roster_moves(
+            "Test", approve={"drop": "slumping", "add": "HOT"},
+            **self._kw(tmp_path,
+                       _submit_fn=lambda tk, a, d: called.append((a, d))))
+        assert called == [("a1", "d1")]
 
     def test_only_the_executed_move_is_reported_and_logged(
             self, monkeypatch, tmp_path):
@@ -945,7 +1073,7 @@ class TestProposeRosterMoves:
         path = tmp_path / "l.jsonl"
         called = []
         out = ex.propose_roster_moves(
-            "Test", execute=True,
+            "Test", approve=self.APPROVE,
             **self._kw(tmp_path, _roster_fn=lambda k: roster,
                        _fa_fn=lambda k: avail, _pool_fn=lambda: (pool, []),
                        _ledger_path=str(path),
@@ -971,7 +1099,7 @@ class TestProposeRosterMoves:
         def boom(tk, a, d):
             raise RuntimeError("yahoo said no")
         out = ex.propose_roster_moves(
-            "Test", execute=True,
+            "Test", approve=self.APPROVE,
             **self._kw(tmp_path, _ledger_path=str(path), _submit_fn=boom))
         assert "permanent" in out.lower() and "check the real roster" in out.lower()
         logged = json.loads(path.read_text().strip().splitlines()[-1])

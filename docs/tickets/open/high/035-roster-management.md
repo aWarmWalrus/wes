@@ -300,3 +300,55 @@ an audit trail you can edit isn't one.
 irreversible one and must never be granted as a side effect of allowing waivers.
 
 723 tests pass (was 722).
+
+## Per-action autonomy + approval-by-name — 2026-08-01
+
+Owner review of the API: *"it seems weird to use execute as a param for that. if
+it's in recommend only mode it should just recommend right?"* Correct, and the
+digging found the actual cause rather than a naming nit.
+
+**`autonomy` and `execute` overlapped, and one did nothing.** `check_guardrails`
+only ever rejected `advise`, so for roster moves `propose` and `auto` were
+*identical* — the mode config could not express "run my lineups but ask before
+dropping anyone", and the whole decision rode on the `execute` flag. Meanwhile
+for lineups `auto` genuinely did mean auto-execute. One word, two meanings,
+depending on the action.
+
+Root cause: **autonomy was per TEAM when risk is per ACTION.** A bad lineup
+self-corrects on the next run; a drop never does. `autonomy` now accepts a
+per-action map (scalar still means "all actions"), resolved by
+`wes_execute.autonomy_for`. An action absent from the map is `advise` — not
+mentioning something has not granted it.
+
+**`execute: bool` → `approve: {drop, add}`.** The flag's real fault wasn't
+ergonomics, it was carrying no identity: `execute=True` submitted whatever
+`recs[0]` happened to be *at that moment*, and recs[0] demonstrably shifts (the
+cache bug above did exactly that between a suggestion and its approval). An
+approval now names both players and is re-checked against the live
+recommendation; if it no longer matches, it **refuses and re-asks** rather than
+dropping whoever is top of the list. The guard that had to be hand-written in
+`do_swap.py` is now the contract — a safety check living in a scratchpad script
+was the tell that the signature was wrong.
+
+This also improves the tool layer, where a 12b decides. Echoing the two names it
+heard is better-conditioned than emitting a bare boolean, and unlike a boolean a
+wrong answer is *checkable*. Malformed, half-filled, or stringy values all
+degrade to recommend-only.
+
+**Charles's Pop is now TRUE full auto for add/drop** — the scheduled GM run will
+drop and add players unattended and permanently. Deliberate, and confined to the
+designated soak league. Two consequences worth stating plainly:
+- `max_moves_per_week` **cut 6 → 3**. For lineups a cap is tidiness; for
+  unattended drops it is the only bound on a bug, and on a daily schedule 6 let
+  a broken run churn most of a week before the DMs made it obvious.
+- Full auto has **no second look at the data**. In propose mode, the
+  approval-match check is what would catch a degraded pool. Unattended, that
+  defense is gone, leaving only `recommend_roster_moves` refusing on `None`
+  values and `require_fresh_data_minutes`.
+
+Note the scalar form now grants more than it used to: `autonomy: auto` means
+auto for *every* action including drops. `actions_allowed` is the second key —
+verified on the live config that only Charles's Pop resolves to unattended
+drops.
+
+740 tests pass (was 723).

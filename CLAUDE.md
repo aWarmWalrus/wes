@@ -156,7 +156,8 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   settings; `pc/wes_nfl.py` values players from a paginated ESPN pool;
   `pc/wes_fantasy.py` optimizes the lineup; `pc/wes_execute.py` (P3) diffs
   against the real roster and **writes it to Yahoo for real** — gated by
-  per-team `autonomy`/`actions_allowed` in `teams.yaml` and the
+  **per-ACTION** `autonomy` (`wes_execute.autonomy_for`; a scalar still means
+  all actions) plus `actions_allowed` in `teams.yaml`, and the
   `WES_YAHOO_LIVE_WRITES` kill switch (**ON**, surfaced at `GET /health` as
   `fantasy_live_writes`). Every write re-verifies the roster afterward and
   targets swaps by player, never by slot type (a real mistake during
@@ -168,10 +169,14 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   that's the real driver) and DMed to the owner via `wes_discord.fantasy_watch`
   (a sibling of the alert watcher — polls the ledger, phrases via Jarvis).
   **Feature-complete for its original scope as of 2026-07-30**, live on one
-  real team (`nfl.l.957011.t.4`, `autonomy: auto`, the owner's deliberately-
-  chosen "don't care about the outcome" league). Open, named extensions: no
-  `propose`-mode Discord approve/reject, no Thu/Mon pre-lock check, no
-  team-DEF valuation. Draft automation (#030) deprioritized — owner will
+  real team (`nfl.l.957011.t.4`, the owner's deliberately-chosen "don't care
+  about the outcome" league). Roster management (#035) drops/adds too, and that
+  team runs `add_drop: auto` — **it makes irreversible drops unattended on the
+  scheduled run**, bounded only by `max_moves_per_week: 3`. Anywhere else a drop
+  needs `approve={"drop","add"}` naming both players, re-checked against the
+  live recommendation and refused if stale (never substituted). Open, named
+  extensions: no `propose`-mode Discord approve/reject, no Thu/Mon pre-lock
+  check, no team-DEF valuation. Draft automation (#030) deprioritized — owner will
   draft manually. Full history + every finding: ticket #029.
   Platform pivoted from the official Yahoo API to browser automation (API access
   now requires a no-caching DocuSign).

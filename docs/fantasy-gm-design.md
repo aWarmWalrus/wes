@@ -123,7 +123,12 @@ teams:
     sport: nba
     league_id: "466.l.12345"
     team_id: "466.l.12345.t.3"
-    autonomy: auto            # advise | propose | auto
+    # advise | propose | auto — either a scalar (all actions) or a per-action
+    # map, because risk is per action: a bad lineup self-corrects on the next
+    # run, a drop never does.
+    autonomy:
+      set_lineup: auto
+      add_drop: propose       # run my lineups, but ask before dropping anyone
     guardrails:
       max_faab_bid: 25        # % of budget per claim
       max_moves_per_week: 4
@@ -136,15 +141,29 @@ teams:
     guardrails: { max_faab_bid: 15, max_moves_per_week: 2, actions_allowed: [set_lineup] }
 ```
 
-**The three modes:**
+**The three modes** (resolved per action by `wes_execute.autonomy_for`; an
+action absent from a per-action map is `advise`, i.e. not granted):
 - **`advise`** — analyze and answer only; never touches the team.
 - **`propose`** — compute the move, DM a proposal, wait for approve/reject
   (expiring token); only then execute.
 - **`auto`** — execute within guardrails, then send an after-action report.
 
-Autonomy is **per action type too** (via `actions_allowed`): a team can be
-`auto` for lineups but only `propose` for adds/drops and `advise` for trades.
-New teams **default to `propose`** (or `advise`); `auto` is always opt-in.
+Autonomy is **per action type** (2026-08-01): a team can be `auto` for lineups
+but only `propose` for adds/drops. This was originally specified as being
+handled "via `actions_allowed`", which was wrong — that list says *whether* an
+action may ever happen, not *how much supervision* it needs. Two different
+questions, and collapsing them is what forced an `execute=True` flag onto
+`propose_roster_moves` to cover the gap. They are now separate: `actions_allowed`
+gates the action, per-action `autonomy` sets its supervision level, and a write
+needs both. New teams **default to `propose`** (or `advise`); `auto` is always
+opt-in.
+
+For `add_drop` specifically, `propose` mode is consumed by an approval that
+**names both players** — `approve={"drop": ..., "add": ...}` — which is then
+re-checked against the current recommendation and refused if it no longer
+matches. A bare "yes" flag authorises whatever is top of the list at that
+instant, and that list has really shifted between a suggestion and its approval
+(a cached empty ESPN page silently degrading the pool, #035).
 
 ---
 

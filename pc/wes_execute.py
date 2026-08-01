@@ -41,13 +41,19 @@ SAFETY PROPERTIES THIS BUYS:
     just because it didn't throw. Any mismatch raises immediately rather than
     continuing to compound an error, and the ledger records exactly how far it
     got.
-  - Nothing here is reachable without `WES_YAHOO_LIVE_WRITES=1` (still unset by
-    default) AND `autonomy: auto` AND the action being in `actions_allowed` —
-    three independent gates, not one.
+  - Nothing here is reachable without `WES_YAHOO_LIVE_WRITES=1` AND that
+    ACTION's autonomy being `auto` (or, for add_drop, an explicit owner
+    approval naming both players) AND the action being in `actions_allowed` —
+    three independent gates, not one. Autonomy is PER ACTION since 2026-08-01
+    (`autonomy_for`), so running lineups unattended does not imply permission
+    to drop anyone; note that the scalar form still means "all actions", which
+    is why `add_drop` must ALSO be listed in actions_allowed to be reachable.
 
 WHAT THIS MODULE DOES:
   - diff_lineup(): the optimizer's recommendation vs. the CURRENT Yahoo roster,
     reduced to the moves that would actually change something.
+  - autonomy_for(): this team's mode FOR ONE ACTION — risk is per action, not
+    per team (a bad lineup self-corrects next run; a drop never does).
   - check_guardrails(): autonomy mode + actions_allowed + freshness, from the
     team's teams.yaml record (design §4-§5). Degrades to (False, reason) rather
     than raising — a misconfigured guardrail should refuse the action, not crash
@@ -58,6 +64,9 @@ WHAT THIS MODULE DOES:
     use `fantasy_optimize_lineup` instead; PROPOSE gets a logged dry-run report
     (Discord approve/reject isn't wired up yet — still a shadow run); AUTO
     writes for real if the kill switch is on, else reports what it would do.
+  - propose_roster_moves(): the same for drop/add (#035). Writes on `auto`, or
+    on an `approve={"drop","add"}` that still matches what the engine would do
+    right now — a stale approval is REFUSED, never substituted.
 """
 import json
 import os
@@ -355,16 +364,44 @@ def check_roster_move(team, drop_name, add_name=None, _now=None,
     return True, ""
 
 
+def autonomy_for(team, action_type):
+    """This team's autonomy mode FOR ONE ACTION: 'advise' | 'propose' | 'auto'.
+
+    `autonomy` may be a scalar (applies to every action) or a per-action map:
+
+        autonomy:
+          set_lineup: auto
+          add_drop: propose
+
+    Per-action is the honest shape, because risk is per action, not per team: a
+    bad lineup self-corrects on the next run, a drop never does. The scalar form
+    used to be the only one, and the gap it left is exactly why an `execute`
+    boolean got bolted onto propose_roster_moves — the config couldn't say "run
+    my lineups but ask me before dropping anyone" (#035, 2026-08-01).
+
+    Unknown/missing actions fall back to 'advise', the mode that never acts."""
+    mode = team.get("autonomy")
+    if isinstance(mode, dict):
+        # A per-action map that doesn't mention this action has not granted it.
+        mode = mode.get(action_type)
+    mode = str(mode or "advise").lower()
+    return mode if mode in ("advise", "propose", "auto") else "advise"
+
+
 def check_guardrails(team, action_type, _now=None):
     """(allowed: bool, reason: str) for `action_type` under `team`'s configured
     autonomy + guardrails (teams.yaml, design §4-§5). Never raises — a
     misconfigured or absent guardrail REFUSES the action rather than crashing,
-    since the safe failure mode for a real-money write is "did nothing."""
-    mode = str(team.get("autonomy") or "advise").lower()
+    since the safe failure mode for a real-money write is "did nothing."
+
+    NOTE this answers "may this action be taken at all", not "should it happen
+    unattended" — `advise` is refused here, but `propose` and `auto` both pass.
+    Callers decide between those two via `autonomy_for`."""
+    mode = autonomy_for(team, action_type)
     if mode == "advise":
-        return False, ("this team is advise-only — read `fantasy_optimize_lineup` "
-                       "for a recommendation, but nothing may be proposed or "
-                       "executed for it")
+        return False, (f"this team is advise-only for '{action_type}' — read "
+                       f"`fantasy_optimize_lineup` for a recommendation, but "
+                       f"nothing may be proposed or executed for it")
     guard = team.get("guardrails") or {}
     allowed = guard.get("actions_allowed") or []
     if action_type not in allowed:
@@ -701,19 +738,28 @@ def summarize_il_candidates(cands, il_slot="IR"):
             f"spot for a pickup." for c in cands]
 
 
-def propose_roster_moves(team=None, execute=False, _roster_fn=None,
+def propose_roster_moves(team=None, approve=None, _roster_fn=None,
                          _fa_fn=None, _pool_fn=None, _scoring_fn=None,
                          _gamelog_fn=None, _submit_fn=None, _now=None,
                          _ledger_path=None):
     """#035 entry point: find underperformers, check who's available, and
-    recommend (or, gated, execute) drop/add pairs.
+    recommend (or, gated, execute) a drop/add pair.
 
-    **`execute` defaults to FALSE, and that default is deliberate even for an
-    `auto` team.** Every other action in this system is reversible — a bad
-    lineup is fixed by the next scheduled run. A drop is not: another manager
-    can claim the player within minutes. So unlike `propose_lineup_change`,
-    autonomy alone never triggers a write here; the caller must ASK for it,
-    and the guardrails must then also allow it.
+    Writing happens on exactly two paths:
+
+    * **`autonomy.add_drop: auto`** — unattended, on the scheduled run. True
+      full auto; the weekly cap is the blast radius.
+    * **`approve={"drop": name, "add": name}`** — the owner said yes to a
+      specific pair. It is checked against the CURRENT top recommendation and
+      refused if it no longer matches.
+
+    That check is the point of naming the players rather than passing a bare
+    `execute=True` flag, which is what this used to take. A flag authorises
+    "whatever recs[0] is at this instant" — and recs[0] really did change
+    between a suggestion and its approval once, when a cached empty ESPN page
+    silently degraded the pool. It also means the local 12b has to echo the two
+    names it heard, which is both better-conditioned than a bare boolean and,
+    unlike a boolean, checkable.
 
     Degrades to a string on any problem; never raises into a turn."""
     chosen, err = wes_yahoo._resolve_team(team)
@@ -727,6 +773,16 @@ def propose_roster_moves(team=None, execute=False, _roster_fn=None,
     if str(chosen.get("sport") or wes_yahoo._sport_of(team_key)).lower() != "nfl":
         return (f"Roster management is NFL-only so far — {name} is not an NFL "
                 f"team.")
+
+    mode = autonomy_for(chosen, "add_drop")
+    # A half-filled approval is a caller bug, and the action is irreversible, so
+    # it refuses rather than guessing the missing half from the recommendation.
+    if approve is not None:
+        if not (isinstance(approve, dict) and approve.get("drop")
+                and approve.get("add")):
+            return ("To make a roster move I need both halves named — who to "
+                    "drop and who to add. Nothing was changed.")
+    execute = mode == "auto" or approve is not None
 
     roster = (_roster_fn or wes_yahoo.roster_players)(team_key)
     if not isinstance(roster, list):
@@ -776,15 +832,15 @@ def propose_roster_moves(team=None, execute=False, _roster_fn=None,
         if execute:
             _append_ledger({"ts": _now if _now is not None else time.time(),
                             "team_key": team_key, "name": name, "sport": "nfl",
-                            "action_type": "add_drop", "moves": [],
-                            "executed": False, "dry_run": True,
+                            "action_type": "add_drop", "autonomy": mode,
+                            "moves": [], "executed": False, "dry_run": True,
                             "reason": "execute requested but no move qualified"},
                            _ledger_path)
         return (f"No roster moves worth making for {name} — nobody has fallen "
                 f"off enough for an available player to be a clear upgrade."
                 + (" (You asked me to make the move, but the check came back "
                    "empty this time — if you saw a suggestion earlier, ask me "
-                   "to check again.)" if execute else ""))
+                   "to check again.)" if approve is not None else ""))
 
     why = summarize_roster_moves(recs)
     # R6: an injured player stashed on IL frees a bench spot, which is only
@@ -798,15 +854,16 @@ def propose_roster_moves(team=None, execute=False, _roster_fn=None,
     body = "\n".join(f"  {line}" for line in why)
     now = _now if _now is not None else time.time()
     entry = {"ts": now, "team_key": team_key, "name": name, "sport": "nfl",
-             "action_type": "add_drop", "autonomy": chosen.get("autonomy"),
+             "action_type": "add_drop", "autonomy": mode,
              "moves": recs, "why": why, "executed": False, "dry_run": True}
 
     if not execute:
-        entry["reason"] = "recommendation only (execute not requested)"
+        entry["reason"] = f"recommendation only (autonomy.add_drop={mode})"
         _append_ledger(entry, _ledger_path)
         return (f"Roster moves worth considering for {name}:\n{body}\n"
                 f"(Recommendation only — nothing was dropped or added. Drops "
-                f"are permanent, so this never acts unless explicitly asked.)")
+                f"are permanent, so this one needs your say-so: tell me who to "
+                f"drop and who to add.)")
 
     # ONE move per run: `top` is the only pair submitted below. The summary and
     # the ledger must therefore describe `top` ALONE. Reporting the whole `recs`
@@ -814,6 +871,27 @@ def propose_roster_moves(team=None, execute=False, _roster_fn=None,
     # wrote it to the audit trail as executed — caught 2026-08-01 by diffing the
     # real roster against the report. The rest are still surfaced, as NOT done.
     top = recs[0]
+    # THE approval check. An approved pair must still be the move the engine
+    # would make right now; if the data moved underneath us, refuse and re-ask
+    # rather than dropping whoever happens to be top of the list. This lived in
+    # a one-off script before it lived here, which was the tell that the old
+    # `execute=True` signature was wrong.
+    if approve is not None:
+        want = (_norm_name_key(approve["drop"]), _norm_name_key(approve["add"]))
+        match = next((r for r in recs
+                      if (_norm_name_key(r["drop"]),
+                          _norm_name_key(r["add"])) == want), None)
+        if match is None:
+            entry["reason"] = (f"approved pair {approve['drop']} -> "
+                               f"{approve['add']} is no longer recommended")
+            _append_ledger(entry, _ledger_path)
+            return (f"I didn't make that move: dropping {approve['drop']} for "
+                    f"{approve['add']} isn't what the numbers say right now. "
+                    f"Nothing was changed. Current thinking:\n"
+                    + "\n".join(f"  {line}"
+                                for line in summarize_roster_moves(recs)))
+        top = match
+
     why = summarize_roster_moves([top])
     body = "\n".join(f"  {line}" for line in why)
     entry["moves"], entry["why"] = [top], why
@@ -887,7 +965,7 @@ def propose_lineup_change(team=None, _compute_fn=None, _submit_fn=None,
     now = _now if _now is not None else time.time()
     entry = {"ts": now, "team_key": out["team_key"], "name": out["name"],
              "sport": out["sport"], "action_type": "set_lineup",
-             "autonomy": chosen.get("autonomy"), "moves": moves,
+             "autonomy": autonomy_for(chosen, "set_lineup"), "moves": moves,
              "allowed": allowed, "reason": reason, "executed": False,
              "dry_run": True}
 
@@ -900,7 +978,7 @@ def propose_lineup_change(team=None, _compute_fn=None, _submit_fn=None,
         _append_ledger(entry, _ledger_path)
         return f"Not proposing a lineup change for {out['name']}: {reason}."
 
-    mode = str(chosen.get("autonomy") or "advise").lower()
+    mode = autonomy_for(chosen, "set_lineup")
     move_lines = "\n".join(f"  {m['name']}: {m['from_slot'] or '(none)'} -> "
                            f"{m['to_slot']}" for m in moves)
     why = summarize_moves(moves)

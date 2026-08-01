@@ -1597,43 +1597,63 @@ class TestSceneContext:
 
 
 class TestFantasyRosterMovesTool:
-    """#035 — the roster tool. Its `execute` flag gates an IRREVERSIBLE action,
-    so the dispatch must be strict about what counts as 'yes'."""
+    """#035 — the roster tool. It gates an IRREVERSIBLE action, so the dispatch
+    must be strict about what counts as 'yes'. Since 2026-08-01 approval names
+    BOTH players rather than setting a flag: a flag authorises "whatever is top
+    of the list right now", and that list really did shift between a suggestion
+    and its approval once."""
+
+    def _spy(self, monkeypatch, seen):
+        monkeypatch.setattr(
+            ws.wes_execute, "propose_roster_moves",
+            lambda team=None, approve=None: seen.update(
+                team=team, approve=approve) or "ok")
 
     def test_registered(self):
         assert "fantasy_roster_moves" in [t["name"] for t in ws.TOOLS]
 
     def test_defaults_to_recommend_only(self, monkeypatch):
         seen = {}
-        monkeypatch.setattr(
-            ws.wes_execute, "propose_roster_moves",
-            lambda team=None, execute=False: seen.update(
-                team=team, execute=execute) or "ok")
+        self._spy(monkeypatch, seen)
         ws.run_tool("fantasy_roster_moves", {})
-        assert seen["execute"] is False
+        assert seen["approve"] is None
 
-    def test_execute_true_is_passed_through(self, monkeypatch):
+    def test_a_complete_pair_is_passed_through(self, monkeypatch):
         seen = {}
-        monkeypatch.setattr(
-            ws.wes_execute, "propose_roster_moves",
-            lambda team=None, execute=False: seen.update(execute=execute) or "ok")
-        ws.run_tool("fantasy_roster_moves", {"execute": True})
-        assert seen["execute"] is True
+        self._spy(monkeypatch, seen)
+        ws.run_tool("fantasy_roster_moves",
+                    {"approve": {"drop": "Jake Ferguson",
+                                 "add": "Brenton Strange"}})
+        assert seen["approve"] == {"drop": "Jake Ferguson",
+                                   "add": "Brenton Strange"}
 
-    @pytest.mark.parametrize("val", ["true", "yes", 1, "false", None, 0, ""])
-    def test_only_a_real_boolean_true_executes(self, monkeypatch, val):
-        """A stringy or truthy value must NOT trigger a permanent drop — the
-        model emitting "true" instead of true should degrade to recommending,
-        not to dropping a player."""
+    @pytest.mark.parametrize("val", [
+        True, "yes", 1, None, "", [], {},
+        {"drop": "A"},                 # half filled in
+        {"add": "B"},
+        {"drop": "A", "add": ""},      # blank half
+        {"drop": "", "add": "B"},
+        "drop A add B",                # a sentence, not a pair
+    ])
+    def test_anything_that_is_not_a_complete_pair_recommends_instead(
+            self, monkeypatch, val):
+        """A stringy, truthy, or half-formed value must NOT trigger a permanent
+        drop. The local 12b emitting something malformed should degrade to
+        recommending, never to dropping a player."""
         seen = {}
-        monkeypatch.setattr(
-            ws.wes_execute, "propose_roster_moves",
-            lambda team=None, execute=False: seen.update(execute=execute) or "ok")
-        ws.run_tool("fantasy_roster_moves", {"execute": val})
-        assert seen["execute"] is False
+        self._spy(monkeypatch, seen)
+        ws.run_tool("fantasy_roster_moves", {"approve": val})
+        assert seen["approve"] is None
+
+    def test_schema_requires_both_halves(self):
+        tool = next(t for t in ws.TOOLS if t["name"] == "fantasy_roster_moves")
+        ap = tool["input_schema"]["properties"]["approve"]
+        assert set(ap["required"]) == {"drop", "add"}
 
     def test_description_warns_the_drop_is_permanent(self):
         tool = next(t for t in ws.TOOLS if t["name"] == "fantasy_roster_moves")
         desc = tool["description"].lower()
         assert "permanent" in desc
-        assert "only recommends" in desc or "never acts on its own" in desc
+        assert "only recommends" in desc
+        # It must tell the model to name the players, not flip a switch.
+        assert "approve" in desc and "never invent names" in desc
