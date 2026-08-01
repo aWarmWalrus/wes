@@ -567,26 +567,39 @@ def _submit_add_drop(team_key, add_player_key, drop_player_key,
     with session_cls() as page:
         page.goto(add_url, wait_until="domcontentloaded")
         page.wait_for_timeout(2000)
-        box = page.query_selector(f"input[name='dpid'][value='{drop_player_key}']")
-        if box is None:
+        # The `dpid` checkbox is HIDDEN — Yahoo styles a real button over it
+        # (`.add-drop-trigger-btn[data-check-box-value]`, title "Click to drop
+        # this player"). Checking the input directly times out on "element is
+        # not visible"; driving the visible control is both what works and what
+        # keeps Yahoo's own JS in play, the same lesson as the lineup swapper.
+        # NOTE the attribute value carries a trailing space ("34085 "), so it is
+        # compared stripped rather than matched with a CSS selector.
+        trigger = None
+        for btn in page.query_selector_all(".add-drop-trigger-btn"):
+            if (btn.get_attribute("data-check-box-value") or "").strip()                     == str(drop_player_key):
+                trigger = btn
+                break
+        if trigger is None:
             raise RuntimeError(
                 f"the add form didn't offer {drop_player_key!r} as a drop "
                 f"option — refusing to guess a different player")
-        box.check()
-        page.wait_for_timeout(300)
-        submitted = False
-        for sel in ("form[action*='addplayer'] button[type=submit]",
-                    "form[action*='addplayer'] input[type=submit]",
-                    "button:has-text('Add Player')",
-                    "input[value='Add Player']"):
+        trigger.scroll_into_view_if_needed()
+        page.wait_for_timeout(200)
+        trigger.click()
+        page.wait_for_timeout(1500)
+
+        # Clicking the trigger may complete the transaction on its own or reveal
+        # a confirm step; handle both rather than assuming which.
+        for sel in ("button:has-text('Add Player')",
+                    "input[value='Add Player']",
+                    "button:has-text('Confirm')",
+                    "form[action*='addplayer'] input[type=submit]"):
             el = page.query_selector(sel)
-            if el:
+            if el and el.is_visible():
                 el.click()
-                submitted = True
+                page.wait_for_timeout(2000)
                 break
-        if not submitted:
-            raise RuntimeError("couldn't find the add/drop submit control")
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(2000)
 
     after = roster_fn(team_key)
     if not isinstance(after, list):
@@ -795,20 +808,34 @@ def propose_roster_moves(team=None, execute=False, _roster_fn=None,
                 f"(Recommendation only — nothing was dropped or added. Drops "
                 f"are permanent, so this never acts unless explicitly asked.)")
 
+    # ONE move per run: `top` is the only pair submitted below. The summary and
+    # the ledger must therefore describe `top` ALONE. Reporting the whole `recs`
+    # list under "Made this roster move" claimed a drop that never happened and
+    # wrote it to the audit trail as executed — caught 2026-08-01 by diffing the
+    # real roster against the report. The rest are still surfaced, as NOT done.
     top = recs[0]
+    why = summarize_roster_moves([top])
+    body = "\n".join(f"  {line}" for line in why)
+    entry["moves"], entry["why"] = [top], why
+    rest = ""
+    if len(recs) > 1:
+        rest = ("\nAlso worth considering (not done):\n"
+                + "\n".join(f"  {line}"
+                            for line in summarize_roster_moves(recs[1:])))
+
     allowed, reason = check_roster_move(chosen, top["drop"], top["add"],
                                         _now=_now, _ledger_path=_ledger_path)
     if not allowed:
         entry["allowed"], entry["reason"] = False, reason
         _append_ledger(entry, _ledger_path)
-        return f"Not making a roster move for {name}: {reason}.\n{body}"
+        return f"Not making a roster move for {name}: {reason}.\n{body}" + rest
     entry["allowed"] = True
 
     if not LIVE_WRITES:
         entry["reason"] = "live writes are off"
         _append_ledger(entry, _ledger_path)
         return (f"Would make this roster move for {name} (live writes are "
-                f"off):\n{body}")
+                f"off):\n{body}" + rest)
 
     drop_key = next((p.get("player_key", "") for p in roster
                      if p.get("name") == top["drop"]), "")
@@ -818,21 +845,21 @@ def propose_roster_moves(team=None, execute=False, _roster_fn=None,
         entry["reason"] = "couldn't resolve Yahoo player ids"
         _append_ledger(entry, _ledger_path)
         return (f"Found a move for {name} but couldn't resolve the Yahoo "
-                f"player ids, so nothing was done:\n{body}")
+                f"player ids, so nothing was done:\n{body}" + rest)
 
     submit = _submit_fn or _submit_add_drop
     try:
         submit(team_key, add_key, drop_key)
         entry["executed"], entry["dry_run"] = True, False
         _append_ledger(entry, _ledger_path)
-        return f"Made this roster move for {name}:\n{body}"
+        return f"Made this roster move for {name}:\n{body}" + rest
     except (ValueError, RuntimeError) as e:
         entry["reason"] = f"add/drop failed: {e}"
         entry["executed"] = "unknown"
         _append_ledger(entry, _ledger_path)
         return (f"Tried a roster move for {name} but hit an error: {e}. A drop "
                 f"is permanent, so check the real roster on Yahoo before "
-                f"assuming either way.\nIntended:\n{body}")
+                f"assuming either way.\nIntended:\n{body}" + rest)
 
 
 def propose_lineup_change(team=None, _compute_fn=None, _submit_fn=None,

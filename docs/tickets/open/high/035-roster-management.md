@@ -253,3 +253,50 @@ owner-approved no-op left no trace at all — which is exactly what made this ta
 a root-cause hunt instead of a log read.
 
 722 tests pass (was 718).
+
+## First live add/drop — 2026-08-01
+
+The owner approved the Ferguson → Strange swap and it **executed for real**:
+roster verified after at 15 players, Jake Ferguson gone, Brenton Strange added.
+This is the first irreversible roster write the system has made. Two bugs had to
+be fixed to get there, both worth recording.
+
+**1. The `dpid` drop checkbox is HIDDEN.** `_submit_add_drop` did
+`box.check()` on `input[name='dpid'][value=...]` and died with
+`TimeoutError: element is not visible`. (No write happened — the failure was
+before submit, confirmed by re-reading the roster.) Yahoo styles a real button
+over the input:
+
+```html
+<button data-check-box-value="34085 " type="button"
+        class="add-drop-trigger-btn ..." title="Click to drop this player">—</button>
+<input type="checkbox" name="dpid" value="34085" id="checkbox-34085">
+```
+
+Fix: find the `.add-drop-trigger-btn` whose `data-check-box-value` **stripped**
+equals the player key (note the trailing space in the attribute), scroll it into
+view, and click it. Same lesson as the lineup swapper — drive the visible
+control so Yahoo's own JS stays in the loop. Submit-button text is `"—"` for
+every control in that form, so it is useless for identification; the handler now
+tries a short list of submit selectors and tolerates the trigger completing the
+transaction on its own.
+
+**2. The report and the ledger described moves that never happened.** Only
+`recs[0]` is ever submitted, but `body`/`why`/`entry["moves"]` were built from
+the **full** rec list. So the first successful run announced *"Made this roster
+move"* over two moves and wrote both to the ledger as `executed: true`, when the
+Addison → Washington pair was never touched. Caught by diffing the real roster
+against the report — the same independent post-write verification that caught
+the wrong-player swap during development, earning its keep a second time.
+
+Fix: in execute mode the summary and the ledger entry are rebuilt from `[top]`
+alone; remaining recommendations are still shown under an explicit
+`Also worth considering (not done):` heading. The bad ledger row was **not
+rewritten** — a correction row was appended carrying `correction_of_ts`, because
+an audit trail you can edit isn't one.
+
+`add_drop` was also added to the team's `actions_allowed` in the PC-local
+`teams.yaml`, named separately from `waiver_claim` on purpose: this is the
+irreversible one and must never be granted as a side effect of allowing waivers.
+
+723 tests pass (was 722).

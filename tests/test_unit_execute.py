@@ -922,6 +922,46 @@ class TestProposeRosterMoves:
         logged = json.loads(path.read_text().strip().splitlines()[-1])
         assert logged["executed"] is True
 
+    def test_only_the_executed_move_is_reported_and_logged(
+            self, monkeypatch, tmp_path):
+        """Regression, 2026-08-01. Only recs[0] is ever submitted, but the
+        report and the ledger were built from the FULL rec list — so a real run
+        announced (and recorded as executed) a second drop that never happened.
+        The audit trail must match reality; the extras stay visible but are
+        labelled as not done."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 0)
+        self._cfg(monkeypatch)
+        roster = self.ROSTER + [{"name": "Slumping2", "positions": ["WR"],
+                                 "slot": "BN", "status": "",
+                                 "player_key": "d2"}]
+        avail = self.AVAIL + [{"name": "Hot2", "positions": ["WR"],
+                               "is_free_agent": True, "player_key": "a2"}]
+        pool = self.POOL + [
+            {"name": "Slumping2", "positions": ["WR"], "gp": 10,
+             "cats": {"RecYds": 400}, "espn_id": "e3"},
+            {"name": "Hot2", "positions": ["WR"], "gp": 10,
+             "cats": {"RecYds": 1500}, "espn_id": "e4"}]
+        path = tmp_path / "l.jsonl"
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", execute=True,
+            **self._kw(tmp_path, _roster_fn=lambda k: roster,
+                       _fa_fn=lambda k: avail, _pool_fn=lambda: (pool, []),
+                       _ledger_path=str(path),
+                       _submit_fn=lambda tk, a, d: called.append((a, d))))
+        assert len(called) == 1                       # one write, as always
+        done = out.split("Also worth considering")[0]
+        # The "made" section names ONLY the pair that was actually submitted.
+        assert called[0] == ("a1", "d1")
+        assert "Slumping2" not in done and "Hot2" not in done
+        assert "Also worth considering (not done)" in out
+        assert "Slumping2" in out                     # still surfaced, labelled
+        logged = json.loads(path.read_text().strip().splitlines()[-1])
+        assert logged["executed"] is True
+        assert len(logged["moves"]) == 1
+        assert logged["moves"][0]["drop"] == "Slumping"
+
     def test_a_failed_write_is_reported_as_uncertain(self, monkeypatch, tmp_path):
         monkeypatch.setattr(ex, "LIVE_WRITES", True)
         monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 0)
