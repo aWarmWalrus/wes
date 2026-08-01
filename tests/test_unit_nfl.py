@@ -370,6 +370,167 @@ class TestParseByathlete:
         assert top["positions"][0] in {"QB", "RB", "WR", "TE"}
 
 
+def _gamelog(rows, names, season="Regular Season", meta=None):
+    """Minimal gamelog-shaped payload. `rows` is [(event_id, [stat strings])]."""
+    return {
+        "names": names,
+        "events": meta or {eid: {"week": i + 1,
+                                 "gameDate": f"2025-1{i}-01T00:00:00.000+00:00",
+                                 "opponent": {"abbreviation": "OPP"}}
+                           for i, (eid, _) in enumerate(rows)},
+        "seasonTypes": [{"displayName": f"2025 {season}",
+                        "categories": [{"events": [
+                            {"eventId": eid, "stats": stats}
+                            for eid, stats in rows]}]}],
+    }
+
+
+WR_NAMES = ["receptions", "receivingTargets", "receivingYards",
+            "yardsPerReception", "receivingTouchdowns", "fumblesLost"]
+QB_NAMES = ["passingYards", "passingTouchdowns", "interceptions", "sacks",
+            "rushingYards", "rushingTouchdowns"]
+K_NAMES = ["fieldGoalsMade1_19-fieldGoalAttempts1_19",
+           "fieldGoalsMade40_49-fieldGoalAttempts40_49",
+           "fieldGoalsMade50-fieldGoalAttempts50",
+           "extraPointsMade-extraPointAttempts", "totalKickingPoints"]
+
+
+class TestParseGamelog:
+    """Per-game lines (#035). Verified against the real ESPN shape 2026-07-31."""
+
+    def test_parses_a_receiver_game(self):
+        payload = _gamelog([("1", ["6", "8", "84", "14.0", "1", "0"])], WR_NAMES)
+        games = nfl.parse_gamelog(payload)
+        assert len(games) == 1
+        # FumLost 0.0 is KEPT: a recorded zero ("he lost no fumbles") is real
+        # data and must stay distinct from "-" (didn't record) — the same
+        # zero-vs-unknown line the rest of the engine draws.
+        assert games[0]["cats"] == {"Rec": 6.0, "RecYds": 84.0, "RecTD": 1.0,
+                                    "FumLost": 0.0}
+
+    def test_rate_and_aggregate_fields_are_not_scored(self):
+        """yardsPerReception/targets are context, not fantasy points."""
+        payload = _gamelog([("1", ["6", "8", "84", "14.0", "1", "0"])], WR_NAMES)
+        cats = nfl.parse_gamelog(payload)[0]["cats"]
+        assert "receivingTargets" not in cats and 14.0 not in cats.values()
+
+    def test_qb_sacks_TAKEN_are_not_mapped(self):
+        """The byathlete trap in a new place: a QB's gamelog `sacks` is sacks
+        he TOOK. Mapping it would hand a quarterback defensive sack points."""
+        payload = _gamelog([("1", ["300", "3", "1", "4", "20", "0"])], QB_NAMES)
+        cats = nfl.parse_gamelog(payload)[0]["cats"]
+        assert "Sack" not in cats
+        assert cats["PassYds"] == 300.0 and cats["Int"] == 1.0
+
+    def test_qb_interceptions_are_thrown_and_cost_points(self):
+        payload = _gamelog([("1", ["300", "3", "2", "4", "0", "0"])], QB_NAMES)
+        cats = nfl.parse_gamelog(payload)[0]["cats"]
+        assert nfl.fantasy_points(cats) < nfl.fantasy_points(
+            {k: v for k, v in cats.items() if k != "Int"})
+
+    def test_compound_kicker_fields_take_the_MADE_half(self):
+        """ESPN packs made-and-attempts into one field ("3-4"). Read raw, every
+        kicker scores zero."""
+        payload = _gamelog([("1", ["0-0", "3-4", "1-1", "2-2", "12"])], K_NAMES)
+        cats = nfl.parse_gamelog(payload)[0]["cats"]
+        assert cats["FG40_49"] == 3.0    # not "3-4", not 0
+        assert cats["FG50"] == 1.0 and cats["XP"] == 2.0
+        assert nfl.fantasy_points(cats) > 0
+
+    def test_dash_means_did_not_record_not_zero(self):
+        payload = _gamelog([("1", ["-", "-", "-", "-", "-", "-"])], WR_NAMES)
+        assert nfl.parse_gamelog(payload)[0]["cats"] == {}
+
+    def test_newest_game_first(self):
+        payload = _gamelog([("1", ["1", "1", "10", "10.0", "0", "0"]),
+                           ("2", ["9", "9", "90", "10.0", "0", "0"])], WR_NAMES)
+        games = nfl.parse_gamelog(payload)
+        assert games[0]["date"] > games[1]["date"]
+
+    def test_postseason_is_excluded_by_default(self):
+        """Fantasy leagues end before the NFL postseason, so January games are
+        chronologically newer but competitively irrelevant — including them
+        would let 3 playoff games dominate 'recent form' for a December call."""
+        payload = _gamelog([("1", ["6", "8", "84", "14.0", "1", "0"])],
+                           WR_NAMES, season="Postseason")
+        assert nfl.parse_gamelog(payload) == []
+        assert len(nfl.parse_gamelog(payload, season_type="Postseason")) == 1
+
+    def test_carries_week_and_opponent_for_context(self):
+        payload = _gamelog([("1", ["6", "8", "84", "14.0", "1", "0"])], WR_NAMES)
+        g = nfl.parse_gamelog(payload)[0]
+        assert g["week"] == 1 and g["opponent"] == "OPP"
+
+    def test_junk_payload_degrades_to_empty(self):
+        assert nfl.parse_gamelog(None) == []
+        assert nfl.parse_gamelog({}) == []
+
+
+class TestRecentForm:
+    def _log(self, points_sequence):
+        """Build games whose scores are (roughly) the given sequence, newest
+        first, using receiving yards at 0.1/yd."""
+        return [{"cats": {"RecYds": p * 10}, "date": f"2025-{20-i:02d}-01"}
+                for i, p in enumerate(points_sequence)]
+
+    def test_falling_form_is_detected(self):
+        # last 4 average ~5, season average much higher
+        form = nfl.recent_form(self._log([5, 5, 5, 5, 20, 20, 20, 20]))
+        assert form["recent_ppg"] == 5.0
+        assert form["baseline_ppg"] == 12.5
+        assert form["delta"] == -7.5
+        assert form["trend"] == "falling"
+
+    def test_rising_form_is_detected(self):
+        form = nfl.recent_form(self._log([20, 20, 20, 20, 5, 5, 5, 5]))
+        assert form["trend"] == "rising" and form["delta"] > 0
+
+    def test_steady_form_is_not_flagged_either_way(self):
+        form = nfl.recent_form(self._log([10, 10, 10, 10, 10, 10]))
+        assert form["trend"] == "steady" and form["delta"] == 0.0
+
+    def test_too_few_games_is_UNKNOWN_not_a_number(self):
+        """A 2-game sample after an injury is noise. Reporting it as a number
+        would let the roster engine drop someone on nothing — same
+        None-not-zero rule the optimizer depends on."""
+        form = nfl.recent_form(self._log([2, 2]))
+        assert form["recent_ppg"] is None and form["delta"] is None
+        assert form["trend"] == "unknown" and form["games"] == 2
+
+    def test_empty_log_is_unknown(self):
+        assert nfl.recent_form([])["trend"] == "unknown"
+        assert nfl.recent_form(None)["trend"] == "unknown"
+
+    def test_window_is_respected(self):
+        games = self._log([0, 0, 30, 30, 30, 30])
+        assert nfl.recent_form(games, window=2)["recent_ppg"] == 0.0
+        assert nfl.recent_form(games, window=6)["recent_ppg"] == 20.0
+
+    def test_uses_the_leagues_real_scoring(self):
+        """Form must be measured in the league's own points, or 'falling off'
+        means something different from the lineup decisions it feeds."""
+        games = [{"cats": {"Rec": 10}, "date": "2025-01-01"}] * 4
+        ppr = nfl.recent_form(games, nfl.SCORING_PPR)["recent_ppg"]
+        std = nfl.recent_form(games, nfl.SCORING_STANDARD)["recent_ppg"]
+        assert ppr == 10.0 and std == 0.0
+
+
+class TestPlayerGamelog:
+    def test_uses_the_gamelog_endpoint(self):
+        seen = {}
+
+        def fake(url):
+            seen["url"] = url
+            return _gamelog([("1", ["6", "8", "84", "14.0", "1", "0"])], WR_NAMES)
+        nfl.player_gamelog("12345", _get_fn=fake)
+        assert "athletes/12345/gamelog" in seen["url"]
+
+    def test_network_failure_degrades_to_empty(self):
+        def boom(url):
+            raise OSError("espn down")
+        assert nfl.player_gamelog("1", _get_fn=boom) == []
+
+
 class TestPerGame:
     def test_rescales_by_games_played(self):
         line = {"name": "X", "gp": 10, "cats": {"RecYds": 1000, "Rec": 50}}
@@ -603,6 +764,15 @@ class TestParseByteam:
     def test_return_touchdowns_sum_kick_and_punt(self):
         line = nfl.parse_byteam(self.PAYLOAD)[0]
         assert line["cats"]["DefRetTD"] == 3.0
+
+    def test_carries_the_espn_athlete_id_for_gamelog_lookup(self):
+        """The gamelog endpoint (#035 recent form) is keyed by ESPN's athlete
+        id. It was being read from the payload and discarded, leaving nothing
+        able to look a player's per-game history up."""
+        lines = nfl.parse_byathlete(BYATHLETE_PAYLOAD)
+        assert all(p["espn_id"] for p in lines)
+        assert nfl.player_gamelog(lines[0]["espn_id"],
+                                  _get_fn=lambda url: {}) == []
 
     def test_shape_matches_a_player_stat_line(self):
         """A defence must be indistinguishable from any other player to the

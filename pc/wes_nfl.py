@@ -422,8 +422,168 @@ def parse_byathlete(payload):
             # Normalize ESPN's kicker abbreviation to Yahoo's slot position.
             "positions": [("K" if pos == "PK" else pos)] if pos else [],
             "cats": cats,
+            # ESPN's own athlete id. Kept because the per-game gamelog endpoint
+            # is keyed by it (#035 recent form) — it was being read and thrown
+            # away, which left nothing able to look a player's game log up.
+            "espn_id": str(ath.get("id") or ""),
         })
     return out
+
+
+# --- recent form: per-GAME logs (#035) ---------------------------------------
+# Everything else here is a season aggregate, which cannot express "he's fallen
+# off lately". ESPN's per-athlete gamelog gives real per-game lines:
+#   .../nfl/athletes/{id}/gamelog
+#     names:       flat stat keys, POSITION-SCOPED (verified 2026-07-31)
+#     seasonTypes: [Postseason, Regular Season], each with categories[].events
+#     events:      {eventId: {week, gameDate, opponent, ...}} for ordering
+#
+# THREE THINGS VERIFIED RATHER THAN ASSUMED, each of which would have been a
+# silent scoring bug:
+#  1. `names` is scoped BY POSITION — a WR's log has no `interceptions` at all,
+#     so unlike the byathlete feed a FLAT name->key map is safe here: a
+#     receiver can never contribute a defensive interception.
+#  2. ...but a QB's log DOES carry `sacks`, meaning sacks TAKEN. Same trap as
+#     byathlete's Own/Opponent split. It is deliberately NOT mapped.
+#  3. Kicker fields are COMPOUND: the name is
+#     'fieldGoalsMade40_49-fieldGoalAttempts40_49' and the value is a
+#     "made-attempts" string like "3-4". Read raw, every kicker scores zero.
+#     _split_made() takes the made half.
+_GAMELOG_KEY = {
+    "passingYards": "PassYds", "passingTouchdowns": "PassTD",
+    "interceptions": "Int",          # QB-scoped: INTs THROWN (see note 1)
+    "rushingYards": "RushYds", "rushingTouchdowns": "RushTD",
+    "receptions": "Rec", "receivingYards": "RecYds",
+    "receivingTouchdowns": "RecTD", "fumblesLost": "FumLost",
+    # Kickers — compound "made-attempts" fields; _split_made handles the value.
+    "fieldGoalsMade1_19-fieldGoalAttempts1_19": "FG0_19",
+    "fieldGoalsMade20_29-fieldGoalAttempts20_29": "FG20_29",
+    "fieldGoalsMade30_39-fieldGoalAttempts30_39": "FG30_39",
+    "fieldGoalsMade40_49-fieldGoalAttempts40_49": "FG40_49",
+    "fieldGoalsMade50-fieldGoalAttempts50": "FG50",
+    "extraPointsMade-extraPointAttempts": "XP",
+}
+# Deliberately unmapped, and why: `sacks` (QB sacks TAKEN, not a fantasy stat),
+# `fumbles` (only fumblesLost scores), and every rate/aggregate field
+# (completionPct, QBRating, totalKickingPoints, yardsPer*, long*).
+
+
+def _split_made(raw):
+    """A gamelog stat value -> float. Handles ESPN's compound "made-attempts"
+    kicker fields ("3-4" -> 3.0) and its "-" for did-not-record."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text or text == "-":
+        return None
+    if "-" in text:
+        text = text.split("-", 1)[0].strip()
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def parse_gamelog(payload, season_type="Regular Season"):
+    """ESPN gamelog JSON -> per-game stat lines, MOST RECENT FIRST.
+
+    Each entry is {event_id, week, date, opponent, cats} where `cats` uses the
+    same canonical keys as `parse_byathlete`, so a single game can be scored by
+    `fantasy_points` under the league's real weights — recent form and season
+    value are then directly comparable, which is the whole point.
+
+    Defaults to the REGULAR SEASON: fantasy leagues end before the NFL
+    postseason, so postseason games are chronologically newer but competitively
+    irrelevant — sorting all season types together would let three January
+    games dominate "recent form" for a fantasy decision made in December.
+    Pure."""
+    if not isinstance(payload, dict):
+        return []
+    names = payload.get("names") or []
+    events_meta = payload.get("events") or {}
+    out = []
+    for st in payload.get("seasonTypes") or []:
+        if season_type and season_type.lower() not in str(
+                st.get("displayName", "")).lower():
+            continue
+        for cat in st.get("categories") or []:
+            for ev in cat.get("events") or []:
+                eid = str(ev.get("eventId", ""))
+                cats = {}
+                for name, raw in zip(names, ev.get("stats") or []):
+                    key = _GAMELOG_KEY.get(name)
+                    if not key:
+                        continue
+                    val = _split_made(raw)
+                    if val is not None:
+                        cats[key] = val
+                meta = events_meta.get(eid) or {}
+                out.append({
+                    "event_id": eid,
+                    "week": meta.get("week"),
+                    "date": meta.get("gameDate", ""),
+                    "opponent": (meta.get("opponent") or {}).get("abbreviation", ""),
+                    "cats": cats,
+                })
+    # Newest first. gameDate is ISO-8601 so a string sort is chronological;
+    # entries with no metadata sort last rather than crashing the comparison.
+    out.sort(key=lambda g: g["date"] or "", reverse=True)
+    return out
+
+
+# A "recent form" verdict needs enough games to be a signal rather than noise.
+# Below this, form is reported UNKNOWN (None) rather than as a number — the
+# same value-is-None-not-zero rule the optimizer already depends on.
+MIN_FORM_GAMES = 3
+
+
+def recent_form(games, scoring=None, tiers=None, window=4,
+                min_games=MIN_FORM_GAMES):
+    """Recent-form summary from `parse_gamelog` output (newest first).
+
+    Returns {"games", "recent_ppg", "baseline_ppg", "delta", "trend"} where
+    `recent_ppg` is the mean fantasy points over the last `window` games,
+    `baseline_ppg` is the mean over ALL supplied games, and `delta` is
+    recent minus baseline (negative = falling off).
+
+    `recent_ppg` and `delta` are **None when there aren't `min_games` games** —
+    a two-game sample after an injury is noise, and reporting it as a number
+    would let the roster engine drop someone on nothing. Pure."""
+    scored = [fantasy_points(g.get("cats"), scoring, tiers) for g in (games or [])]
+    n = len(scored)
+    if n < min_games:
+        return {"games": n, "recent_ppg": None, "baseline_ppg": None,
+                "delta": None, "trend": "unknown"}
+    recent = scored[:window]
+    recent_ppg = round(sum(recent) / len(recent), 2)
+    baseline_ppg = round(sum(scored) / n, 2)
+    delta = round(recent_ppg - baseline_ppg, 2)
+    trend = "steady"
+    if delta <= -2.0:
+        trend = "falling"
+    elif delta >= 2.0:
+        trend = "rising"
+    return {"games": n, "recent_ppg": recent_ppg, "baseline_ppg": baseline_ppg,
+            "delta": delta, "trend": trend}
+
+
+def _gamelog_url(athlete_id):
+    return (f"https://site.web.api.espn.com/apis/common/v3/sports/football/"
+            f"nfl/athletes/{athlete_id}/gamelog")
+
+
+def player_gamelog(athlete_id, _get_fn=None):
+    """One athlete's per-game lines (newest first). Live/network — degrades to
+    `[]` on any failure, like the other pool fetches.
+
+    NOTE this is ONE HTTP CALL PER PLAYER, unlike the bulk pool endpoints. Fine
+    for a 15-man roster; do NOT run it across a whole free-agent pool. Rank on
+    season stats first, then pull gamelogs for a shortlist (#035)."""
+    get = _get_fn or _get_json
+    try:
+        return parse_gamelog(get(_gamelog_url(athlete_id)))
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def per_game(line):
