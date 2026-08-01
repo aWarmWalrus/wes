@@ -175,8 +175,10 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   scheduled run**, bounded only by `max_moves_per_week: 3`. Anywhere else a drop
   needs `approve={"drop","add"}` naming both players, re-checked against the
   live recommendation and refused if stale (never substituted). Open, named
-  extensions: no `propose`-mode Discord approve/reject, no Thu/Mon pre-lock
-  check, no team-DEF valuation. Draft automation (#030) deprioritized — owner will
+  extensions: **real waiver claims** (it can only pick up true free agents, so
+  `max_faab_bid_pct` is still enforced by no code), **no matchup/projection
+  adjustment** (every value is a season aggregate), and it recommends the IL but
+  never moves anyone there. Draft automation (#030) deprioritized — owner will
   draft manually. Full history + every finding: ticket #029.
   Platform pivoted from the official Yahoo API to browser automation (API access
   now requires a no-caching DocuSign).
