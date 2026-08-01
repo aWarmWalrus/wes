@@ -123,6 +123,45 @@ injury on IR finally pays off (#029 found the optimizer never targets IR).
 
 ## Notes
 
+### 2026-07-31 — R2-R6 ALL SHIPPED
+- **R2** `wes_yahoo.free_agents()` — scrapes `#players-table`. Yahoo's default
+  view is already the available pool, best-first (verified: `count=`/`status=`
+  params do NOT change page size, so this reads the default rather than
+  pretending to control it). Anything whose status isn't exactly `FA` is treated
+  as NOT a free pickup — guessing an unknown waiver marker means "just add them"
+  turns a claim into a failed action.
+- **R3** `recommend_roster_moves()` — pure. Same-position only (dropping the
+  only kicker for a 4th WR is strictly worse regardless of points); UNKNOWN form
+  or UNKNOWN value never justifies a drop; a `min_gain` floor so the roster
+  isn't churned for +0.3.
+- **R4** guardrails ENFORCED at last: `never_drop` (loose name match so
+  punctuation can't defeat protection) and `max_moves_per_week`, counted from
+  the **ledger** — the first guardrail depending on history rather than config.
+  An unreadable ledger **fails closed**: assuming zero moves would silently
+  allow unlimited drops whenever the ledger breaks.
+- **R5** `_submit_add_drop()` — recon found `/addplayer?apid=<id>` opens a form
+  (GET, commits nothing — verified by re-reading the roster) which POSTs to
+  `/f1/<league>/<team>/addplayer` with `apid` + a `dpid` checkbox, both being
+  player keys `roster_players` already returns. Verifies BOTH the add and the
+  drop landed before reporting success.
+- **R6** `il_candidates()` — surfaces injured players who could be stashed on
+  IR to free a bench spot. Only meaningful now that a freed spot can be filled.
+  `Q` deliberately doesn't qualify (those players routinely play).
+
+**The safety property that matters most:** `propose_roster_moves(execute=False)`
+by default **even for an `auto` team**. Lineup changes inherit autonomy; drops
+do not, because they're irreversible. A test pins exactly that, and the tool
+dispatch requires `execute is True` — a stringy `"true"` degrades to
+recommending, not to dropping someone.
+
+**Verified live, read-only, roster confirmed unchanged**, through a real turn:
+> "Drop Jordan Addison (WR, 6.25 pts in recent games, down from 8.15 on the
+> season) for Parker Washington (8.98) — about +2.73 points."
+
+704 tests pass (was 648). Still open: waiver CLAIMS (as opposed to free-agent
+adds) aren't implemented — non-FA players are skipped rather than claimed; and
+`max_faab_bid_pct` stays unenforced because nothing spends FAAB yet.
+
 - **Don't reuse `_plan_swaps`.** A lineup swap trades two slots within a fixed
   roster; add/drop changes roster membership. Superficially similar, different
   invariants — the kind of resemblance that invites a subtle bug.

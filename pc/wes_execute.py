@@ -64,6 +64,7 @@ import os
 import time
 
 import wes_fantasy  # noqa: E402 — same dir on path (server/tests add it)
+import wes_nfl  # noqa: E402 — recent form + valuation (#035)
 import wes_yahoo  # noqa: E402
 
 # PC-local, like teams.yaml — never the repo (an action ledger for a real
@@ -118,6 +119,107 @@ def _fmt_player(m):
     return f"{m['name']} ({val:g} pts)" if val is not None else m["name"]
 
 
+# --- roster recommendation (#035 R3) -----------------------------------------
+# PURE. Given rostered players (with recent form) and available players (with
+# value), propose drop/add pairs. Deliberately NOT built on _plan_swaps: a
+# lineup swap trades two slots inside a FIXED roster, this changes roster
+# MEMBERSHIP. They look alike and have different invariants — exactly the
+# resemblance that invites a subtle bug.
+#
+# Positional need is a hard constraint, not a preference: dropping the only
+# kicker to add a fourth receiver is strictly worse regardless of points.
+def _primary_pos(player):
+    pos = player.get("positions") or []
+    return pos[0] if pos else ""
+
+
+def recommend_roster_moves(roster, available, min_gain=2.0, limit=3,
+                           protected=()):
+    """Propose drop/add pairs, worst-recent-form out, best-available in.
+
+    `roster` entries need {name, positions, value, form} where `form` is
+    `wes_nfl.recent_form` output; `available` entries need {name, positions,
+    value}. Returns [{drop, drop_pos, drop_form, add, add_pos, gain, reason}],
+    best gain first, at most `limit`.
+
+    RULES, each of which exists to prevent a specific bad drop:
+      * Same primary position only — keeps the roster legal (see above).
+      * UNKNOWN form or UNKNOWN value never justifies a drop. `recent_form`
+        returns None below its games floor, and an unrated player's value is
+        None; treating either as 0 would drop a player for having no data
+        rather than for being bad. This is the same None-is-not-zero rule that
+        already governs the optimizer.
+      * `min_gain` — the add must beat the drop by a real margin. Churning the
+        roster for +0.3 projected points is noise, and every move spends a
+        limited weekly budget.
+      * `protected` names are never dropped, mirroring never_drop so a caller
+        that forgets the guardrail still can't propose a protected drop.
+    Pure — no network, no clock, no I/O."""
+    protected_keys = {_norm_name_key(n) for n in protected}
+    # Weakest recent form first; anyone without a usable form reading is not a
+    # drop candidate at all.
+    candidates = []
+    for p in roster or []:
+        form = p.get("form") or {}
+        recent = form.get("recent_ppg")
+        if recent is None:
+            continue
+        if _norm_name_key(p.get("name")) in protected_keys:
+            continue
+        candidates.append((recent, p))
+    candidates.sort(key=lambda t: t[0])
+
+    by_pos = {}
+    for a in available or []:
+        if a.get("value") is None:
+            continue
+        by_pos.setdefault(_primary_pos(a), []).append(a)
+    for lst in by_pos.values():
+        lst.sort(key=lambda a: a["value"], reverse=True)
+
+    recs, taken = [], set()
+    for recent, drop in candidates:
+        pos = _primary_pos(drop)
+        for add in by_pos.get(pos, []):
+            if add["name"] in taken:
+                continue
+            gain = round(add["value"] - recent, 2)
+            if gain < min_gain:
+                break          # list is sorted; nothing further will qualify
+            taken.add(add["name"])
+            form = drop.get("form") or {}
+            recs.append({
+                "drop": drop["name"], "drop_pos": pos,
+                "drop_form": recent, "drop_baseline": form.get("baseline_ppg"),
+                "add": add["name"], "add_pos": _primary_pos(add),
+                "add_value": add["value"], "gain": gain,
+                "reason": (f"{drop['name']} is averaging {recent:g} over recent "
+                           f"games (season {form.get('baseline_ppg', '?')}); "
+                           f"{add['name']} is available and projects "
+                           f"{add['value']:g}"),
+            })
+            break
+        if len(recs) >= limit:
+            break
+    recs.sort(key=lambda r: r["gain"], reverse=True)
+    return recs[:limit]
+
+
+def summarize_roster_moves(recs):
+    """Plain-language WHY for `recommend_roster_moves` output — the model-layer
+    explanation, reading only what the recommender already computed."""
+    lines = []
+    for r in recs:
+        base = r.get("drop_baseline")
+        drift = (f", down from {base:g} on the season"
+                 if isinstance(base, (int, float)) else "")
+        lines.append(
+            f"Drop {r['drop']} ({r['drop_pos']}, {r['drop_form']:g} pts in "
+            f"recent games{drift}) for {r['add']} ({r['add_value']:g}) — "
+            f"about +{r['gain']:g} points.")
+    return lines
+
+
 def summarize_moves(moves):
     """Human-readable WHY for a `diff_lineup` move list — the model-layer
     explanation (docs/data-architecture.md layer 5) of what changed and why,
@@ -165,6 +267,92 @@ def summarize_moves(moves):
             lines.append(f"Started {_fmt_player(m)} at {m['to_slot']} "
                          f"(the slot was open).")
     return lines
+
+
+# --- roster-move guardrails (#035 R4) ----------------------------------------
+# never_drop / max_moves_per_week / max_faab_bid_pct were declared in teams.yaml
+# from the start and read by NO code — harmless while set_lineup was the only
+# action (it neither drops anyone nor spends FAAB), but they became load-bearing
+# the moment a roster move is possible, because a DROP IS IRREVERSIBLE: another
+# manager can claim the player within minutes and no guardrail un-drops them.
+#
+# max_moves_per_week is the first guardrail that depends on HISTORY rather than
+# config, so it reads the ledger. That makes it the first one that can be wrong
+# because of a missing file rather than a bad setting — hence: an unreadable
+# ledger REFUSES the move (fail closed), it does not assume zero moves so far.
+_WEEK_SECONDS = 7 * 24 * 3600
+
+
+def _norm_name_key(name):
+    return "".join(c for c in str(name or "").lower() if c.isalnum())
+
+
+def count_recent_moves(team_key, since_ts, _path=None, _entries_fn=None):
+    """How many roster moves this team actually EXECUTED since `since_ts`.
+
+    Counts ledger entries with `executed` True or "unknown" — an uncertain
+    write must count AGAINST the budget, since it may well have happened.
+    Returns None if the ledger can't be read, which callers must treat as
+    "unknown, refuse", never as zero."""
+    if _entries_fn is not None:
+        entries = _entries_fn()
+    else:
+        path = _path or LEDGER_FILE
+        if not os.path.exists(path):
+            return 0          # no ledger yet = genuinely no moves, not unknown
+        try:
+            entries = []
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        entries.append(json.loads(line))
+        except (OSError, json.JSONDecodeError):
+            return None       # unreadable -> unknown, caller must fail closed
+    return sum(
+        1 for e in entries
+        if e.get("team_key") == team_key
+        and e.get("action_type") in ("add_drop", "waiver_claim")
+        and e.get("executed") in (True, "unknown")
+        and float(e.get("ts") or 0) >= since_ts)
+
+
+def check_roster_move(team, drop_name, add_name=None, _now=None,
+                      _ledger_path=None, _count_fn=None):
+    """(allowed, reason) for dropping `drop_name` (optionally for `add_name`).
+
+    Layered on top of `check_guardrails` — autonomy and actions_allowed still
+    apply — and adds the roster-specific rails that only matter once something
+    irreversible is possible:
+      * never_drop  — an explicit protected list, matched loosely on name so a
+                      punctuation difference ("Ja'Marr" vs "JaMarr") can't
+                      defeat protection.
+      * max_moves_per_week — a real count from the ledger, not a config echo.
+    Never raises; refuses on anything it cannot verify."""
+    allowed, reason = check_guardrails(team, "add_drop", _now)
+    if not allowed:
+        return False, reason
+
+    guard = team.get("guardrails") or {}
+    protected = {_norm_name_key(n) for n in (guard.get("never_drop") or [])}
+    if _norm_name_key(drop_name) in protected:
+        return False, (f"{drop_name} is on this team's never_drop list — "
+                       f"refusing to drop them")
+
+    cap = guard.get("max_moves_per_week")
+    if cap is not None:
+        now = _now if _now is not None else time.time()
+        count = (_count_fn or count_recent_moves)(
+            team.get("team_key", ""), now - _WEEK_SECONDS, _ledger_path)
+        if count is None:
+            return False, ("couldn't read the action ledger, so this team's "
+                           "max_moves_per_week cap can't be verified — "
+                           "refusing rather than risking exceeding it")
+        if count >= int(cap):
+            return False, (f"this team has already made {count} roster "
+                           f"move(s) this week, at its max_moves_per_week "
+                           f"cap of {cap}")
+    return True, ""
 
 
 def check_guardrails(team, action_type, _now=None):
@@ -337,6 +525,84 @@ def _execute_swap(page, name, partner, dom_slot_type, key_of):
     page.wait_for_timeout(900)
 
 
+def _submit_add_drop(team_key, add_player_key, drop_player_key,
+                     _session_cls=None, _roster_fn=None):
+    """Execute ONE add/drop against Yahoo. **This is the first irreversible
+    action in the system** — a dropped player can be claimed by another manager
+    within minutes and no amount of retrying gets them back.
+
+    Mechanism (recon 2026-07-31, verified non-destructive at every step by
+    re-reading the roster afterward):
+      - `/f1/<league>/addplayer?apid=<id>` opens the add FORM (a GET; commits
+        nothing — confirmed, roster unchanged after loading it).
+      - That form is `POST /f1/<league>/<team>/addplayer` with `apid` (the
+        player to add) and a `dpid` checkbox (the player to drop). Both ids are
+        the same Yahoo player keys `roster_players` already returns, so nothing
+        new has to be resolved.
+
+    Drives the real controls rather than posting a synthetic form, for the same
+    reason `_execute_swap` does: Yahoo's own JS/crumb handling stays in play.
+    Re-reads the roster afterward and RAISES unless the add and the drop BOTH
+    actually took effect — a partial result here is a real roster in an
+    unexpected state, which must never be reported as success."""
+    roster_fn = _roster_fn or wes_yahoo.roster_players
+    before = roster_fn(team_key)
+    if not isinstance(before, list):
+        raise RuntimeError(
+            f"couldn't read the roster before an add/drop: {before!r}")
+    before_keys = {p.get("player_key", "") for p in before}
+    if drop_player_key not in before_keys:
+        raise RuntimeError(
+            f"refusing to drop player_key {drop_player_key!r}: not on the "
+            f"roster we just read (stale recommendation?)")
+
+    league_key = f"{wes_yahoo._sport_of(team_key)}.l." \
+                 f"{wes_yahoo._league_of(team_key)}"
+    add_url = (f"{wes_yahoo._home(wes_yahoo._sport_of(team_key))}/"
+               f"{wes_yahoo._site(wes_yahoo._sport_of(team_key))['path']}/"
+               f"{wes_yahoo._league_of(team_key)}/addplayer"
+               f"?apid={add_player_key}")
+
+    session_cls = _session_cls or wes_yahoo._Session
+    with session_cls() as page:
+        page.goto(add_url, wait_until="domcontentloaded")
+        page.wait_for_timeout(2000)
+        box = page.query_selector(f"input[name='dpid'][value='{drop_player_key}']")
+        if box is None:
+            raise RuntimeError(
+                f"the add form didn't offer {drop_player_key!r} as a drop "
+                f"option — refusing to guess a different player")
+        box.check()
+        page.wait_for_timeout(300)
+        submitted = False
+        for sel in ("form[action*='addplayer'] button[type=submit]",
+                    "form[action*='addplayer'] input[type=submit]",
+                    "button:has-text('Add Player')",
+                    "input[value='Add Player']"):
+            el = page.query_selector(sel)
+            if el:
+                el.click()
+                submitted = True
+                break
+        if not submitted:
+            raise RuntimeError("couldn't find the add/drop submit control")
+        page.wait_for_timeout(2500)
+
+    after = roster_fn(team_key)
+    if not isinstance(after, list):
+        raise RuntimeError(
+            f"submitted an add/drop but couldn't verify it: {after!r}")
+    after_keys = {p.get("player_key", "") for p in after}
+    if drop_player_key in after_keys:
+        raise RuntimeError(
+            f"add/drop did not verify: {drop_player_key!r} is still rostered")
+    if add_player_key not in after_keys:
+        raise RuntimeError(
+            f"add/drop did not verify: {add_player_key!r} was not added "
+            f"(the drop may still have gone through — check Yahoo)")
+    _ = league_key   # (kept for future waiver-claim URLs; unused for a plain add)
+
+
 def _submit_lineup(team_key, moves, _session_cls=None, _roster_fn=None):
     """The live write. Plans (pure), executes each swap in one browser session,
     and VERIFIES the final roster against every move's intended slot before
@@ -371,6 +637,187 @@ def _submit_lineup(team_key, moves, _session_cls=None, _roster_fn=None):
                  if _norm_slot(after_slot.get(m["name"], "")) != _norm_slot(m["to_slot"])]
     if mismatches:
         raise RuntimeError(f"lineup write did not verify: {mismatches}")
+
+
+# --- IL/IR stashing (#035 R6) ------------------------------------------------
+# The optimizer never targets an IR slot (it emits real starting slots or BN),
+# so an injured starter goes to the BENCH and the league's IR slots sit empty
+# forever — a long-term injury permanently occupies a bench spot. That only
+# becomes worth fixing once a roster spot can actually be USED, which is what
+# R5 provides: stash the injured player on IR, and the freed bench spot is a
+# real pickup.
+#
+# Yahoo only permits an IR slot for a player whose STATUS qualifies (IR/PUP/
+# NFI/O varies by league setting), so this proposes rather than assumes: it
+# reports who is eligible and what it would free, and the actual move rides the
+# same swap machinery as any other slot change.
+_IL_ELIGIBLE_STATUS = {"IR", "IR-R", "PUP", "NFI", "O", "OUT", "SUSP", "DNP"}
+
+
+def il_candidates(roster, slots):
+    """Rostered players who are injured, NOT already on an IL/IR slot, and
+    whose status qualifies them for one — i.e. bench spots that could be freed.
+
+    Returns [{name, player_key, status, current_slot}]. Pure. Empty when the
+    league has no IL/IR slots at all, since stashing needs somewhere to stash."""
+    il_slots = [s for s in (slots or [])
+                if _norm_slot(s) == "BN" and str(s).strip().upper() not in
+                ("BN", "BE")]
+    if not il_slots:
+        return []
+    occupied = sum(1 for p in (roster or [])
+                   if str(p.get("slot", "")).strip().upper() not in ("BN", "BE")
+                   and _norm_slot(p.get("slot")) == "BN")
+    if occupied >= len(il_slots):
+        return []          # every IL slot already in use
+    out = []
+    for p in roster or []:
+        slot = str(p.get("slot", "")).strip().upper()
+        if _norm_slot(slot) == "BN" and slot not in ("BN", "BE"):
+            continue       # already stashed
+        status = str(p.get("status", "")).strip().upper()
+        if status in _IL_ELIGIBLE_STATUS:
+            out.append({"name": p.get("name", ""),
+                        "player_key": p.get("player_key", ""),
+                        "status": status, "current_slot": p.get("slot", "")})
+    return out
+
+
+def summarize_il_candidates(cands, il_slot="IR"):
+    return [f"Move {c['name']} ({c['status']}) to {il_slot} — frees a bench "
+            f"spot for a pickup." for c in cands]
+
+
+def propose_roster_moves(team=None, execute=False, _roster_fn=None,
+                         _fa_fn=None, _pool_fn=None, _scoring_fn=None,
+                         _gamelog_fn=None, _submit_fn=None, _now=None,
+                         _ledger_path=None):
+    """#035 entry point: find underperformers, check who's available, and
+    recommend (or, gated, execute) drop/add pairs.
+
+    **`execute` defaults to FALSE, and that default is deliberate even for an
+    `auto` team.** Every other action in this system is reversible — a bad
+    lineup is fixed by the next scheduled run. A drop is not: another manager
+    can claim the player within minutes. So unlike `propose_lineup_change`,
+    autonomy alone never triggers a write here; the caller must ASK for it,
+    and the guardrails must then also allow it.
+
+    Degrades to a string on any problem; never raises into a turn."""
+    chosen, err = wes_yahoo._resolve_team(team)
+    if err:
+        return err
+    if chosen is None:
+        return "No fantasy team is configured yet — set up teams.yaml first."
+    team_key = chosen.get("team_key", "")
+    league_key = chosen.get("league_key", "") or team_key
+    name = chosen.get("name", "?")
+    if str(chosen.get("sport") or wes_yahoo._sport_of(team_key)).lower() != "nfl":
+        return (f"Roster management is NFL-only so far — {name} is not an NFL "
+                f"team.")
+
+    roster = (_roster_fn or wes_yahoo.roster_players)(team_key)
+    if not isinstance(roster, list):
+        return roster
+    if not roster:
+        return "That roster came back empty."
+    available = (_fa_fn or wes_yahoo.free_agents)(league_key)
+    if not isinstance(available, list):
+        return available
+
+    scoring = (_scoring_fn or wes_fantasy.nfl_league_scoring)(league_key)
+    pool, _failed = (_pool_fn or wes_nfl.pool_by_position)()
+    ranked = wes_nfl.rank_by_points([wes_nfl.per_game(p) for p in pool],
+                                    scoring["weights"], scoring["tiers"])
+    by_key = {_norm_name_key(p["name"]): p for p in ranked}
+    gamelog = _gamelog_fn or wes_nfl.player_gamelog
+
+    # Recent form for ROSTERED players only. The free-agent pool is ranked on
+    # season value instead: a gamelog is one HTTP call PER PLAYER, so pulling
+    # them for the whole available list would be dozens of requests for
+    # candidates most of which are never considered (#035).
+    enriched = []
+    for p in roster:
+        match = by_key.get(_norm_name_key(p.get("name")))
+        form = {"recent_ppg": None}
+        if match and match.get("espn_id"):
+            form = wes_nfl.recent_form(gamelog(match["espn_id"]),
+                                       scoring["weights"], scoring["tiers"])
+        enriched.append({**p, "value": match["value"] if match else None,
+                        "form": form})
+    avail = []
+    for a in available:
+        if not a.get("is_free_agent"):
+            continue      # waiver claims are a different action; not yet built
+        match = by_key.get(_norm_name_key(a.get("name")))
+        avail.append({**a, "value": match["value"] if match else None})
+
+    guard = chosen.get("guardrails") or {}
+    recs = recommend_roster_moves(enriched, avail,
+                                  protected=guard.get("never_drop") or ())
+    if not recs:
+        return (f"No roster moves worth making for {name} — nobody has fallen "
+                f"off enough for an available player to be a clear upgrade.")
+
+    why = summarize_roster_moves(recs)
+    # R6: an injured player stashed on IL frees a bench spot, which is only
+    # worth surfacing now that a freed spot can actually be filled.
+    try:
+        il = il_candidates(roster, wes_fantasy.nfl_league_slots(league_key))
+    except Exception:  # noqa: BLE001 — advisory only, never break the answer
+        il = []
+    if il:
+        why = why + summarize_il_candidates(il)
+    body = "\n".join(f"  {line}" for line in why)
+    now = _now if _now is not None else time.time()
+    entry = {"ts": now, "team_key": team_key, "name": name, "sport": "nfl",
+             "action_type": "add_drop", "autonomy": chosen.get("autonomy"),
+             "moves": recs, "why": why, "executed": False, "dry_run": True}
+
+    if not execute:
+        entry["reason"] = "recommendation only (execute not requested)"
+        _append_ledger(entry, _ledger_path)
+        return (f"Roster moves worth considering for {name}:\n{body}\n"
+                f"(Recommendation only — nothing was dropped or added. Drops "
+                f"are permanent, so this never acts unless explicitly asked.)")
+
+    top = recs[0]
+    allowed, reason = check_roster_move(chosen, top["drop"], top["add"],
+                                        _now=_now, _ledger_path=_ledger_path)
+    if not allowed:
+        entry["allowed"], entry["reason"] = False, reason
+        _append_ledger(entry, _ledger_path)
+        return f"Not making a roster move for {name}: {reason}.\n{body}"
+    entry["allowed"] = True
+
+    if not LIVE_WRITES:
+        entry["reason"] = "live writes are off"
+        _append_ledger(entry, _ledger_path)
+        return (f"Would make this roster move for {name} (live writes are "
+                f"off):\n{body}")
+
+    drop_key = next((p.get("player_key", "") for p in roster
+                     if p.get("name") == top["drop"]), "")
+    add_key = next((a.get("player_key", "") for a in available
+                    if a.get("name") == top["add"]), "")
+    if not drop_key or not add_key:
+        entry["reason"] = "couldn't resolve Yahoo player ids"
+        _append_ledger(entry, _ledger_path)
+        return (f"Found a move for {name} but couldn't resolve the Yahoo "
+                f"player ids, so nothing was done:\n{body}")
+
+    submit = _submit_fn or _submit_add_drop
+    try:
+        submit(team_key, add_key, drop_key)
+        entry["executed"], entry["dry_run"] = True, False
+        _append_ledger(entry, _ledger_path)
+        return f"Made this roster move for {name}:\n{body}"
+    except (ValueError, RuntimeError) as e:
+        entry["reason"] = f"add/drop failed: {e}"
+        entry["executed"] = "unknown"
+        _append_ledger(entry, _ledger_path)
+        return (f"Tried a roster move for {name} but hit an error: {e}. A drop "
+                f"is permanent, so check the real roster on Yahoo before "
+                f"assuming either way.\nIntended:\n{body}")
 
 
 def propose_lineup_change(team=None, _compute_fn=None, _submit_fn=None,

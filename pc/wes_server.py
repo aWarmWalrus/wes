@@ -664,6 +664,41 @@ TOOLS = [
         },
     },
     {
+        "name": "fantasy_roster_moves",
+        "description": (
+            "Find players on the owner's fantasy team who are UNDERPERFORMING "
+            "IN RECENT WEEKS and check whether a better player is available to "
+            "pick up, using real per-game stats rather than season averages. "
+            "Use for 'who should I drop', 'is anyone worth picking up', 'who's "
+            "slumping', 'any waiver moves', 'check the free agents', 'should I "
+            "make a roster move'. By default this ONLY RECOMMENDS — it does not "
+            "drop or add anyone. Dropping a player is PERMANENT (another "
+            "manager can claim them immediately), so unlike lineup changes it "
+            "never acts on its own. Only pass execute=true if the owner has "
+            "clearly asked you to actually make the move in this message; if "
+            "there is any doubt, recommend instead and ask. Relay exactly what "
+            "the reply says happened — 'Recommendation only' means nothing was "
+            "changed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team": {
+                    "type": "string",
+                    "description": ("optional team name when several are "
+                                    "configured; omit for the default team"),
+                },
+                "execute": {
+                    "type": "boolean",
+                    "description": ("actually perform the drop/add. PERMANENT. "
+                                    "Only true when the owner explicitly asked "
+                                    "to make the move, not merely to check."),
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "fantasy_propose_lineup_change",
         "description": (
             "Check the owner's fantasy team's CURRENT Yahoo roster against the "
@@ -1034,6 +1069,13 @@ def run_tool(name, tool_input):
             return wes_fantasy.fantasy_optimize_lineup(tool_input.get("team"))
         if name == "fantasy_propose_lineup_change":
             return wes_execute.propose_lineup_change(tool_input.get("team"))
+        if name == "fantasy_roster_moves":
+            # `execute` must be EXPLICITLY true — anything else (absent, null,
+            # the string "false", a stray truthy value) means recommend only,
+            # because the action it gates is irreversible.
+            return wes_execute.propose_roster_moves(
+                tool_input.get("team"),
+                execute=tool_input.get("execute") is True)
         return f"unknown tool: {name}"
     except Exception as e:  # noqa: BLE001
         return f"tool error: {e}"

@@ -583,3 +583,378 @@ class TestProposeLineupChange:
         out = ex.propose_lineup_change(
             _compute_fn=self._compute(), _ledger_path=str(tmp_path / "l.jsonl"))
         assert "configured" in out
+
+
+class TestRecommendRosterMoves:
+    """#035 R3 — PURE drop/add recommendation. Every rule here exists to
+    prevent a specific bad drop, and a drop is irreversible."""
+
+    def _r(self, name, pos, recent, baseline=None):
+        return {"name": name, "positions": [pos], "value": recent,
+                "form": {"recent_ppg": recent, "baseline_ppg": baseline}}
+
+    def _a(self, name, pos, value):
+        return {"name": name, "positions": [pos], "value": value}
+
+    def test_recommends_a_clear_upgrade(self):
+        roster = [self._r("Slumping", "WR", 3.0, 9.0)]
+        avail = [self._a("Hot", "WR", 12.0)]
+        recs = ex.recommend_roster_moves(roster, avail)
+        assert len(recs) == 1
+        assert recs[0]["drop"] == "Slumping" and recs[0]["add"] == "Hot"
+        assert recs[0]["gain"] == 9.0
+
+    def test_position_must_match(self):
+        """Dropping the only kicker for a fourth receiver is strictly worse
+        regardless of points — positional need is a hard constraint."""
+        roster = [self._r("Kicker", "K", 3.0)]
+        avail = [self._a("Receiver", "WR", 20.0)]
+        assert ex.recommend_roster_moves(roster, avail) == []
+
+    def test_unknown_form_never_justifies_a_drop(self):
+        """recent_form returns None below its games floor. Treating that as 0
+        would drop a player for having no data rather than for being bad."""
+        roster = [{"name": "Rookie", "positions": ["WR"], "value": None,
+                   "form": {"recent_ppg": None, "baseline_ppg": None}}]
+        avail = [self._a("Anyone", "WR", 20.0)]
+        assert ex.recommend_roster_moves(roster, avail) == []
+
+    def test_unknown_add_value_is_never_recommended(self):
+        roster = [self._r("Slumping", "WR", 1.0)]
+        avail = [{"name": "Unrated", "positions": ["WR"], "value": None}]
+        assert ex.recommend_roster_moves(roster, avail) == []
+
+    def test_marginal_gain_is_not_worth_a_move(self):
+        """Churning the roster for +0.3 is noise, and every move spends a
+        limited weekly budget."""
+        roster = [self._r("Ok", "WR", 10.0)]
+        avail = [self._a("Barely", "WR", 10.3)]
+        assert ex.recommend_roster_moves(roster, avail) == []
+        assert len(ex.recommend_roster_moves(roster, avail, min_gain=0.1)) == 1
+
+    def test_protected_players_are_never_proposed_for_a_drop(self):
+        roster = [self._r("Star", "WR", 1.0)]
+        avail = [self._a("Hot", "WR", 20.0)]
+        assert ex.recommend_roster_moves(roster, avail, protected=["Star"]) == []
+
+    def test_protection_survives_punctuation_differences(self):
+        roster = [self._r("Ja'Marr Chase", "WR", 1.0)]
+        avail = [self._a("Hot", "WR", 20.0)]
+        assert ex.recommend_roster_moves(
+            roster, avail, protected=["JaMarr Chase"]) == []
+
+    def test_worst_performer_is_targeted_first(self):
+        roster = [self._r("Bad", "WR", 2.0), self._r("Worse", "WR", 1.0)]
+        avail = [self._a("A", "WR", 15.0), self._a("B", "WR", 14.0)]
+        recs = ex.recommend_roster_moves(roster, avail, limit=2)
+        assert recs[0]["drop"] == "Worse"      # biggest gain first
+        assert {r["drop"] for r in recs} == {"Bad", "Worse"}
+
+    def test_an_added_player_is_not_proposed_twice(self):
+        roster = [self._r("A", "WR", 1.0), self._r("B", "WR", 2.0)]
+        avail = [self._a("OnlyGuy", "WR", 20.0)]
+        recs = ex.recommend_roster_moves(roster, avail, limit=2)
+        assert len(recs) == 1
+
+    def test_limit_is_respected(self):
+        roster = [self._r(f"P{i}", "WR", 1.0) for i in range(5)]
+        avail = [self._a(f"A{i}", "WR", 20.0) for i in range(5)]
+        assert len(ex.recommend_roster_moves(roster, avail, limit=2)) == 2
+
+    def test_empty_inputs_are_empty(self):
+        assert ex.recommend_roster_moves([], []) == []
+        assert ex.recommend_roster_moves(None, None) == []
+
+    def test_summary_explains_the_move_in_plain_language(self):
+        roster = [self._r("Slumping", "WR", 3.0, 9.0)]
+        avail = [self._a("Hot", "WR", 12.0)]
+        lines = ex.summarize_roster_moves(
+            ex.recommend_roster_moves(roster, avail))
+        assert "Drop Slumping" in lines[0] and "Hot" in lines[0]
+        assert "down from 9" in lines[0]
+
+
+class TestRosterMoveGuardrails:
+    """#035 R4 — the rails that only matter once something IRREVERSIBLE is
+    possible. These were declared in teams.yaml and read by no code."""
+
+    def _team(self, **guard):
+        return {"team_key": "nfl.l.1.t.1", "autonomy": "auto",
+                "guardrails": dict({"actions_allowed": ["add_drop"]}, **guard)}
+
+    def test_never_drop_is_enforced(self):
+        ok, why = ex.check_roster_move(
+            self._team(never_drop=["Ja'Marr Chase"]), "Ja'Marr Chase")
+        assert ok is False and "never_drop" in why
+
+    def test_never_drop_matches_loosely(self):
+        """A punctuation difference must not defeat protection."""
+        ok, _ = ex.check_roster_move(
+            self._team(never_drop=["JaMarr Chase"]), "Ja'Marr Chase")
+        assert ok is False
+
+    def test_an_unprotected_player_passes(self):
+        ok, why = ex.check_roster_move(
+            self._team(never_drop=["Someone Else"]), "Nobody Special")
+        assert ok is True and why == ""
+
+    def test_advise_teams_still_refuse(self):
+        team = {"team_key": "t", "autonomy": "advise"}
+        assert ex.check_roster_move(team, "X")[0] is False
+
+    def test_add_drop_must_be_in_actions_allowed(self):
+        team = {"team_key": "t", "autonomy": "auto",
+                "guardrails": {"actions_allowed": ["set_lineup"]}}
+        ok, why = ex.check_roster_move(team, "X")
+        assert ok is False and "actions_allowed" in why
+
+    def test_weekly_cap_blocks_once_reached(self):
+        ok, why = ex.check_roster_move(
+            self._team(max_moves_per_week=2), "X",
+            _count_fn=lambda tk, since, path: 2)
+        assert ok is False and "max_moves_per_week" in why
+
+    def test_weekly_cap_allows_below_the_cap(self):
+        ok, _ = ex.check_roster_move(
+            self._team(max_moves_per_week=4), "X",
+            _count_fn=lambda tk, since, path: 1)
+        assert ok is True
+
+    def test_an_unreadable_ledger_FAILS_CLOSED(self):
+        """The first guardrail depending on HISTORY, not config. If the count
+        can't be verified it must refuse — assuming zero moves so far would
+        silently allow unlimited drops whenever the ledger is broken."""
+        ok, why = ex.check_roster_move(
+            self._team(max_moves_per_week=2), "X",
+            _count_fn=lambda tk, since, path: None)
+        assert ok is False and "couldn't read" in why
+
+    def test_no_cap_configured_means_no_cap_check(self):
+        ok, _ = ex.check_roster_move(self._team(), "X",
+                                     _count_fn=lambda *a: 999)
+        assert ok is True
+
+
+class TestCountRecentMoves:
+    def _e(self, ts, executed=True, action="add_drop", team="nfl.l.1.t.1"):
+        return {"ts": ts, "team_key": team, "action_type": action,
+                "executed": executed}
+
+    def test_counts_only_executed_roster_moves(self):
+        entries = [self._e(100), self._e(101, executed=False),
+                   self._e(102, action="set_lineup")]
+        n = ex.count_recent_moves("nfl.l.1.t.1", 0, _entries_fn=lambda: entries)
+        assert n == 1
+
+    def test_uncertain_writes_count_against_the_budget(self):
+        """executed="unknown" means it may well have happened, so it must
+        consume budget rather than being ignored."""
+        entries = [self._e(100, executed="unknown")]
+        assert ex.count_recent_moves(
+            "nfl.l.1.t.1", 0, _entries_fn=lambda: entries) == 1
+
+    def test_respects_the_time_window_and_team(self):
+        entries = [self._e(50), self._e(500), self._e(500, team="other.team")]
+        assert ex.count_recent_moves(
+            "nfl.l.1.t.1", 100, _entries_fn=lambda: entries) == 1
+
+    def test_missing_ledger_is_zero_not_unknown(self, tmp_path):
+        """No ledger file = genuinely no moves yet, which is different from a
+        ledger that exists but can't be parsed."""
+        assert ex.count_recent_moves("t", 0,
+                                     _path=str(tmp_path / "none.jsonl")) == 0
+
+    def test_corrupt_ledger_is_unknown_not_zero(self, tmp_path):
+        p = tmp_path / "l.jsonl"
+        p.write_text("{not json\n", encoding="utf-8")
+        assert ex.count_recent_moves("t", 0, _path=str(p)) is None
+
+
+class TestIlCandidates:
+    """#035 R6 — stashing an injured player on IL frees a bench spot. Only
+    worth doing once a freed spot can actually be filled (R5)."""
+
+    SLOTS = ["QB", "RB", "BN", "BN", "IR", "IR"]
+
+    def _p(self, name, slot, status="", key="k"):
+        return {"name": name, "slot": slot, "status": status,
+                "player_key": key}
+
+    def test_an_injured_bench_player_is_a_candidate(self):
+        roster = [self._p("Hurt", "BN", "IR")]
+        cands = ex.il_candidates(roster, self.SLOTS)
+        assert [c["name"] for c in cands] == ["Hurt"]
+
+    def test_an_injured_starter_is_a_candidate(self):
+        roster = [self._p("Hurt", "RB", "O")]
+        assert [c["name"] for c in ex.il_candidates(roster, self.SLOTS)] == ["Hurt"]
+
+    def test_a_healthy_player_is_never_a_candidate(self):
+        roster = [self._p("Fine", "BN", "")]
+        assert ex.il_candidates(roster, self.SLOTS) == []
+
+    def test_questionable_does_not_qualify(self):
+        """Q players routinely play and are not IL-eligible — stashing one
+        would remove an available player from the lineup pool."""
+        roster = [self._p("Maybe", "BN", "Q")]
+        assert ex.il_candidates(roster, self.SLOTS) == []
+
+    def test_someone_already_stashed_is_not_re_proposed(self):
+        roster = [self._p("Hurt", "IR", "IR")]
+        assert ex.il_candidates(roster, self.SLOTS) == []
+
+    def test_no_il_slots_means_no_candidates(self):
+        """Stashing needs somewhere to stash."""
+        roster = [self._p("Hurt", "BN", "IR")]
+        assert ex.il_candidates(roster, ["QB", "RB", "BN"]) == []
+
+    def test_full_il_slots_means_no_candidates(self):
+        roster = [self._p("A", "IR", "IR"), self._p("B", "IR", "IR"),
+                  self._p("Hurt", "BN", "IR")]
+        assert ex.il_candidates(roster, self.SLOTS) == []
+
+    def test_empty_inputs(self):
+        assert ex.il_candidates([], self.SLOTS) == []
+        assert ex.il_candidates(None, None) == []
+
+    def test_summary_says_what_it_frees(self):
+        roster = [self._p("Hurt", "BN", "IR")]
+        lines = ex.summarize_il_candidates(ex.il_candidates(roster, self.SLOTS))
+        assert "Hurt" in lines[0] and "frees a bench spot" in lines[0]
+
+
+class TestProposeRosterMoves:
+    """The #035 entry point. execute defaults FALSE even for an auto team,
+    because a drop is irreversible."""
+
+    ROSTER = [{"name": "Slumping", "positions": ["WR"], "slot": "BN",
+               "status": "", "player_key": "d1"}]
+    AVAIL = [{"name": "Hot", "positions": ["WR"], "is_free_agent": True,
+              "player_key": "a1"}]
+    POOL = [{"name": "Slumping", "positions": ["WR"], "gp": 10,
+             "cats": {"RecYds": 300}, "espn_id": "e1"},
+            {"name": "Hot", "positions": ["WR"], "gp": 10,
+             "cats": {"RecYds": 2000}, "espn_id": "e2"}]
+
+    def _cfg(self, monkeypatch, autonomy="auto", **guard):
+        monkeypatch.setattr(
+            ex.wes_yahoo, "_resolve_team",
+            lambda t=None: ({"team_key": "nfl.l.1.t.1", "league_key": "nfl.l.1",
+                             "name": "Test", "sport": "nfl",
+                             "autonomy": autonomy,
+                             "guardrails": dict(
+                                 {"actions_allowed": ["add_drop"]}, **guard)},
+                            None))
+
+    def _kw(self, tmp_path, **over):
+        base = dict(
+            _roster_fn=lambda k: self.ROSTER,
+            _fa_fn=lambda k: self.AVAIL,
+            _pool_fn=lambda: (self.POOL, []),
+            _scoring_fn=lambda k: {"weights": ex.wes_nfl.DEFAULT_SCORING,
+                                   "tiers": ex.wes_nfl.POINTS_ALLOWED_TIERS},
+            _gamelog_fn=lambda aid: [{"cats": {"RecYds": 30}, "date": "2025-01"}] * 5,
+            _ledger_path=str(tmp_path / "l.jsonl"))
+        base.update(over)
+        return base
+
+    def test_recommends_without_executing_by_default(self, monkeypatch, tmp_path):
+        self._cfg(monkeypatch)
+        out = ex.propose_roster_moves("Test", **self._kw(tmp_path))
+        assert "Recommendation only" in out
+        assert "Slumping" in out and "Hot" in out
+
+    def test_never_executes_without_being_asked_even_on_auto(
+            self, monkeypatch, tmp_path):
+        """The key safety property: unlike lineups, autonomy alone must not
+        trigger an irreversible write."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        self._cfg(monkeypatch, autonomy="auto")
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", **self._kw(tmp_path,
+                               _submit_fn=lambda *a: called.append(1)))
+        assert called == []
+        assert "Recommendation only" in out
+
+    def test_execute_respects_never_drop(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        self._cfg(monkeypatch, never_drop=["Slumping"])
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", execute=True,
+            **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
+        # Protected players aren't even proposed, so there's nothing to execute.
+        assert called == [] and "No roster moves" in out
+
+    def test_execute_blocked_by_weekly_cap(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 99)
+        self._cfg(monkeypatch, max_moves_per_week=1)
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", execute=True,
+            **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
+        assert called == [] and "max_moves_per_week" in out
+
+    def test_execute_with_live_writes_off_is_a_dry_run(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(ex, "LIVE_WRITES", False)
+        self._cfg(monkeypatch)
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", execute=True,
+            **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
+        assert called == [] and "live writes are off" in out
+
+    def test_execute_all_gates_open_does_the_move(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 0)
+        self._cfg(monkeypatch)
+        called = []
+        path = tmp_path / "l.jsonl"
+        out = ex.propose_roster_moves(
+            "Test", execute=True,
+            **self._kw(tmp_path, _ledger_path=str(path),
+                       _submit_fn=lambda tk, a, d: called.append((tk, a, d))))
+        assert len(called) == 1
+        assert called[0][1] == "a1" and called[0][2] == "d1"   # add/drop keys
+        assert "Made this roster move" in out
+        logged = json.loads(path.read_text().strip().splitlines()[-1])
+        assert logged["executed"] is True
+
+    def test_a_failed_write_is_reported_as_uncertain(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 0)
+        self._cfg(monkeypatch)
+        path = tmp_path / "l.jsonl"
+
+        def boom(tk, a, d):
+            raise RuntimeError("yahoo said no")
+        out = ex.propose_roster_moves(
+            "Test", execute=True,
+            **self._kw(tmp_path, _ledger_path=str(path), _submit_fn=boom))
+        assert "permanent" in out.lower() and "check the real roster" in out.lower()
+        logged = json.loads(path.read_text().strip().splitlines()[-1])
+        assert logged["executed"] == "unknown"
+
+    def test_waiver_players_are_not_treated_as_free_pickups(
+            self, monkeypatch, tmp_path):
+        self._cfg(monkeypatch)
+        waiver = [dict(self.AVAIL[0], is_free_agent=False)]
+        out = ex.propose_roster_moves(
+            "Test", **self._kw(tmp_path, _fa_fn=lambda k: waiver))
+        assert "No roster moves" in out
+
+    def test_non_nfl_team_is_refused(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            ex.wes_yahoo, "_resolve_team",
+            lambda t=None: ({"team_key": "nba.l.1.t.1", "name": "Hoops",
+                             "sport": "nba"}, None))
+        out = ex.propose_roster_moves("Hoops", **self._kw(tmp_path))
+        assert "NFL-only" in out
+
+    def test_scrape_failures_are_relayed(self, monkeypatch, tmp_path):
+        self._cfg(monkeypatch)
+        out = ex.propose_roster_moves(
+            "Test", **self._kw(tmp_path, _roster_fn=lambda k: "Yahoo is down"))
+        assert out == "Yahoo is down"

@@ -589,6 +589,57 @@ def league_scoring(league_key):
     return format_scoring(result)
 
 
+# --- free agents (#035) ------------------------------------------------------
+# The league's player list defaults to AVAILABLE players ranked best-first,
+# which is exactly the shortlist a pickup decision needs. Verified 2026-07-31:
+# 25 rows, all roster-status "FA"; `count=`/`status=` params did NOT change the
+# page size, so this reads the default view rather than pretending to control it.
+#
+# Rows reuse the SAME shapes as the roster table (`a.name`, `span.Fz-xxs` for
+# "Jax - WR"), so the trap documented on `_detail_team_positions` applies here
+# too and the same helper is reused rather than re-derived.
+_FA_STATUS_COL = 3     # "Roster Status": "FA", or a waiver marker in-season
+
+
+def _extract_free_agents(page):
+    """DOM -> [{name, team, positions, roster_status, is_free_agent, bye,
+    player_key}]. Anything whose status is not exactly "FA" is treated as
+    NOT a free pickup — in-season Yahoo shows waiver markers here, and
+    guessing that an unknown marker means "just add them" would turn a waiver
+    claim into a failed action at best."""
+    out = []
+    for row in page.query_selector_all("#players-table tbody tr"):
+        name_el = row.query_selector("a.name")
+        if not name_el:
+            continue
+        name = (name_el.get_attribute("title") or name_el.inner_text() or "").strip()
+        if not name:
+            continue
+        m = re.search(r"/players/(\d+)", name_el.get_attribute("href") or "")
+        team, positions = _detail_team_positions(row)
+        cells = [" ".join((td.inner_text() or "").split())
+                 for td in row.query_selector_all("td")]
+        status = cells[_FA_STATUS_COL] if len(cells) > _FA_STATUS_COL else ""
+        out.append({
+            "name": name,
+            "team": team,
+            "positions": positions,
+            "roster_status": status,
+            "is_free_agent": status.upper() == "FA",
+            "player_key": m.group(1) if m else "",
+        })
+    return out
+
+
+def free_agents(league_key):
+    """The league's available players (Yahoo's default best-first ranking), or
+    a degradation string. These are CANDIDATES only — valuing them is the
+    engine's job, and deliberately uses the same ESPN pool that values rostered
+    players, so a pickup is compared against a drop on one consistent scale
+    rather than against Yahoo's own displayed projection."""
+    return _scrape(_league_url(league_key, "players"), _extract_free_agents)
+
+
 def league_settings_lines(league_key):
     """The league settings page as flat text lines (list), or a degradation
     string. Raw material for the sport-specific parsers — NFL points weights and

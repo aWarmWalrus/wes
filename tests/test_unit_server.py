@@ -8,6 +8,8 @@ import re
 import threading
 import time
 
+import pytest
+
 import wes_server as ws
 
 
@@ -1592,3 +1594,46 @@ class TestSceneContext:
         ])
         ctx = ws._scene_context()
         assert "charlie" in ctx and "1 unrecognized" in ctx
+
+
+class TestFantasyRosterMovesTool:
+    """#035 — the roster tool. Its `execute` flag gates an IRREVERSIBLE action,
+    so the dispatch must be strict about what counts as 'yes'."""
+
+    def test_registered(self):
+        assert "fantasy_roster_moves" in [t["name"] for t in ws.TOOLS]
+
+    def test_defaults_to_recommend_only(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(
+            ws.wes_execute, "propose_roster_moves",
+            lambda team=None, execute=False: seen.update(
+                team=team, execute=execute) or "ok")
+        ws.run_tool("fantasy_roster_moves", {})
+        assert seen["execute"] is False
+
+    def test_execute_true_is_passed_through(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(
+            ws.wes_execute, "propose_roster_moves",
+            lambda team=None, execute=False: seen.update(execute=execute) or "ok")
+        ws.run_tool("fantasy_roster_moves", {"execute": True})
+        assert seen["execute"] is True
+
+    @pytest.mark.parametrize("val", ["true", "yes", 1, "false", None, 0, ""])
+    def test_only_a_real_boolean_true_executes(self, monkeypatch, val):
+        """A stringy or truthy value must NOT trigger a permanent drop — the
+        model emitting "true" instead of true should degrade to recommending,
+        not to dropping a player."""
+        seen = {}
+        monkeypatch.setattr(
+            ws.wes_execute, "propose_roster_moves",
+            lambda team=None, execute=False: seen.update(execute=execute) or "ok")
+        ws.run_tool("fantasy_roster_moves", {"execute": val})
+        assert seen["execute"] is False
+
+    def test_description_warns_the_drop_is_permanent(self):
+        tool = next(t for t in ws.TOOLS if t["name"] == "fantasy_roster_moves")
+        desc = tool["description"].lower()
+        assert "permanent" in desc
+        assert "only recommends" in desc or "never acts on its own" in desc
