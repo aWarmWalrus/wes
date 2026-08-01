@@ -28,12 +28,29 @@ import wes_execute  # noqa: E402
 import wes_yahoo  # noqa: E402
 
 
-def run_all(_teams_fn=None, _propose_fn=None):
-    """Run the GM cycle for every propose/auto team. Returns True if every
-    team's cycle completed without raising (regardless of what it decided to
-    do); False if any team's cycle itself errored."""
+def _report(label, name, out):
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    marker = "[EXECUTED] " if out.startswith(("Set the lineup",
+                                              "Made this roster move")) else ""
+    print(f"[fantasy-gm] {stamp} {marker}{name} ({label}): "
+          f"{out.split(chr(10), 1)[0]}", flush=True)
+    for line in out.splitlines()[1:]:
+        print(f"    {line}", flush=True)
+
+
+def run_all(_teams_fn=None, _propose_fn=None, _roster_fn=None):
+    """Run the GM cycle for every propose/auto team: the LINEUP check, then the
+    ROSTER check. Returns True if every team's cycle completed without raising
+    (regardless of what it decided to do); False if any team's cycle errored.
+
+    The roster check runs with execute=False — always, regardless of autonomy.
+    A drop is irreversible, so the scheduled job may SUGGEST one but never make
+    one on its own; the owner asks for it explicitly (#035). Its ledger entry is
+    what the Discord bot turns into a DM, and only when the suggestion has
+    CHANGED, so a standing recommendation doesn't nag every morning."""
     teams_fn = _teams_fn or wes_yahoo.configured_teams
     propose = _propose_fn or wes_execute.propose_lineup_change
+    roster = _roster_fn or wes_execute.propose_roster_moves
     teams = [t for t in teams_fn() if str(t.get("autonomy", "")).lower() in
             ("propose", "auto")]
     if not teams:
@@ -43,20 +60,17 @@ def run_all(_teams_fn=None, _propose_fn=None):
     ok = True
     for team in teams:
         name = team.get("name", "?")
-        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        try:
-            out = propose(name)
-        except Exception as e:  # noqa: BLE001 — one team's crash must not
-            # stop the rest of the run or crash the scheduled task.
-            print(f"[fantasy-gm] {stamp} {name}: ERROR {e!r}", flush=True)
-            ok = False
-            continue
-        marker = "[EXECUTED] " if out.startswith("Set the lineup") else ""
-        first_line = out.split("\n", 1)[0]
-        print(f"[fantasy-gm] {stamp} {marker}{name}: {first_line}", flush=True)
-        if len(out.splitlines()) > 1:
-            for line in out.splitlines()[1:]:
-                print(f"    {line}", flush=True)
+        for label, fn in (("lineup", propose), ("roster", roster)):
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                out = fn(name)
+            except Exception as e:  # noqa: BLE001 — one check's crash must not
+                # stop the other, the rest of the teams, or the scheduled task.
+                print(f"[fantasy-gm] {stamp} {name} ({label}): ERROR {e!r}",
+                      flush=True)
+                ok = False
+                continue
+            _report(label, name, out)
     return ok
 
 

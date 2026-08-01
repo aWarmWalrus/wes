@@ -174,3 +174,44 @@ adds) aren't implemented — non-FA players are skipped rather than claimed; and
 - ESPN gamelog is **per-athlete**, i.e. one HTTP call per player. A 15-man
   roster is fine; the whole FA pool is not. Rank FAs on season stats first, then
   pull gamelogs only for the shortlist.
+
+### 2026-07-31 — PROACTIVE suggestions: the scheduled run now recommends, unasked
+Owner: *"can jarvis at least recommend a roster move? like, automatically check
+if anyone is underperforming and recommend a change without my prompting?"*
+
+The pieces existed but weren't wired: the scheduled runner only ran the LINEUP
+check, and the Discord watcher deliberately ignored anything that wasn't a real
+write. Both now handle recommendations.
+
+- `fantasy_gm_run` runs the roster check after the lineup check, per team, with
+  **`execute=False` always — regardless of autonomy**. The scheduled job may
+  suggest a drop but never make one; that stays an explicit ask (#035's
+  irreversibility rule). A crash in one check no longer costs the other.
+- `fantasy_watch` DMs suggestions as well as writes, with **distinct framing**:
+  "NOTHING HAS BEEN DONE — this is a suggestion only", so a proposal can never
+  read as a completed action.
+
+**The design problem, and a wrong turn worth recording.** The job fires daily, so
+an unchanged suggestion would re-send "drop Addison for Washington" every
+morning — the alert-fatigue failure `alert_watch` avoids by notifying on state
+CHANGE, not every poll. First attempt derived the dedup from the ledger, which
+*looked* more robust (survives restarts). It was wrong: eight identical rows from
+development runs — written before the notifier existed — silenced a suggestion
+the owner had **never actually been told about**. Observed live: the run
+completed, the ledger had the entry, and no DM ever came.
+
+Moved the dedup **in-memory into the watcher**, matching `alert_watch` exactly
+(which also re-notifies current state after a restart). Re-notifying once after a
+restart is the cheaper failure than never notifying at all. Three fetch-layer
+tests had to be retargeted to the watcher layer, and the test harness itself had
+a bug (the loop counter doubled as the batch index, so only the first poll ever
+ran) — both fixed rather than worked around.
+
+**Verified live, twice.** First run → a real unprompted DM:
+> "The system suggests swapping Jordan Addison for Parker Washington to gain
+> about 2.73 projected points. No changes were made automatically since dropping
+> a player is permanent, so just let me know if you'd like me to go ahead."
+
+Second identical run → **still exactly 1 DM**. The nag guard holds.
+
+718 tests pass (was 704).

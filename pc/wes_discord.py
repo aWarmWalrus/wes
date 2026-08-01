@@ -271,6 +271,10 @@ def raw_fantasy_summary(entry):
     """Plain fallback DM used when the server can't be reached to phrase the
     event — never drop a real-write notification just because the explainer
     is down (the same reasoning as raw_summary for alerts)."""
+    if _is_recommendation(entry):
+        why = "; ".join(entry.get("why") or []) or "see the log"
+        return (f"💡 WES fantasy suggestion for {entry.get('name','your team')}: "
+                f"{why} (nothing was changed — reply if you want it done)")
     moves = entry.get("moves") or []
     move_text = "; ".join(f"{m.get('name','?')}: {m.get('from_slot') or '(none)'} "
                           f"-> {m.get('to_slot','?')}" for m in moves) or "(no moves)"
@@ -288,6 +292,15 @@ def describe_fantasy_event(entry):
     actual moves and the WHY reasoning already computed by
     wes_execute.summarize_moves (never re-derived or guessed here)."""
     team = entry.get("name", "a team")
+    if _is_recommendation(entry):
+        why_text = " ".join(entry.get("why") or []) or "no reasoning recorded"
+        return (f"WES checked the fantasy roster for '{team}' on its scheduled "
+                f"run and thinks a change is worth making. NOTHING HAS BEEN "
+                f"DONE — this is a suggestion only. Recommendation: {why_text} "
+                f"Tell the owner what it suggests and why, briefly, and make "
+                f"clear it hasn't happened and needs their go-ahead. Dropping a "
+                f"player is permanent, so do not imply it's already done or "
+                f"that it will happen on its own. Background: {FANTASY_CONTEXT}")
     moves = entry.get("moves") or []
     move_text = "; ".join(f"{m.get('name','?')}: {m.get('from_slot') or '(none)'} "
                           f"-> {m.get('to_slot','?')}" for m in moves) or "no moves"
@@ -322,42 +335,89 @@ def explain_fantasy_event(entry):
     )["reply"]
 
 
+def _recommendation_signature(entry):
+    """Stable identity of a RECOMMENDATION: which drop/add pairs it proposes.
+    Two runs proposing the same swap have the same signature even though their
+    timestamps and point estimates differ slightly."""
+    return tuple(sorted(
+        (str(m.get("drop", "")), str(m.get("add", "")))
+        for m in entry.get("moves") or []))
+
+
+def _is_recommendation(entry):
+    """A roster suggestion nobody acted on — as opposed to a real write."""
+    return (entry.get("action_type") == "add_drop"
+            and entry.get("executed") is False
+            and bool(entry.get("moves")))
+
+
 def fetch_new_fantasy_events(since_ts):
-    """Ledger entries representing a real write ATTEMPT (`executed` is `True`
-    or `"unknown"` — a clean success or a partial/uncertain one; `False` is a
-    routine no-op or a blocked proposal and is never notified) with `ts` after
-    `since_ts`, oldest first. Tolerant of a missing/unreadable ledger or a
-    corrupt line — returns what it can rather than raising, since "no fantasy
-    activity yet" is the common case, not an error."""
+    """Ledger entries NEWER than `since_ts` that are worth telling the owner
+    about, oldest first. Two kinds:
+
+    1. **Real write attempts** (`executed` True or `"unknown"`) — something
+       actually changed, or may have.
+    2. **Roster RECOMMENDATIONS** (#035) — nothing changed, but Jarvis thinks
+       something should.
+
+    A routine no-op (`moves: []`) and a guardrail-blocked proposal are never
+    notified. Tolerant of a missing/unreadable ledger or a corrupt line.
+
+    This answers "what's NEW by time" only. Whether a recommendation is worth
+    REPEATING is `fantasy_watch`'s call — see the dedup there."""
     path = wes_execute.LEDGER_FILE
     if not os.path.exists(path):
         return []
-    out = []
+    entries = []
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             try:
-                entry = json.loads(line)
+                entries.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-            if entry.get("executed") in (True, "unknown") \
-                    and entry.get("ts", 0) > since_ts:
-                out.append(entry)
-    out.sort(key=lambda e: e.get("ts", 0))
+    entries.sort(key=lambda e: e.get("ts", 0))
+
+    out = []
+    for entry in entries:
+        ts = entry.get("ts", 0)
+        if ts <= since_ts:
+            continue
+        if _is_recommendation(entry) or \
+                entry.get("executed") in (True, "unknown"):
+            out.append(entry)
     return out
 
 
 async def fantasy_watch(client):
-    """DM the owner when a real (or partially-failed) Yahoo fantasy write
-    happens — phrased by Jarvis (falling back to a raw summary if the server
-    is down). Mirrors alert_watch's shape exactly; polls a file instead of
-    Prometheus. State (`seen_ts`) is in-memory only, seeded to "now" at
-    startup — a bot restart does not replay write history from before it
-    started, matching alert_watch's no-persistent-state philosophy."""
+    """DM the owner when a real Yahoo fantasy write happens, or when the
+    scheduled run SUGGESTS a roster move (#035) — phrased by Jarvis, falling
+    back to a raw summary if the server is down.
+
+    Mirrors alert_watch's shape; polls a file instead of Prometheus. Both bits
+    of state are in-memory only, matching alert_watch's no-persistent-state
+    philosophy:
+
+    * `seen_ts` starts at "now", so a restart doesn't replay old history.
+    * `notified_sig` remembers the last SUGGESTION actually DMed per team, so a
+      standing recommendation doesn't nag every morning — the scheduled run
+      fires daily and would otherwise re-send "drop Addison for Washington"
+      forever. This is the same reason alert_watch notifies on state CHANGE
+      rather than on every poll.
+
+    Keeping that dedup in memory rather than deriving it from the ledger is
+    deliberate, and was chosen after getting it wrong: reading history from the
+    ledger looked more robust, but it meant entries written BEFORE the notifier
+    existed silenced a suggestion the owner had never actually been told about
+    (observed 2026-07-31 — eight identical dev-run rows swallowed the first
+    real DM). In-memory state re-notifies once after a restart, which is
+    exactly what alert_watch already does with firing alerts, and is the
+    cheaper failure."""
     await client.wait_until_ready()
     seen_ts = time.time()
+    notified_sig = {}
     print(f"[fantasy] watching {wes_execute.LEDGER_FILE} every "
           f"{FANTASY_POLL_S:g}s", flush=True)
 
@@ -379,8 +439,14 @@ async def fantasy_watch(client):
         try:
             events = await asyncio.to_thread(fetch_new_fantasy_events, seen_ts)
             for entry in events:
-                await announce_fantasy(entry)
                 seen_ts = max(seen_ts, entry.get("ts", seen_ts))
+                if _is_recommendation(entry):
+                    team = entry.get("team_key", "")
+                    sig = _recommendation_signature(entry)
+                    if notified_sig.get(team) == sig:
+                        continue          # same standing suggestion — stay quiet
+                    notified_sig[team] = sig
+                await announce_fantasy(entry)
         except Exception as e:  # noqa: BLE001 — the watcher must never die
             print(f"[fantasy] poll failed: {e!a}", flush=True)
         await asyncio.sleep(FANTASY_POLL_S)

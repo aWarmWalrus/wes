@@ -466,3 +466,142 @@ class TestFantasyWatcher:
                 return n["i"] > 3
 
         asyncio.run(wd.fantasy_watch(FakeClient()))   # must not raise
+
+
+class TestRecommendationNotifications:
+    """#035 — the scheduled run SUGGESTS roster moves. It fires daily, so the
+    same standing suggestion must not nag every morning: notify on CHANGE, the
+    way alert_watch notifies on state change rather than every poll."""
+
+    def _rec(self, ts, drop="Addison", add="Washington", team="nfl.l.1.t.4"):
+        return {"ts": ts, "team_key": team, "name": "Test", "sport": "nfl",
+                "action_type": "add_drop", "autonomy": "auto",
+                "moves": [{"drop": drop, "add": add, "gain": 2.7}],
+                "why": [f"Drop {drop} for {add}."],
+                "executed": False, "dry_run": True}
+
+    def _write(self, tmp_path, monkeypatch, entries):
+        p = tmp_path / "ledger.jsonl"
+        p.write_text("\n".join(json.dumps(e) for e in entries), encoding="utf-8")
+        monkeypatch.setattr(wd.wes_execute, "LEDGER_FILE", str(p))
+        return p
+
+    def test_a_new_recommendation_is_notified(self, tmp_path, monkeypatch):
+        self._write(tmp_path, monkeypatch, [self._rec(100)])
+        out = wd.fetch_new_fantasy_events(0)
+        assert len(out) == 1 and out[0]["action_type"] == "add_drop"
+
+    def test_fetch_returns_every_new_recommendation(self, tmp_path, monkeypatch):
+        """fetch answers "what is NEW by time" only — deciding whether a
+        repeat is worth saying is the watcher's job (see the dedup tests
+        below), so the same suggestion logged three times is three rows here."""
+        self._write(tmp_path, monkeypatch,
+                    [self._rec(100), self._rec(200), self._rec(300)])
+        assert len(wd.fetch_new_fantasy_events(0)) == 3
+
+    def test_fetch_does_not_replay_history_before_since_ts(
+            self, tmp_path, monkeypatch):
+        self._write(tmp_path, monkeypatch, [self._rec(100), self._rec(500)])
+        assert [e["ts"] for e in wd.fetch_new_fantasy_events(300)] == [500]
+
+    def test_a_no_op_run_is_never_notified(self, tmp_path, monkeypatch):
+        """"already optimal" writes a ledger row with no moves — silence."""
+        empty = dict(self._rec(100), moves=[], why=[])
+        self._write(tmp_path, monkeypatch, [empty])
+        assert wd.fetch_new_fantasy_events(0) == []
+
+    def test_real_writes_are_still_notified_alongside(self, tmp_path, monkeypatch):
+        write = {"ts": 400, "team_key": "nfl.l.1.t.4", "name": "Test",
+                 "action_type": "set_lineup", "moves": [{"name": "X"}],
+                 "executed": True, "dry_run": False}
+        self._write(tmp_path, monkeypatch, [self._rec(100), write])
+        out = wd.fetch_new_fantasy_events(0)
+        assert len(out) == 2
+
+    def test_recommendation_framing_says_nothing_was_done(self):
+        desc = wd.describe_fantasy_event(self._rec(100))
+        assert "NOTHING HAS BEEN DONE" in desc
+        assert "suggestion" in desc.lower()
+        assert "permanent" in desc.lower()
+
+    def test_recommendation_fallback_dm_is_clearly_a_suggestion(self):
+        text = wd.raw_fantasy_summary(self._rec(100))
+        assert "suggestion" in text.lower()
+        assert "nothing was changed" in text.lower()
+
+class TestRecommendationDedup:
+    """The daily-nag guard, at the layer that actually owns it. The scheduled
+    run fires every morning, so an unchanged standing suggestion must be DMed
+    ONCE, not forever."""
+
+    def _rec(self, ts, drop="Addison", add="Washington", team="t1"):
+        return {"ts": ts, "team_key": team, "name": "Test",
+                "action_type": "add_drop",
+                "moves": [{"drop": drop, "add": add}],
+                "why": [f"Drop {drop} for {add}."],
+                "executed": False, "dry_run": True}
+
+    def _run(self, monkeypatch, batches):
+        """Drive fantasy_watch over successive fetch results; return DM texts.
+        Each poll consumes one batch; the watcher stops when they run out."""
+        import asyncio
+
+        pending = list(batches)
+        sent = []
+        monkeypatch.setattr(wd, "FANTASY_POLL_S", 0.001)
+        monkeypatch.setattr(
+            wd, "explain_fantasy_event",
+            lambda e: f"DM:{e.get('team_key')}:{wd._recommendation_signature(e)}")
+        monkeypatch.setattr(
+            wd, "fetch_new_fantasy_events",
+            lambda since_ts: pending.pop(0) if pending else [])
+
+        class FakeUser:
+            async def send(self, t):
+                sent.append(t)
+
+        class FakeClient:
+            async def wait_until_ready(self):
+                pass
+
+            def is_closed(self):
+                return not pending      # stop once every batch is consumed
+
+            async def fetch_user(self, uid):
+                return FakeUser()
+
+        asyncio.run(wd.fantasy_watch(FakeClient()))
+        return sent
+
+    def test_an_unchanged_suggestion_is_dmed_once(self, monkeypatch):
+        sent = self._run(monkeypatch, [[self._rec(100)], [self._rec(200)],
+                                       [self._rec(300)]])
+        assert len(sent) == 1
+
+    def test_a_changed_suggestion_is_dmed_again(self, monkeypatch):
+        sent = self._run(monkeypatch,
+                         [[self._rec(100)],
+                          [self._rec(200, drop="Ferguson", add="Diggs")]])
+        assert len(sent) == 2
+
+    def test_a_reverted_suggestion_is_dmed_again(self, monkeypatch):
+        """A -> B -> A is a real change each time; the middle one isn't noise."""
+        sent = self._run(monkeypatch,
+                         [[self._rec(100)],
+                          [self._rec(200, drop="X", add="Y")],
+                          [self._rec(300)]])
+        assert len(sent) == 3
+
+    def test_dedup_is_per_team(self, monkeypatch):
+        sent = self._run(monkeypatch,
+                         [[self._rec(100, team="t1"),
+                           self._rec(101, team="t2")]])
+        assert len(sent) == 2
+
+    def test_real_writes_are_never_deduped(self, monkeypatch):
+        """A repeated WRITE is a repeated real-world event, not a nag."""
+        write = {"ts": 100, "team_key": "t1", "name": "T",
+                 "action_type": "set_lineup", "moves": [{"name": "X"}],
+                 "executed": True}
+        sent = self._run(monkeypatch, [[write], [dict(write, ts=200)]])
+        assert len(sent) == 2
