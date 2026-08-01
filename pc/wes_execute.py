@@ -755,8 +755,23 @@ def propose_roster_moves(team=None, execute=False, _roster_fn=None,
     recs = recommend_roster_moves(enriched, avail,
                                   protected=guard.get("never_drop") or ())
     if not recs:
+        # An EXECUTE request that finds nothing is worth recording: the owner
+        # asked for an action and got a no-op. That combination previously
+        # vanished without a trace, which made a real bug (a transiently empty
+        # ESPN page cached for the whole season TTL) look like the system had
+        # simply changed its mind — see #035, 2026-07-31.
+        if execute:
+            _append_ledger({"ts": _now if _now is not None else time.time(),
+                            "team_key": team_key, "name": name, "sport": "nfl",
+                            "action_type": "add_drop", "moves": [],
+                            "executed": False, "dry_run": True,
+                            "reason": "execute requested but no move qualified"},
+                           _ledger_path)
         return (f"No roster moves worth making for {name} — nobody has fallen "
-                f"off enough for an available player to be a clear upgrade.")
+                f"off enough for an available player to be a clear upgrade."
+                + (" (You asked me to make the move, but the check came back "
+                   "empty this time — if you saw a suggestion earlier, ask me "
+                   "to check again.)" if execute else ""))
 
     why = summarize_roster_moves(recs)
     # R6: an injured player stashed on IL frees a bench spot, which is only

@@ -217,3 +217,65 @@ class TestLayering:
         for name in ("wes_nba.py", "wes_nfl.py", "wes_draft.py"):
             src = open(os.path.join(pc, name), encoding="utf-8").read()
             assert "urllib.request.urlopen" not in src, name
+
+
+class TestCacheableVeto:
+    """#035 regression, 2026-07-31. ESPN sometimes answers a paginated request
+    with HTTP 200 and no data. That parsed fine, so it was CACHED for the full
+    900s season TTL — which silently made the per-page retry above it dead
+    code, since every retry re-read the cached emptiness instead of asking
+    ESPN again. Symptom: a roster recommendation that appeared and vanished
+    between runs, and an owner-APPROVED move that turned into a no-op."""
+
+    def test_an_unusable_response_is_not_cached_and_a_retry_recovers(self):
+        calls = []
+
+        def flaky(url, headers, timeout, retries):
+            calls.append(url)
+            if len(calls) == 1:
+                return b'{"league": {}}'      # 200, but no data
+            return b'{"athletes": [{"a": 1}]}'
+
+        usable = lambda p: bool(p.get("athletes"))  # noqa: E731
+        first = wes_http.get_json("u", ttl=900, _fetch_fn=flaky, _now=1.0,
+                                  cacheable=usable)
+        second = wes_http.get_json("u", ttl=900, _fetch_fn=flaky, _now=2.0,
+                                   cacheable=usable)
+        assert first == {"league": {}}          # returned, but not remembered
+        assert second == {"athletes": [{"a": 1}]}
+        assert len(calls) == 2                  # the retry REACHED the network
+
+    def test_a_usable_response_is_still_cached(self):
+        calls = []
+
+        def fetch(url, headers, timeout, retries):
+            calls.append(url)
+            return b'{"athletes": [{"a": 1}]}'
+
+        usable = lambda p: bool(p.get("athletes"))  # noqa: E731
+        for _ in range(3):
+            wes_http.get_json("u2", ttl=900, _fetch_fn=fetch, _now=1.0,
+                              cacheable=usable)
+        assert len(calls) == 1
+
+    def test_without_the_veto_behaviour_is_unchanged(self):
+        """Callers that don't pass `cacheable` keep the old semantics."""
+        calls = []
+
+        def fetch(url, headers, timeout, retries):
+            calls.append(url)
+            return b'{"league": {}}'
+
+        wes_http.get_json("u3", ttl=900, _fetch_fn=fetch, _now=1.0)
+        wes_http.get_json("u3", ttl=900, _fetch_fn=fetch, _now=2.0)
+        assert len(calls) == 1
+
+
+class TestNflEmptyPayloadGuard:
+    def test_espn_empty_responses_are_rejected(self):
+        import wes_nfl as nfl
+        assert nfl._has_payload({"athletes": [{"x": 1}]}) is True
+        assert nfl._has_payload({"teams": [{"x": 1}]}) is True
+        assert nfl._has_payload({"league": {}}) is False
+        assert nfl._has_payload({"athletes": []}) is False
+        assert nfl._has_payload(None) is False

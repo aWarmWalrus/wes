@@ -719,14 +719,30 @@ def defence_pool(season=None, _get_fn=None):
         return []
 
 
+def _has_payload(payload):
+    """Is this ESPN response actually usable, or a 200 with nothing in it?
+
+    ESPN intermittently answers a paginated request with HTTP 200 and no
+    `athletes`/`teams` key at all. Such a response must NEVER be cached: doing
+    so pinned an empty page for the full season TTL and made the per-page retry
+    in `_paginated_pool` dead code, because every retry re-read the cached
+    emptiness instead of asking ESPN again (#035, 2026-07-31)."""
+    return isinstance(payload, dict) and bool(
+        payload.get("athletes") or payload.get("teams"))
+
+
 def _get_json(url):
     """ESPN JSON via the shared raw layer (#034).
 
     SEASON_TTL, not the short default: this is a COMPLETED season's totals, which
     cannot change. Before the raw layer existed this was uncached, so every
     "who should I start" turn re-fetched four pages of season stats — pure waste
-    inside a ~30s turn, and needlessly rude to ESPN."""
-    return wes_http.get_json(url, ttl=wes_http.SEASON_TTL, timeout=15.0)
+    inside a ~30s turn, and needlessly rude to ESPN.
+
+    `cacheable=_has_payload` keeps a transient empty answer OUT of the cache so
+    a retry is a real retry."""
+    return wes_http.get_json(url, ttl=wes_http.SEASON_TTL, timeout=15.0,
+                             cacheable=_has_payload)
 
 
 def _byathlete_params(limit, season, sort, page=None):

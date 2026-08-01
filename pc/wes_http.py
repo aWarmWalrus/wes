@@ -66,12 +66,22 @@ def cache_size():
         return len(_cache)
 
 
-def _cached(key, ttl, produce, now):
+def _cached(key, ttl, produce, now, cacheable=None):
+    """Return a cached value or produce one.
+
+    `cacheable(value) -> bool` lets the CALLER veto storing a technically-valid
+    but useless response. This exists because of a real bug (#035, 2026-07-31):
+    ESPN sometimes answers a paginated request with HTTP 200 and no `athletes`
+    key at all. That parsed fine, so it was cached for the full 900s season TTL
+    — which silently made the per-page retry above it DEAD CODE, since every
+    retry re-read the same cached empty body instead of asking ESPN again. The
+    visible symptom was a roster recommendation that appeared and vanished
+    between runs, and an owner-approved move that turned into a no-op."""
     hit = _cache.get(key)
     if hit and hit[0] > now:
         return hit[1]
     value = produce()
-    if ttl > 0:
+    if ttl > 0 and (cacheable is None or cacheable(value)):
         with _lock:
             _cache[key] = (now + ttl, value)
     return value
@@ -103,15 +113,19 @@ def _fetch(url, headers, timeout, retries):
 
 
 def get_json(url, ttl=DEFAULT_TTL, timeout=DEFAULT_TIMEOUT, retries=1,
-             ua=UA, _now=None, _fetch_fn=None):
+             ua=UA, _now=None, _fetch_fn=None, cacheable=None):
     """Fetch and parse JSON, cached per URL. Raises on failure — the layer above
-    owns how that becomes a sentence."""
+    owns how that becomes a sentence.
+
+    `cacheable(payload) -> bool` optionally vetoes caching a response the caller
+    considers useless (e.g. a 200 with no data). Without it, a transient empty
+    answer is remembered for the whole TTL and every retry re-reads it."""
     now = _now if _now is not None else time.time()
     fetch = _fetch_fn or _fetch
 
     def produce():
         return json.loads(fetch(url, {"User-Agent": ua}, timeout, retries).decode())
-    return _cached((url, "json"), ttl, produce, now)
+    return _cached((url, "json"), ttl, produce, now, cacheable)
 
 
 def get_text(url, ttl=TEXT_TTL, timeout=DEFAULT_TIMEOUT, retries=1,

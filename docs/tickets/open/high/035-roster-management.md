@@ -215,3 +215,41 @@ ran) — both fixed rather than worked around.
 Second identical run → **still exactly 1 DM**. The nag guard holds.
 
 718 tests pass (was 704).
+
+### 2026-07-31 — the owner approved a move and it silently did nothing. Root cause.
+Owner OK'd the suggestion in Discord ("yeah let's do it"). Jarvis did everything
+right — called `fantasy_roster_moves({'execute': True, 'team': "Charles's Pop"})`
+— and then reported there were no moves recommended. **Nothing was dropped; the
+roster was verified intact.** But an approved action turning into a silent no-op
+is a bad failure, so this is the root cause.
+
+**A 200-with-no-data was being CACHED.** ESPN intermittently answers a paginated
+`byathlete` request with HTTP 200 and no `athletes` key. That parses fine, so
+`wes_http` stored it for the full 900s `SEASON_TTL`. Consequences, in order of
+how badly they hid the problem:
+1. `_paginated_pool`'s per-page retry became **dead code** — every retry re-read
+   the cached empty body instead of asking ESPN again. That is why the log said
+   "page 2 ... never returned athletes after retry" on literally every run.
+2. A degraded pool (missing WRs/TEs) was pinned for 15 minutes, so a player's
+   value came back `None`, so `recommend_roster_moves` correctly refused to
+   propose a drop based on unknown data — and the recommendation *vanished*
+   between the suggestion and the approval.
+
+Fix: `wes_http.get_json` takes an optional `cacheable(payload)` veto, and
+`wes_nfl` passes `_has_payload` so an empty answer is returned but never
+remembered. Confirmed by a regression test that the retry now **reaches the
+network** and recovers.
+
+**Immediately visible improvement**: the very next run found the pool more
+complete and surfaced a BETTER move it had been missing — *Drop Jake Ferguson
+(3.52 recent vs 8.54 season) for Brenton Strange (7.92), +4.4* — alongside the
+original Addison one. The cache bug had been materially degrading every
+recommendation, not just this one.
+
+Second fix, from the same incident: an `execute=True` request that finds nothing
+now **writes a ledger row** (`"execute requested but no move qualified"`) and
+says so in the reply. Previously it returned early before any logging, so an
+owner-approved no-op left no trace at all — which is exactly what made this take
+a root-cause hunt instead of a log read.
+
+722 tests pass (was 718).
