@@ -85,8 +85,12 @@ Get-Content C:\Users\awarm\wes-pc\logs\server.log -Tail 20   # server log
 - `hosts.yaml` + `wes_hosts.py` (repo root) — the host registry (IPs/ports) and
   its loader; imported by server, bot, and Pi client. Jarvis reaches it via the
   `lookup_hosts` tool.
-- `C:\Users\awarm\wes-pc\run_server.ps1` (PC-local, NOT in the repo) — the launcher
-  the "WES Server" task runs; sets voice/model env. `tests/` — the test suite.
+- `pc/scripts/*.ps1` — the launchers + `wes-dev.ps1`, **in the repo** (canonical).
+  The scheduled tasks run **deployed** copies from `C:\Users\awarm\wes-pc\`: edit
+  the repo copy, then `wes-dev.ps1 deploy` (`deploy check` reports drift). They
+  must be local — a script on `Z:` can't start before the share maps at boot
+  (#032), and execution policy won't run an unsigned script off a share at all.
+  `tests/` — the test suite.
 
 Project skills in `.claude/skills/`: **wes-test** (running the suites
 correctly) and **wes-reload** (restarting the live services + reading logs) —

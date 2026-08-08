@@ -17,6 +17,17 @@ cd /z/wes && git status --short && git log --oneline -5
   on it. `tests/eval_history.csv` + `tests/perf_history_stream.csv` churn on
   their own — the nightly appends to them.
 
+Then check the launchers the services actually run match the repo:
+
+```powershell
+& C:\Users\awarm\wes-pc\wes-dev.ps1 deploy check
+```
+- The `.ps1` files are canonical in `pc/scripts/` and **deployed** to
+  `C:\Users\awarm\wes-pc\`. Drift means someone edited a deployed copy, or a
+  repo change was never pushed out — either way the running system isn't the
+  one in git. `deploy` (no `check`) fixes it; a redeployed launcher only takes
+  effect on the **next task restart**.
+
 ## 2. Are the services actually up?
 
 ```powershell

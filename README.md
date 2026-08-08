@@ -50,6 +50,7 @@ is allowlisted, so it runs without a permission prompt, and it waits for
 | `log [service] [n]` | tail a service log |
 | `gpu` | `nvidia-smi` + `ollama ps` |
 | `models [status\|check\|list\|load\|unload\|fit]` | VRAM/model manager |
+| `deploy [check]` | redeploy launchers from the repo (`check` = drift report only) |
 
 **Run `models check` after any model change.** It compares configured vs
 actually-resident models. A silent mismatch there once sent every request to
@@ -69,12 +70,17 @@ The launchers set environment (voice, model, feature flags) and then exec Python
 | `run_nightly_eval.ps1` | `WES Nightly Eval` | nightly quality eval |
 | `wes-dev.ps1` | — | the dev helper above |
 | `wes-models.ps1` | — | VRAM/model manager (via `wes-dev models`) |
+| `deploy.ps1` | — | copies all of the above from the repo to local disk |
 
-> **These live in `C:\Users\awarm\wes-pc\` and are NOT in this repo.** They hold
-> no secrets — `ANTHROPIC_API_KEY`, `WES_DISCORD_TOKEN` and friends are read
-> from the user environment at launch — but they *are* the only copy, so a dead
-> PC loses them. Backing them up (here or elsewhere) is unresolved; see #032 for
-> the related boot-reliability work.
+> **Canonical copies live in `pc/scripts/` in this repo; the scheduled tasks run
+> DEPLOYED copies from `C:\Users\awarm\wes-pc\`.** Edit the repo copy, then
+> `wes-dev.ps1 deploy` — `deploy check` reports drift without changing anything.
+>
+> They must sit on local disk for two independent reasons: a launcher on `Z:`
+> can't start before the share is mapped at boot (#032), and PowerShell's
+> execution policy refuses to run an unsigned script off a network share at all.
+> No secrets are in them — `ANTHROPIC_API_KEY`, `WES_DISCORD_TOKEN` and friends
+> come from the user environment at launch.
 
 Raw equivalents, only when `wes-dev.ps1` lacks a flag you need:
 
