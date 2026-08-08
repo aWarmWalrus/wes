@@ -352,3 +352,32 @@ verified on the live config that only Charles's Pop resolves to unattended
 drops.
 
 740 tests pass (was 723).
+
+## Correction rows were double-counted against the weekly cap — 2026-08-07
+
+The 2026-08-01 fix appended a CORRECTION row (rather than rewriting history, as
+an append-only ledger requires) carrying `correction_of_ts`. But the corrected
+row is still on disk with `executed: true`, and `count_recent_moves` counted
+both. Two real moves therefore read as **three**, and from 08-05 to 08-07 the
+team refused every roster move at a `max_moves_per_week: 3` cap it had never
+actually reached — visible as seven identical guardrail refusals in the ledger.
+
+Nothing was lost (the cap fails CLOSED, so the failure mode was inaction), but
+the system was silently doing nothing while looking healthy — the same shape as
+#032, where a dead service reported success.
+
+Two rules, both now tested:
+
+1. **A superseded row does not count.** Any row named by a later row's
+   `correction_of_ts` is skipped.
+2. **A correction is windowed at the time of the row it corrects**, not at the
+   time it was written. A correction restates a past event rather than creating
+   a new one; windowing it at its own timestamp would let fixing an old record
+   re-charge this week's budget for a move made weeks ago. (Caught by a test
+   asserting the opposite of the first implementation.)
+
+A junk/unparseable `correction_of_ts` supersedes nothing, so the count fails
+toward over-counting — never under-counting, which would silently raise the cap.
+
+Verified on the live ledger: the count drops 3 → 2 and the guardrail passes
+again. 743 tests pass (was 740).

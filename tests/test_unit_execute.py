@@ -770,6 +770,34 @@ class TestCountRecentMoves:
         return {"ts": ts, "team_key": team, "action_type": action,
                 "executed": executed}
 
+    def test_a_corrected_row_is_not_double_counted(self):
+        """Regression, 2026-08-07. The ledger is append-only, so correcting a
+        row leaves BOTH on disk with executed=True. Counting both inflated the
+        weekly total by one and silently ate the budget: two real moves read as
+        three, and the live team then refused every roster move for three days
+        at a cap it had never reached."""
+        original = self._e(100)
+        correction = dict(self._e(101), correction_of_ts=100)
+        n = ex.count_recent_moves("nfl.l.1.t.1", 0,
+                                  _entries_fn=lambda: [original, correction])
+        assert n == 1
+
+    def test_a_correction_cancels_a_row_older_than_the_window(self):
+        """The superseded row can age out before its correction does; the
+        correction must still not be counted as a move in its own right."""
+        original = self._e(100)
+        correction = dict(self._e(500), correction_of_ts=100)
+        n = ex.count_recent_moves("nfl.l.1.t.1", 400,
+                                  _entries_fn=lambda: [original, correction])
+        assert n == 0
+
+    def test_a_junk_correction_reference_supersedes_nothing(self):
+        """Fail toward over-counting, never under-counting — an unparseable
+        reference must not silently cancel a real move."""
+        entries = [self._e(100), dict(self._e(101), correction_of_ts="oops")]
+        assert ex.count_recent_moves("nfl.l.1.t.1", 0,
+                                     _entries_fn=lambda: entries) == 2
+
     def test_counts_only_executed_roster_moves(self):
         entries = [self._e(100), self._e(101, executed=False),
                    self._e(102, action="set_lineup")]

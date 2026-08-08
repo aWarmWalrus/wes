@@ -302,7 +302,15 @@ def count_recent_moves(team_key, since_ts, _path=None, _entries_fn=None):
     Counts ledger entries with `executed` True or "unknown" — an uncertain
     write must count AGAINST the budget, since it may well have happened.
     Returns None if the ledger can't be read, which callers must treat as
-    "unknown, refuse", never as zero."""
+    "unknown, refuse", never as zero.
+
+    A row SUPERSEDED by a later correction (some later row carries
+    `correction_of_ts` pointing at it) is not counted. The ledger is
+    append-only, so a corrected row stays on disk forever; without this, a
+    correction inflates the count by one and eats the weekly budget. That
+    happened for real: correcting the 2026-08-01 over-reported add/drop made
+    two executed moves look like three, and the team then refused every roster
+    move from 08-05 to 08-07 at a cap it had never actually reached."""
     if _entries_fn is not None:
         entries = _entries_fn()
     else:
@@ -318,12 +326,35 @@ def count_recent_moves(team_key, since_ts, _path=None, _entries_fn=None):
                         entries.append(json.loads(line))
         except (OSError, json.JSONDecodeError):
             return None       # unreadable -> unknown, caller must fail closed
+    def _ref(e):
+        """The row this one restates, as a float — or None."""
+        raw = e.get("correction_of_ts")
+        if raw is None:
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None       # junk reference supersedes nothing; count both
+
+    # Built from ALL entries, not just the window: a correction can land after
+    # the row it supersedes has aged past `since_ts`, and it must still cancel
+    # it rather than being counted as a move of its own.
+    superseded = {r for r in (_ref(e) for e in entries) if r is not None}
+
+    def _when(e):
+        """When the MOVE happened. A correction is a restatement of a past
+        event, not a new one, so it is windowed at the time of the row it
+        corrects — otherwise fixing an old record would re-charge this week's
+        budget for a move made weeks ago."""
+        return _ref(e) if _ref(e) is not None else float(e.get("ts") or 0)
+
     return sum(
         1 for e in entries
         if e.get("team_key") == team_key
         and e.get("action_type") in ("add_drop", "waiver_claim")
         and e.get("executed") in (True, "unknown")
-        and float(e.get("ts") or 0) >= since_ts)
+        and float(e.get("ts") or 0) not in superseded
+        and _when(e) >= since_ts)
 
 
 def check_roster_move(team, drop_name, add_name=None, _now=None,
