@@ -358,7 +358,7 @@ def count_recent_moves(team_key, since_ts, _path=None, _entries_fn=None):
 
 
 def check_roster_move(team, drop_name, add_name=None, _now=None,
-                      _ledger_path=None, _count_fn=None):
+                      _ledger_path=None, _count_fn=None, enforce_cap=True):
     """(allowed, reason) for dropping `drop_name` (optionally for `add_name`).
 
     Layered on top of `check_guardrails` — autonomy and actions_allowed still
@@ -368,7 +368,12 @@ def check_roster_move(team, drop_name, add_name=None, _now=None,
                       punctuation difference ("Ja'Marr" vs "JaMarr") can't
                       defeat protection.
       * max_moves_per_week — a real count from the ledger, not a config echo.
-    Never raises; refuses on anything it cannot verify."""
+    Never raises; refuses on anything it cannot verify.
+
+    `enforce_cap=False` skips ONLY the weekly cap, for a move the owner
+    explicitly approved: since 2026-08-07 that cap bounds UNATTENDED moves, and
+    an approved move is by definition attended. never_drop and every other rail
+    still apply — this is not a general override."""
     allowed, reason = check_guardrails(team, "add_drop", _now)
     if not allowed:
         return False, reason
@@ -380,7 +385,7 @@ def check_roster_move(team, drop_name, add_name=None, _now=None,
                        f"refusing to drop them")
 
     cap = guard.get("max_moves_per_week")
-    if cap is not None:
+    if cap is not None and enforce_cap:
         now = _now if _now is not None else time.time()
         count = (_count_fn or count_recent_moves)(
             team.get("team_key", ""), now - _WEEK_SECONDS, _ledger_path)
@@ -813,6 +818,36 @@ def propose_roster_moves(team=None, approve=None, _roster_fn=None,
                 and approve.get("add")):
             return ("To make a roster move I need both halves named — who to "
                     "drop and who to add. Nothing was changed.")
+    # THE CAP DEGRADES AUTONOMY, IT DOES NOT STOP THE TEAM (owner decision,
+    # 2026-08-07). At `max_moves_per_week` an `auto` team drops to `propose`:
+    # it keeps finding moves and keeps saying so, it just stops acting alone.
+    #
+    # The old behaviour — refuse outright — meant the team went SILENT on
+    # hitting the cap, and stayed silent while looking healthy. That happened
+    # for real over 08-05..08-07 (see #035): seven identical refusals nobody
+    # saw, because `fantasy_watch` only DMs on CHANGE, so a system stuck
+    # refusing is invisible by construction.
+    #
+    # NOTE this narrows what the cap guarantees: it now bounds UNATTENDED moves
+    # per week, not total moves — an explicit approval goes through regardless.
+    # That keeps the property the cap actually exists for (bounding a runaway
+    # executor bug, which is unattended by definition) while letting the owner
+    # act as often as they like.
+    # Checked HERE rather than via check_roster_move, which answers a composite
+    # question — only the cap degrades autonomy. Every other refusal it makes
+    # (advise-only, action not in actions_allowed, never_drop) is a real "no"
+    # and must stay one.
+    capped, cap_used, cap_max = False, None, None
+    if mode == "auto" and approve is None:
+        cap_max = (chosen.get("guardrails") or {}).get("max_moves_per_week")
+        if cap_max is not None:
+            _t = _now if _now is not None else time.time()
+            cap_used = count_recent_moves(team_key, _t - _WEEK_SECONDS,
+                                          _ledger_path)
+            # An unreadable ledger is UNKNOWN, so it degrades too — it must
+            # never be read as "zero moves used" and license another write.
+            if cap_used is None or cap_used >= int(cap_max):
+                mode, capped = "propose", True
     execute = mode == "auto" or approve is not None
 
     roster = (_roster_fn or wes_yahoo.roster_players)(team_key)
@@ -889,6 +924,20 @@ def propose_roster_moves(team=None, approve=None, _roster_fn=None,
              "moves": recs, "why": why, "executed": False, "dry_run": True}
 
     if not execute:
+        if capped:
+            # Say WHY it stopped acting, or a degraded team is indistinguishable
+            # from a cautious one — which is the whole failure this replaces.
+            entry["reason"] = (f"weekly cap reached ({cap_used}/{cap_max}) — "
+                               f"degraded from auto to propose")
+            entry["capped"] = True
+            _append_ledger(entry, _ledger_path)
+            used = "couldn't read the ledger" if cap_used is None else \
+                f"already made {cap_used} move(s)"
+            return (f"Roster moves worth considering for {name}:\n{body}\n"
+                    f"(I've {used} this week, at this team's cap of {cap_max}, "
+                    f"so I'm suggesting rather than acting. Say the word and "
+                    f"I'll make one — approving it doesn't count against the "
+                    f"cap, which only limits what I do unattended.)")
         entry["reason"] = f"recommendation only (autonomy.add_drop={mode})"
         _append_ledger(entry, _ledger_path)
         return (f"Roster moves worth considering for {name}:\n{body}\n"
@@ -933,7 +982,8 @@ def propose_roster_moves(team=None, approve=None, _roster_fn=None,
                             for line in summarize_roster_moves(recs[1:])))
 
     allowed, reason = check_roster_move(chosen, top["drop"], top["add"],
-                                        _now=_now, _ledger_path=_ledger_path)
+                                        _now=_now, _ledger_path=_ledger_path,
+                                        enforce_cap=approve is None)
     if not allowed:
         entry["allowed"], entry["reason"] = False, reason
         _append_ledger(entry, _ledger_path)

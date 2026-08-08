@@ -951,15 +951,23 @@ class TestProposeRosterMoves:
         # Protected players aren't even proposed, so there's nothing to execute.
         assert called == [] and "No roster moves" in out
 
-    def test_execute_blocked_by_weekly_cap(self, monkeypatch, tmp_path):
+    def test_the_cap_no_longer_blocks_an_approved_move(self, monkeypatch,
+                                                       tmp_path):
+        """REPLACES test_execute_blocked_by_weekly_cap, whose assertion the
+        2026-08-07 redesign deliberately inverted. The cap used to stop every
+        move; it now bounds UNATTENDED ones, and an approved move is attended.
+        Kept as its own test so the change of contract is visible rather than
+        just disappearing from the suite."""
         monkeypatch.setattr(ex, "LIVE_WRITES", True)
         monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 99)
         self._cfg(monkeypatch, max_moves_per_week=1)
         called = []
         out = ex.propose_roster_moves(
             "Test", approve=self.APPROVE,
-            **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
-        assert called == [] and "max_moves_per_week" in out
+            **self._kw(tmp_path,
+                       _submit_fn=lambda tk, a, d: called.append((a, d))))
+        assert called == [("a1", "d1")]
+        assert "Made this roster move" in out
 
     def test_execute_with_live_writes_off_is_a_dry_run(self, monkeypatch, tmp_path):
         monkeypatch.setattr(ex, "LIVE_WRITES", False)
@@ -985,6 +993,68 @@ class TestProposeRosterMoves:
         assert "Made this roster move" in out
         logged = json.loads(path.read_text().strip().splitlines()[-1])
         assert logged["executed"] is True
+
+    def test_at_the_cap_auto_degrades_to_propose_instead_of_going_silent(
+            self, monkeypatch, tmp_path):
+        """Owner design, 2026-08-07: the cap means "stop acting alone", not
+        "stop". Before this, hitting the cap refused outright and the team went
+        quiet while looking healthy — three real days of that (#035)."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 9)
+        self._cfg(monkeypatch, autonomy={"add_drop": "auto"},
+                  max_moves_per_week=3)
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
+        assert called == []                       # did not act
+        assert "Slumping" in out and "Hot" in out  # but still SAID the move
+        assert "cap of 3" in out
+        assert "suggesting rather than acting" in out
+
+    def test_an_approved_move_goes_through_past_the_cap(self, monkeypatch,
+                                                       tmp_path):
+        """The cap bounds UNATTENDED moves; an approved one is attended by
+        definition, so it is not what the cap exists to stop."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 99)
+        self._cfg(monkeypatch, autonomy={"add_drop": "auto"},
+                  max_moves_per_week=3)
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", approve=self.APPROVE,
+            **self._kw(tmp_path,
+                       _submit_fn=lambda tk, a, d: called.append((a, d))))
+        assert called == [("a1", "d1")]
+        assert "Made this roster move" in out
+
+    def test_an_unreadable_ledger_degrades_rather_than_acting(
+            self, monkeypatch, tmp_path):
+        """count_recent_moves returns None for UNKNOWN. That must never be read
+        as "zero used" and license another unattended write."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: None)
+        self._cfg(monkeypatch, autonomy={"add_drop": "auto"},
+                  max_moves_per_week=3)
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
+        assert called == []
+        assert "couldn't read the ledger" in out
+
+    def test_the_cap_does_not_soften_a_non_cap_refusal(self, monkeypatch,
+                                                      tmp_path):
+        """Only the CAP degrades autonomy. never_drop and actions_allowed are
+        real refusals and must not be turned into suggestions."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        monkeypatch.setattr(ex, "count_recent_moves", lambda *a, **k: 0)
+        self._cfg(monkeypatch, autonomy={"add_drop": "auto"},
+                  actions_allowed=["set_lineup"], max_moves_per_week=3)
+        called = []
+        out = ex.propose_roster_moves(
+            "Test", approve=self.APPROVE,
+            **self._kw(tmp_path, _submit_fn=lambda *a: called.append(1)))
+        assert called == []
+        assert "actions_allowed" in out
 
     def test_full_auto_writes_without_any_approval(self, monkeypatch, tmp_path):
         """`autonomy.add_drop: auto` is TRUE full auto — the scheduled run makes

@@ -381,3 +381,42 @@ toward over-counting — never under-counting, which would silently raise the ca
 
 Verified on the live ledger: the count drops 3 → 2 and the guardrail passes
 again. 743 tests pass (was 740).
+
+## The cap degrades autonomy instead of stopping the team — 2026-08-07
+
+Owner design, in response to the double-count bug above: *"the cap maybe should
+just downgrade from auto to proposal mode then. 3 actions okay with no approval,
+then all after that can be suggested."*
+
+At `max_moves_per_week` an `auto` team now drops to `propose` for the rest of
+the week: it keeps finding moves and keeps reporting them, it just stops acting
+alone. The reply says why (`"already made 3 move(s) this week, at this team's
+cap of 3, so I'm suggesting rather than acting"`), because a degraded team must
+not be indistinguishable from one that simply found nothing.
+
+This fixes the failure MODE, not just the arithmetic. The double-count was one
+way to reach a wedged state; refusing outright meant *any* route to the cap
+produced three days of silence that looked like health. `fantasy_watch` only
+DMs on CHANGE, so a system stuck refusing is invisible by construction — the
+same shape as #032's dead-service-reports-success. Degrading keeps the team
+talking, so a wedge is now self-announcing.
+
+**This narrows what the cap guarantees, deliberately: it bounds UNATTENDED
+moves per week, not total moves.** An explicit `approve={drop,add}` goes through
+regardless of the count. That keeps the property the cap exists for — bounding a
+runaway executor bug, which is unattended by definition — while letting the
+owner act as often as they want. `check_roster_move(enforce_cap=False)` skips
+ONLY the cap; never_drop, actions_allowed and every other rail still apply.
+
+Details worth keeping:
+- The cap is checked directly in `propose_roster_moves`, NOT via
+  `check_roster_move`, which answers a composite question. Only the cap
+  degrades autonomy; advise-only, actions_allowed and never_drop are real
+  refusals and stay refusals (tested).
+- An unreadable ledger (`count_recent_moves` → None) degrades too. UNKNOWN must
+  never read as "zero used" and license another unattended write.
+- `test_execute_blocked_by_weekly_cap` asserted the opposite of the new
+  contract and was replaced by a named test recording the inversion, rather
+  than quietly deleted.
+
+747 tests pass (was 743).
