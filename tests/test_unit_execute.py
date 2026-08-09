@@ -799,6 +799,13 @@ class TestCountRecentMoves:
                                      _entries_fn=lambda: entries) == 2
 
     def test_counts_only_executed_roster_moves(self):
+        """Two filters at once, and the second is a deliberate design property:
+        LINEUP CHANGES MUST NOT COUNT AGAINST THE CAP. The cap bounds
+        irreversible transactions (a dropped player can be claimed in minutes);
+        a lineup is reversible on the next run and Yahoo doesn't limit it. If
+        set_lineup counted, a team that merely optimized itself daily would
+        starve its own add/drop budget — the cap would throttle the safe action
+        to protect against the dangerous one."""
         entries = [self._e(100), self._e(101, executed=False),
                    self._e(102, action="set_lineup")]
         n = ex.count_recent_moves("nfl.l.1.t.1", 0, _entries_fn=lambda: entries)
