@@ -56,7 +56,7 @@ Run a second instance on another port (models load twice — fine briefly):
 
 ```powershell
 $env:WES_PORT = "8081"
-C:\Users\awarm\wes-pc\.venv\Scripts\python.exe Z:\wes\pc\wes_server.py
+C:\Users\awarm\wes-pc\.venv\Scripts\python.exe C:\Users\awarm\wes\pc\wes_server.py
 # ...exercise http://127.0.0.1:8081 ... then stop it:
 $c = Get-NetTCPConnection -LocalPort 8081 -State Listen
 Stop-Process -Id $c[0].OwningProcess -Force -Confirm:$false

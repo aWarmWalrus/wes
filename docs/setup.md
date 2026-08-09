@@ -7,7 +7,7 @@
   22050 Hz — matches the Pi player). `en_US-amy-medium` also present but unused.
 - deps: **`pc/requirements.txt`** is the pinned list (direct deps only;
   transitive float). Rebuild with
-  `...\.venv\Scripts\python.exe -m pip install -r Z:\wes\pc\requirements.txt`,
+  `...\.venv\Scripts\python.exe -m pip install -r C:\Users\awarm\wes\pc\requirements.txt`,
   then `playwright install chromium`.
   `requirements-dev.txt` (repo root) is the lighter set CI installs — it
   deliberately leaves `ctranslate2` unpinned, since 4.4.0 has no Linux wheel.
@@ -25,7 +25,7 @@ Manual run (the scheduled task normally does this):
 ```powershell
 $env:WES_PIPER_BIN="C:\Users\awarm\wes-pc\.venv\Scripts\piper.exe"
 $env:WES_VOICE_MODEL="C:\Users\awarm\wes-pc\voices\en_GB-alan-medium.onnx"
-C:\Users\awarm\wes-pc\.venv\Scripts\python.exe Z:\wes\pc\wes_server.py
+C:\Users\awarm\wes-pc\.venv\Scripts\python.exe C:\Users\awarm\wes\pc\wes_server.py
 ```
 
 ### Auto-start service (Task Scheduler)
@@ -64,7 +64,7 @@ setup:
 setx WES_DISCORD_TOKEN "<bot token>"        # user env, like ANTHROPIC_API_KEY
 setx WES_DISCORD_OWNER_ID "<your user ID>"  # the ONLY user the bot answers
 # run (new shell so setx is visible); same venv as the server, discord.py installed
-C:\Users\awarm\wes-pc\.venv\Scripts\python.exe Z:\wes\pc\wes_discord.py
+C:\Users\awarm\wes-pc\.venv\Scripts\python.exe C:\Users\awarm\wes\pc\wes_discord.py
 ```
 
 DM the bot (or @mention it in a server you share). `!reset` starts a new

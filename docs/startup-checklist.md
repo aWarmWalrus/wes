@@ -10,12 +10,15 @@ Everything here is read-only except step 6.
 
 ## 1. Repo state
 
-```bash
-cd /z/wes && git status --short && git log --oneline -5
+```powershell
+git -C C:\Users\awarm\wes status --short   # PC clone - where pc/** is developed
+git -C Z:\wes status --short               # Pi clone - where pi/** is developed
+git -C C:\Users\awarm\wes log --oneline -5
 ```
 - Uncommitted work is normal mid-feature, but know what it is before you build
-  on it. `tests/eval_history.csv` + `tests/perf_history_stream.csv` churn on
-  their own — the nightly appends to them.
+  on it, **and which clone it's in**. `tests/eval_history.csv` +
+  `tests/perf_history_stream.csv` churn on their own — the nightly appends to
+  them (in the **PC** clone).
 
 Then check both clones and the deployed launchers are in step:
 
@@ -83,10 +86,14 @@ Get-Content C:\Users\awarm\wes-pc\logs\discord.log -Tail 15
 
 ## 5. Are the metrics fresh?
 
-```bash
-tail -3 /z/wes/tests/perf_history_stream.csv
-tail -1 /z/wes/tests/eval_history.csv
+```powershell
+Get-Content C:\Users\awarm\wes\tests\perf_history_stream.csv -Tail 3
+Get-Content C:\Users\awarm\wes\tests\eval_history.csv -Tail 1
 ```
+- **Read these from the PC clone, not `Z:`.** The nightly runs from
+  `C:\Users\awarm\wes`, so that is where it appends. The copy on `Z:` only
+  updates when the Pi clone is pulled, so reading it would show a permanent
+  false "the nightly stopped running" (2026-08-08).
 - Both should have a row from **last night** (nightly runs 03:30). A gap means
   the nightly failed — check `logs/eval_last.log`. A gap is the cheapest signal
   that the server was down, since the eval needs a live server.
@@ -107,9 +114,9 @@ Warmup is 60-120s — poll `/health` with a generous deadline, don't call it dea
 at 45s. Then confirm the baseline still holds:
 
 ```powershell
-& C:\Users\awarm\wes-pc\.venv\Scripts\python.exe -m pytest Z:\wes\tests\ -q `
-    --ignore=Z:\wes\tests\test_e2e.py --ignore=Z:\wes\tests\test_faces.py
-& C:\Users\awarm\wes-pc\.venv\Scripts\python.exe Z:\wes\tests\perf_check.py
+& C:\Users\awarm\wes-pc\.venv\Scripts\python.exe -m pytest C:\Users\awarm\wes\tests\ -q `
+    --ignore=C:\Users\awarm\wes\tests\test_e2e.py --ignore=C:\Users\awarm\wes\tests\test_faces.py
+& C:\Users\awarm\wes-pc\.venv\Scripts\python.exe C:\Users\awarm\wes\tests\perf_check.py
 ```
 - A cold-loaded model inflates the first `ttfa_ms`; a single run near the
   threshold right after a restart is expected, not a regression.

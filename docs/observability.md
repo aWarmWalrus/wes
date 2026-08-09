@@ -51,7 +51,7 @@ The dashboard JSON is versioned in the repo at
 so it's **read-only in the UI**. To change it:
 
 ```bash
-# edit observability/dashboards/wes-overview.json (Z:\wes\... on the PC), then:
+# edit observability/dashboards/wes-overview.json (C:\Users\awarm\wes\... on the PC), then:
 ssh walrus-pi "sudo cp ~/claude/wes/observability/dashboards/wes-overview.json \
   /var/lib/grafana/dashboards/ && sudo systemctl restart grafana-server"
 ```

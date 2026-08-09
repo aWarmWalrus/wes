@@ -27,16 +27,16 @@ python3) are excluded.
 $py = "C:\Users\awarm\wes-pc\.venv\Scripts\python.exe"
 
 # Fast unit tests (no network/API/models) — run these after ANY server change:
-& $py -m pytest Z:\wes\tests\test_unit_server.py -q
+& $py -m pytest C:\Users\awarm\wes\tests\test_unit_server.py -q
 
 # End-to-end (real STT -> LLM -> streaming TTS; needs the server running):
-& $py -m pytest Z:\wes\tests\test_e2e.py --run-e2e -q
+& $py -m pytest C:\Users\awarm\wes\tests\test_e2e.py --run-e2e -q
 
 # Performance check (records median latency, flags regressions vs history):
-& $py Z:\wes\tests\perf_check.py            # 3 runs (default)
+& $py C:\Users\awarm\wes\tests\perf_check.py            # 3 runs (default)
 
 # Quality eval (golden set through the live server; flags named-case regressions):
-& $py Z:\wes\tests\eval_turns.py            # --only <id> for one case
+& $py C:\Users\awarm\wes\tests\eval_turns.py            # --only <id> for one case
 ```
 
 - `test_unit_server.py` — pure logic: `_vlm_prompt` (identity/clothing prompt),

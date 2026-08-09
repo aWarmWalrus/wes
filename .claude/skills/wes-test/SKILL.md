@@ -1,9 +1,15 @@
 ---
 name: wes-test
-description: Run the WES test suites correctly (unit, e2e, perf, quality eval). Use after any change to Z:\wes code — pc/*, pi/*, or tests/*.
+description: Run the WES test suites correctly (unit, e2e, perf, quality eval). Use after any change to C:\Users\awarm\wes code — pc/*, pi/*, or tests/*.
 ---
 
 # Running the WES test suites
+
+> **Test the PC clone (`C:\Users\awarm\wes`), not `Z:\wes`.** Since 2026-08-08
+> each machine has its own clone and the PC runs from local disk. Pointing
+> pytest at `Z:\wes\tests` tests the *Pi's* copy, which can be on a different
+> commit than the code the PC is actually running — the tests pass and prove
+> nothing. Pi-side tests (`test_faces.py`) still run on the Pi, from its clone.
 
 **Prefer the `wes-dev.ps1` helper — it's allowlisted (one rule) so it runs
 without a permission prompt, unlike bespoke one-off commands.** It lives PC-side
@@ -36,7 +42,7 @@ $py = "C:\Users\awarm\wes-pc\.venv\Scripts\python.exe"
 ## Unit tests (every change)
 
 ```powershell
-cd Z:\wes\tests
+cd C:\Users\awarm\wes\tests
 & $py -m pytest -q --ignore=test_faces.py
 ```
 
@@ -49,7 +55,7 @@ cd Z:\wes\tests
 ## Latency (any change that could touch the hot path)
 
 ```powershell
-& $py Z:\wes\tests\perf_check.py     # needs the live server on :8080
+& $py C:\Users\awarm\wes\tests\perf_check.py     # needs the live server on :8080
 ```
 
 Flags regressions vs the rolling baseline; appends to
@@ -58,7 +64,7 @@ Flags regressions vs the rolling baseline; appends to
 ## Reply quality (prompts, routing, models, TTS changes)
 
 ```powershell
-& $py Z:\wes\tests\eval_turns.py --judge local   # free 12b judge; needs live server
+& $py C:\Users\awarm\wes\tests\eval_turns.py --judge local   # free 12b judge; needs live server
 ```
 
 - `--judge haiku` costs Claude calls; `--judge both` measures judge agreement;
@@ -71,7 +77,7 @@ Flags regressions vs the rolling baseline; appends to
 ## E2E (full pipeline)
 
 ```powershell
-& $py -m pytest Z:\wes\tests\test_e2e.py --run-e2e -q   # needs live server
+& $py -m pytest C:\Users\awarm\wes\tests\test_e2e.py --run-e2e -q   # needs live server
 ```
 
 ## Endpoint smoke tests without audio

@@ -131,6 +131,19 @@ GitHub                            the hub they sync through
 So a change isn't live on the other machine until it's pushed and pulled —
 `wes-dev.ps1 sync` does both and warns if the clones are on different commits.
 
+**Edit the clone belonging to the machine that runs the code:**
+
+| Changing | Edit in |
+|---|---|
+| `pc/**` — server, Discord, fantasy | `C:\Users\awarm\wes` |
+| `pi/**` — voice client, Hailo vision | `Z:\wes` (that *is* the Pi's clone) |
+| shared — `wes_hosts.py`, `hosts.yaml`, `tests/`, `docs/` | either, then `sync` |
+
+> **The trap:** editing `Z:\wes\pc\wes_server.py` and reloading the server does
+> **nothing** — that's the Pi's copy, which no PC service reads. It fails
+> *silently*: the service restarts, reports healthy, and runs the old code. This
+> was the correct workflow before 2026-08-08, so older notes point the wrong way.
+
 `Z:\` is still a Samba mount of the Pi's clone, useful for reading its files and
 logs from the PC, but **nothing runs from it**. Previously the PC executed
 `Z:\wes\pc\*.py`, which meant it couldn't start a service without the Pi (#032).

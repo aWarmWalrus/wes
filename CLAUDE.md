@@ -38,6 +38,28 @@ Claude Haiku is the error-fallback/optional backend.
   `C:\Users\awarm\wes`. GitHub is the hub they sync through — so **a change is
   not live on the other machine until it's pushed and pulled**.
   `wes-dev.ps1 sync` pulls both, redeploys launchers, and compares HEADs.
+
+> ### WHERE TO EDIT — read this before changing any code
+>
+> **Edit the clone belonging to the machine that RUNS the code.**
+>
+> | Changing | Edit in | Why |
+> |---|---|---|
+> | `pc/**` (server, Discord, fantasy) | **`C:\Users\awarm\wes`** | the PC runs its own clone |
+> | `pi/**` (client, Hailo vision) | **`Z:\wes`** | that IS the Pi's clone — no push needed |
+> | shared (`wes_hosts.py`, `hosts.yaml`, `tests/`, `docs/`) | either, then `sync` | both machines read it |
+>
+> **The trap:** editing `Z:\wes\pc\wes_server.py` and reloading the server now
+> does NOTHING — you changed the Pi's copy, which no PC service reads. It fails
+> SILENTLY: the service restarts fine, reports healthy, and runs the old code.
+> Before 2026-08-08 this was the correct workflow, so old habits and old notes
+> both point the wrong way.
+>
+> `Z:` is still right for Pi code, for reading the Pi's logs, and for running git
+> against the Pi's clone from the PC. It is only wrong for PC *source*.
+>
+> **Note the session default working directory is `Z:\wes`.** If you are working
+> on `pc/**`, `cd C:\Users\awarm\wes` first.
 - **`Z:\` is still a Samba mount of the Pi** (`Z:\wes` = the Pi's clone) and is
   useful for reading the Pi's files and logs from the PC — but **nothing on the
   PC runs from it any more**. It made the PC unable to boot its services without
