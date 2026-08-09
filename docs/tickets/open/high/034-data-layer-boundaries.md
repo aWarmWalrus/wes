@@ -137,3 +137,30 @@ monkeypatched `wes_nba.urllib.request.urlopen` and cleared `wes_nba._text_cache`
 i.e. it reached through the data layer into transport internals. It now injects
 at the raw-layer seam and asserts the same user-visible property. That it broke
 is the refactor working as intended.
+
+## Layer 3 gains a real interface — see #037 (2026-08-08)
+
+Step 5 ("separate regression from decision") now has a concrete target beyond
+separation: **#037 makes layer 3 pluggable**, with registered valuers and
+adjusters behind one `value(pool, ctx)` shape. Two consequences for this ticket.
+
+**The 3→4 contract needs a new field.** `{**stat_line, "value": float|None}` is
+not sufficient once strategies are swappable, because it does not say whether
+the number is comparable across calls. A z-score is relative to the population
+it was computed over; points are absolute. `recommend_roster_moves` compares a
+rostered player against a free agent, which is only valid for absolute values or
+within one population — and it feeds unattended irreversible drops (#035). So
+`scale` (`absolute` | `relative`) becomes part of the contract, and layer 4 must
+refuse the comparison it cannot make. #037 open question 3 asks whether `unit`
+is needed too, since two absolute valuers scored under different rules are still
+not averageable.
+
+**The purity rule becomes load-bearing rather than stylistic.** "No network, no
+clock, no I/O" in layer 3 is what makes strategies swappable and testable by
+arithmetic. #037 keeps it by passing everything through a plain-data `ctx`
+assembled by the caller — a Yahoo-projection valuer receives already-scraped
+projections, it does not scrape. Worth a test at that seam, in the same spirit
+as the one-HTTP-client rule this ticket already enforces.
+
+The "no upward imports" test this ticket calls for is also what lets #037's
+package be extracted to its own repo later without untangling anything first.

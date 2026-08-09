@@ -51,13 +51,32 @@ reasoning was correct **when we only had Yahoo numbers for our own roster**. It
 dissolves if Yahoo projects rostered and available players alike — then Yahoo
 *is* the single consistent ruler. Confirm before building (see Open Questions).
 
-### Layering
+### Layering — expressed on #037's interface
+
+**BLOCKED ON #037** (2026-08-08). This was originally written as one hardcoded
+pipeline. It is now a *configuration* of the regression strategy interface, so
+the plumbing is written once instead of once here and again when #037 lands:
 
 ```
-projection = yahoo_weekly_proj(player)          # primary, league-scored
-           × adjustment(player)                 # ours, BOUNDED (±15% cap)
-fallback   = existing ESPN season valuation     # players Yahoo doesn't project
+valuer   "yahoo_proj"     primary, league-scored, scale=absolute
+valuer   "espn_proj"      second opinion, scored under THIS league's weights
+valuer   "ensemble"       composite of the two; keeps per-source values in value_parts
+adjuster "volume_trend"   targets/carries/snap share, bounded
+adjuster "dvp"            opponent-vs-position, bounded
+fallback existing ESPN season valuation, for players Yahoo doesn't project
 ```
+
+Conceptually still:
+
+```
+projection = ensemble(yahoo, espn) x adjustments   # adjustments BOUNDED, ±15% total
+```
+
+The bound, the `value_parts` provenance, and the baseline-vs-adjustment split
+are all **#037 framework properties**, not things this ticket re-implements.
+Note #037's open question 3 applies directly here: two absolute valuers can
+still be incomparable if scored under different rules, so the ensemble needs a
+`unit` guarantee before averaging Yahoo and ESPN is honest.
 
 Adjustments must be **bounded and confidence-gated**. With a decent baseline an
 unbounded correction can essentially only hurt. Store baseline and adjustment
@@ -227,5 +246,17 @@ makes full auto safer immediately). nflverse data layer second (bigger, and it
 is what makes everything after it measurable). DvP and the smaller adjustments
 only if measurement says they help.
 
-**Status: DESIGN ONLY — not approved to build.** Owner wants to review this in
-depth first (2026-08-07). No code written.
+**2026-08-08 — re-scoped onto #037, and BLOCKED on it.** Owner wants a pluggable
+regression layer so custom local models (own z-score, Yahoo-base + adjustments)
+can be swapped without touching the optimizer or executor. The Approach section
+above is now a *configuration* of that interface rather than a bespoke pipeline.
+
+Build order is therefore **#037 first**. Building this one first means writing
+the ensemble/adjustment plumbing twice — once hardcoded, once on the interface —
+and the second rewrite would touch the live add/drop path, which makes
+irreversible writes unattended. Not a rewrite worth doing there.
+
+The empirical recon below stands unchanged; none of it depends on #037.
+
+**Status: DESIGN ONLY — not approved to build.** Owner reviewing in depth
+(2026-08-07). No code written.
