@@ -17,11 +17,16 @@ cd /z/wes && git status --short && git log --oneline -5
   on it. `tests/eval_history.csv` + `tests/perf_history_stream.csv` churn on
   their own — the nightly appends to them.
 
-Then check the launchers the services actually run match the repo:
+Then check both clones and the deployed launchers are in step:
 
 ```powershell
-& C:\Users\awarm\wes-pc\wes-dev.ps1 deploy check
+& C:\Users\awarm\wes-pc\wes-dev.ps1 sync      # pulls both, redeploys, compares HEADs
+& C:\Users\awarm\wes-pc\wes-dev.ps1 deploy check   # drift only, changes nothing
 ```
+- **There are two clones** (Pi `~/claude/wes`, PC `C:\Users\awarm\wes`) and each
+  machine runs its own. A commit is not live on the other side until pushed and
+  pulled, so "I fixed that yesterday" is not evidence the running code has it.
+  `sync` warns when the HEADs differ.
 - The `.ps1` files are canonical in `pc/scripts/` and **deployed** to
   `C:\Users\awarm\wes-pc\`. Drift means someone edited a deployed copy, or a
   repo change was never pushed out — either way the running system isn't the

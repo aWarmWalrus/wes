@@ -33,9 +33,17 @@ Claude Haiku is the error-fallback/optional backend.
 > Edit there when the network changes; this table and the ports below are a
 > convenience mirror, not the authority.
 
-- **`Z:\` on the PC is a Samba mount of the Pi**: `Z:\wes` = the Pi's
-  `/home/walrus/claude/wes` (this repo). Editing `Z:\wes\*` edits the Pi's files. A
-  Windows venv **cannot** live on `Z:\` — PC Python envs go on `C:`.
+- **TWO CLONES, one per machine** (2026-08-08). Each host runs code from its own
+  local disk: the Pi from `/home/walrus/claude/wes`, the PC from
+  `C:\Users\awarm\wes`. GitHub is the hub they sync through — so **a change is
+  not live on the other machine until it's pushed and pulled**.
+  `wes-dev.ps1 sync` pulls both, redeploys launchers, and compares HEADs.
+- **`Z:\` is still a Samba mount of the Pi** (`Z:\wes` = the Pi's clone) and is
+  useful for reading the Pi's files and logs from the PC — but **nothing on the
+  PC runs from it any more**. It made the PC unable to boot its services without
+  the Pi (#032), and searches over it are painfully slow (a repo-wide `grep -r`
+  times out at 120s; the same search on local disk is instant). A Windows venv
+  **cannot** live on `Z:\` — PC Python envs go on `C:`.
 - The Pi also has a **separate** `~/wes` (NOT the repo): `~/wes/.venv` (Pi runtime
   venv), `~/wes/voices/`, `~/wes/known_faces.json`, `~/wes/logs/`. `~/cast-venv` is a
   catt/piper venv for casting.
@@ -99,16 +107,16 @@ prefer them over re-deriving commands.
 ## Testing (do this every change)
 
 Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\.venv\Scripts\python.exe`.
-- Changed `pc/wes_server.py` → `& $py -m pytest Z:\wes\tests\test_unit_server.py -q`
+- Changed `pc/wes_server.py` → `& $py -m pytest C:\Users\awarm\wes\tests\test_unit_server.py -q`
 - Changed `pi/hailo_faces.py` → `python3 ~/claude/wes/tests/test_faces.py` (on the Pi)
-- Anything latency-affecting → `& $py Z:\wes\tests\perf_check.py` (flags regressions vs
+- Anything latency-affecting → `& $py C:\Users\awarm\wes\tests\perf_check.py` (flags regressions vs
   baseline; records to `tests/perf_history_stream.csv`)
 - Anything reply-quality-affecting (prompts, routing, models, TTS) →
-  `& $py Z:\wes\tests\eval_turns.py` (golden set vs live server + LLM judge —
+  `& $py C:\Users\awarm\wes\tests\eval_turns.py` (golden set vs live server + LLM judge —
   Haiku by default, `--judge local` for free gemma4:12b judging, `--judge
   both` to check their agreement; flags named-case regressions and
   judge-score drops; records to `tests/eval_history.csv`)
-- E2E (real pipeline, costs a Claude call) → `& $py -m pytest Z:\wes\tests\test_e2e.py --run-e2e -q`
+- E2E (real pipeline, costs a Claude call) → `& $py -m pytest C:\Users\awarm\wes\tests\test_e2e.py --run-e2e -q`
 - **Add a test in the same change when you add a feature.** Keep unit tests
   hardware/API-free so they stay fast; reserve e2e for the full pipeline.
 - **CI** (`.github/workflows/ci.yml`) runs the

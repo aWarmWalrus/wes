@@ -120,9 +120,21 @@ observability/  Prometheus + Grafana provisioning
 hosts.yaml      THE source of truth for IPs and ports (read at runtime)
 ```
 
-`Z:\wes` on the PC is a Samba mount of the Pi's copy of this repo — editing
-either edits the same files. A Windows venv can't live on `Z:`, so PC Python
-environments go on `C:`.
+**Each machine has its own clone and runs from its own local disk:**
+
+```
+Pi   /home/walrus/claude/wes      runs pi/
+PC   C:\Users\awarm\wes           runs pc/
+GitHub                            the hub they sync through
+```
+
+So a change isn't live on the other machine until it's pushed and pulled —
+`wes-dev.ps1 sync` does both and warns if the clones are on different commits.
+
+`Z:\` is still a Samba mount of the Pi's clone, useful for reading its files and
+logs from the PC, but **nothing runs from it**. Previously the PC executed
+`Z:\wes\pc\*.py`, which meant it couldn't start a service without the Pi (#032).
+A Windows venv can't live on `Z:` either, so PC Python environments go on `C:`.
 
 ## Testing
 
