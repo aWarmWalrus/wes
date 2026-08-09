@@ -260,3 +260,24 @@ The empirical recon below stands unchanged; none of it depends on #037.
 
 **Status: DESIGN ONLY — not approved to build.** Owner reviewing in depth
 (2026-08-07). No code written.
+
+## Depth charts + injury staleness — feeds #038 (2026-08-09)
+
+Owner raised a case numbers miss: *"maybe Yahoo hasn't properly adjusted for the
+fact that a player is out, so the bench player will be getting more minutes."*
+
+Most of that is a DATA gap this ticket already covers, not judgment:
+
+- **Is the starter out?** ESPN injury designations — verified working above.
+- **Who backs him up?** nflverse publishes `depth_charts` (109 assets), which
+  the recon above listed but this ticket did not yet claim.
+- **Has the projection caught up?** Compare projection freshness against when
+  the injury news landed.
+
+Add depth charts to the nflverse pull, and a **stale-projection detector**: if
+someone ahead of X on the depth chart is OUT and X's projection hasn't moved,
+flag it. That is mechanical and belongs here.
+
+What is left after those three checks — will the back actually get the work, or
+is it a committee? — is genuine judgment and belongs to **#038**, which depends
+on this. Building #038 first would have it guessing at facts it could look up.
