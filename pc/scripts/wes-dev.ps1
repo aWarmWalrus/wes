@@ -138,15 +138,28 @@ switch ($cmd) {
         #
         # --ff-only on purpose: a clone that has drifted should FAIL loudly here
         # rather than be quietly merged by a helper script.
+        #
+        # The Pi's clone is reached through the Z: MOUNT, not over ssh. Running
+        # `ssh walrus-pi git pull` fails with "could not read Username for
+        # https://github.com" -- the Pi's remote is HTTPS and it has no stored
+        # credentials, whereas git on the PC does. Driving the Pi's working tree
+        # across the share reuses the PC's credentials and needs no secret on
+        # the Pi at all.
+        $piRepo = "Z:\wes"
         git -C $repo pull --ff-only
         & "$base\deploy.ps1"
-        ssh walrus-pi 'cd ~/claude/wes && git pull --ff-only' 2>&1 | Out-String
+        if (Test-Path $piRepo) {
+            git -C $piRepo pull --ff-only
+            $piHead = (git -C $piRepo rev-parse --short HEAD)
+        } else {
+            $piHead = "(Z: not mapped - Pi clone not checked)"
+        }
         $pcHead = (git -C $repo rev-parse --short HEAD)
-        $piHead = (ssh walrus-pi 'cd ~/claude/wes && git rev-parse --short HEAD')
         "PC clone: $pcHead"
         "Pi clone: $piHead"
         if ($pcHead -ne $piHead) {
-            "WARNING: clones are on different commits. Push from whichever is ahead, then sync again."
+            "WARNING: clones differ. Push from whichever is ahead, then sync again."
+            "         The Pi runs pi/ from ITS clone, so the voice client may be stale."
         }
     }
     default  { "unknown command '$cmd'. try: test eval perf reload health say reset turns usage log gpu models deploy sync" }
