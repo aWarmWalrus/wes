@@ -31,18 +31,18 @@
 # or via the helper:  wes-dev.ps1 deploy [-Check]
 #
 # Bootstrapping a clean machine is a plain file copy, not a script run:
-#   Copy-Item Z:\wes\pc\scripts\*.ps1 C:\Users\awarm\wes-pc\
+#   Copy-Item C:\Users\awarm\wes\pc\scripts\*.ps1 C:\Users\awarm\wes-pc\
 [CmdletBinding()]
 param([switch]$Check)
 
 # The REPO is the source, always - NOT $PSScriptRoot. This script normally runs
 # from the deployed copy, so deriving the source from its own location would
 # make it copy the local directory onto itself and silently never update.
-$src = if ($env:WES_REPO) { "$env:WES_REPO\pc\scripts" } else { "Z:\wes\pc\scripts" }
+$src = if ($env:WES_REPO) { "$env:WES_REPO\pc\scripts" } else { "C:\Users\awarm\wes\pc\scripts" }
 $dst = if ($env:WES_PC_HOME) { $env:WES_PC_HOME } else { "C:\Users\awarm\wes-pc" }
 
 if (-not (Test-Path $src)) {
-    Write-Error "repo scripts not found at '$src'. Is Z: mapped? Set WES_REPO to override."
+    Write-Error "repo scripts not found at '$src'. Is the local clone present? Set WES_REPO to override."
     exit 1
 }
 if (-not (Test-Path $dst)) {

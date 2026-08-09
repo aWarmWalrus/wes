@@ -19,6 +19,7 @@
 #   models [status|check|list|load|unload|fit]   VRAM/model manager (wes-models.ps1)
 #   deploy [check]          re-copy launcher scripts from the repo to local
 #                           ("check" reports drift without changing anything)
+#   sync                    pull BOTH clones (PC + Pi), redeploy, compare HEADs
 #
 # THIS FILE LIVES IN THE REPO (pc/scripts/) and is DEPLOYED to the path above.
 # Edit it here; run `deploy` to push it out. Editing the deployed copy works
@@ -30,6 +31,10 @@ param(
 $ErrorActionPreference = "Stop"
 $py   = "C:\Users\awarm\wes-pc\.venv\Scripts\python.exe"
 $base = "C:\Users\awarm\wes-pc"
+# Code now runs from a LOCAL clone, not the Z: share: the PC must not need
+# the Pi up to start (see #032), and execution policy blocks unsigned
+# scripts on a share entirely. WES_REPO overrides for a different checkout.
+$repo = if ($env:WES_REPO) { $env:WES_REPO } else { "C:\Users\awarm\wes" }
 $srv  = "http://127.0.0.1:8080"
 if ($null -eq $rest) { $rest = @() }
 
@@ -48,7 +53,7 @@ function Wait-Health {
 }
 
 switch ($cmd) {
-    "test"   { & $py -m pytest Z:\wes\tests -q --ignore=Z:\wes\tests\test_faces.py @rest }
+    "test"   { & $py -m pytest "$repo\tests" -q --ignore="$repo\tests\test_faces.py" @rest }
     "eval"   {
         # First arg is the judge IF it names one; anything else forwards to
         # eval_turns.py. So all of these route through this ONE allowlisted verb:
@@ -62,9 +67,9 @@ switch ($cmd) {
             $judge = 'local'
             $extra = @($rest)
         }
-        & $py Z:\wes\tests\eval_turns.py --judge $judge @extra
+        & $py "$repo\tests\eval_turns.py" --judge $judge @extra
     }
-    "perf"   { & $py Z:\wes\tests\perf_check.py }
+    "perf"   { & $py "$repo\tests\perf_check.py" }
     "reload" {
         $task = switch ($rest[0]) {
             "discord"   { "WES Discord" }
@@ -126,5 +131,23 @@ switch ($cmd) {
         if ($checkOnly) { & "$base\deploy.ps1" -Check }
         else            { & "$base\deploy.ps1" }
     }
-    default  { "unknown command '$cmd'. try: test eval perf reload health say reset turns usage log gpu models deploy" }
+    "sync" {
+        # Two clones now exist (PC local + the Pi's), so they can diverge. This
+        # is the routine that stops that being silent: pull both, redeploy the
+        # launchers, and print both HEADs so a mismatch is visible.
+        #
+        # --ff-only on purpose: a clone that has drifted should FAIL loudly here
+        # rather than be quietly merged by a helper script.
+        git -C $repo pull --ff-only
+        & "$base\deploy.ps1"
+        ssh walrus-pi 'cd ~/claude/wes && git pull --ff-only' 2>&1 | Out-String
+        $pcHead = (git -C $repo rev-parse --short HEAD)
+        $piHead = (ssh walrus-pi 'cd ~/claude/wes && git rev-parse --short HEAD')
+        "PC clone: $pcHead"
+        "Pi clone: $piHead"
+        if ($pcHead -ne $piHead) {
+            "WARNING: clones are on different commits. Push from whichever is ahead, then sync again."
+        }
+    }
+    default  { "unknown command '$cmd'. try: test eval perf reload health say reset turns usage log gpu models deploy sync" }
 }

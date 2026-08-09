@@ -3,8 +3,12 @@
 # ANTHROPIC_API_KEY is read from the user environment (set via setx).
 
 $base = "C:\Users\awarm\wes-pc"
+# Code now runs from a LOCAL clone, not the Z: share: the PC must not need
+# the Pi up to start (see #032), and execution policy blocks unsigned
+# scripts on a share entirely. WES_REPO overrides for a different checkout.
+$repo = if ($env:WES_REPO) { $env:WES_REPO } else { "C:\Users\awarm\wes" }
 $py = "$base\.venv\Scripts\python.exe"
-$server = "Z:\wes\pc\wes_server.py"
+$server = "$repo\pc\wes_server.py"
 $logdir = "$base\logs"
 
 New-Item -ItemType Directory -Force -Path $logdir | Out-Null
