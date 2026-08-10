@@ -174,3 +174,43 @@ Division of labor: **Prometheus evaluates, the Discord bot delivers.**
 ## Still planned (phase 3b)
 
 - Turn-latency histograms by channel (stt/ttfa/total) on `/metrics`.
+
+## "Last 15 turns" panel: Grafana can't resolve `.local` (fixed 2026-08-09)
+
+**Symptom:** the turns table was empty while every Prometheus panel worked, the
+Prometheus `wes_server` target was `up`, and `curl http://DESKTOP-R2PFF9T.local:8080/turns`
+from the same Pi returned 200 in 31ms.
+
+**Cause.** Grafana's log:
+
+```
+lookup DESKTOP-R2PFF9T.local on 75.75.75.75:53: no such host
+```
+
+It was asking the upstream (Comcast) DNS server for an mDNS name. `nsswitch.conf`
+is configured correctly (`hosts: files mdns4_minimal [NOTFOUND=return] dns`) — but
+Grafana ships **statically linked** (`ldd` → "not a dynamic executable"), so it has
+no cgo resolver, so it never consults NSS at all and falls back to Go's built-in
+DNS client, which does not speak mDNS.
+
+Prometheus resolves the identical name because it is **dynamically linked**
+against libc and can go through NSS. That asymmetry is the entire bug, and it is
+why "the exporter is up" and "the panel is dead" were true at the same time.
+
+**Fix.** Go's pure resolver *does* read `/etc/hosts`, so a `wes-mdns-hosts`
+systemd timer on the Pi seeds it from `hosts.yaml` every 5 minutes
+(`pi/wes-mdns-hosts.{sh,service,timer}`).
+
+It is a **timer, not a one-off write**, on purpose: the PC's Wi-Fi lease flaps
+between addresses, which is exactly why `hosts.yaml` moved from a hardcoded IP to
+the mDNS name on 2026-07-24. A static `/etc/hosts` entry would have re-created
+that bug in a place nobody would think to look. Names are parsed out of
+`hosts.yaml` so this does not become a second source of truth, and a failed
+lookup keeps the previous entry rather than deleting a good one.
+
+Check it with:
+
+```bash
+getent -s files hosts DESKTOP-R2PFF9T.local   # the path a static Go binary uses
+systemctl list-timers wes-mdns-hosts.timer
+```

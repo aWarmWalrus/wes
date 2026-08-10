@@ -151,11 +151,29 @@ def fixture_wav(case, turn_i=0):
         return f.read()
 
 
-def reset_server_conversation(url):
+# The eval drives /respond_stream, which names no channel and therefore uses
+# the server default ("voice"). Its reset must name that channel too.
+EVAL_CHANNEL = "voice"
+
+
+def reset_server_conversation(url, channel=EVAL_CHANNEL):
     """The server keeps conversation memory across turns; clear it so every
-    case starts from a blank context and cases stay order-independent."""
+    case starts from a blank context and cases stay order-independent.
+
+    **Scoped to ONE channel on purpose.** An empty body means "every channel"
+    server-side, and this runs between every case of a 03:30 nightly — so it was
+    wiping the owner's Discord history every night. Symptom: WES DMs about a
+    real roster move, the owner asks "why did you make that move?" hours later,
+    and it has no idea what they mean, because the `[system event]` turn that
+    recorded the move was cleared minutes after it landed (2026-08-09).
+
+    A test suite must not have side effects on live user state; the blast radius
+    here should be exactly the channel the eval drives."""
     try:
-        req = urllib.request.Request(url + "/reset_conversation", data=b"")
+        req = urllib.request.Request(
+            url + "/reset_conversation",
+            data=json.dumps({"channel": channel}).encode(),
+            headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=5).read()
     except Exception as e:  # noqa: BLE001  (older server without the route)
         print(f"! reset_conversation unavailable: {e}")
