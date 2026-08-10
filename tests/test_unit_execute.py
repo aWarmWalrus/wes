@@ -1231,3 +1231,90 @@ class TestProposeRosterMoves:
         out = ex.propose_roster_moves(
             "Test", **self._kw(tmp_path, _roster_fn=lambda k: "Yahoo is down"))
         assert out == "Yahoo is down"
+
+
+class TestRecentActions:
+    """The backward-looking lookup (2026-08-09). Conversation memory is
+    fragile — a restart, a window roll, or the nightly eval clearing the
+    channel all lose it — but the ledger is durable, so "why did you drop him?"
+    should be answerable from the record rather than from chat context."""
+
+    def _row(self, ts, **over):
+        base = {"ts": ts, "team_key": "nfl.l.1.t.1", "name": "Test",
+                "sport": "nfl", "action_type": "add_drop", "executed": True,
+                "why": [f"did a thing at {ts}"]}
+        base.update(over)
+        return base
+
+    def _write(self, tmp_path, rows):
+        p = tmp_path / "l.jsonl"
+        p.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                     encoding="utf-8")
+        return str(p)
+
+    def test_newest_first_and_relays_the_stored_why(self, tmp_path):
+        path = self._write(tmp_path, [self._row(100), self._row(200)])
+        out = ex.recent_actions(_path=path)
+        assert out.index("did a thing at 200") < out.index("did a thing at 100")
+
+    def test_the_why_is_the_one_recorded_at_the_time(self, tmp_path):
+        """It must relay what was stored, never re-derive. Re-deriving would
+        explain yesterday's decision with today's numbers — an audit trail
+        that quietly lies."""
+        path = self._write(tmp_path, [self._row(100, why=["because X was hurt"])])
+        assert "because X was hurt" in ex.recent_actions(_path=path)
+
+    def test_skipped_runs_are_hidden_by_default_and_summarised_on_request(
+            self, tmp_path):
+        rows = [self._row(100), self._row(200, executed=False,
+                                          why=["nobody worth dropping"])]
+        path = self._write(tmp_path, rows)
+        assert "nobody worth dropping" not in ex.recent_actions(_path=path)
+        assert "nobody worth dropping" in ex.recent_actions(
+            _path=path, include_skipped=True)
+
+    def test_no_op_runs_never_displace_real_moves(self, tmp_path):
+        """Caught live 2026-08-09. The scheduler runs four times a week and most
+        runs change nothing, so a plain newest-first list under a limit buried
+        the actual move under a wall of "no action" — and the model then told
+        the owner nothing had happened when it had. Real moves get the list;
+        no-ops get one summary line."""
+        rows = [self._row(50, why=["THE REAL MOVE"])]
+        rows += [self._row(100 + i, executed=False, why=[f"no action {i}"])
+                 for i in range(10)]
+        path = self._write(tmp_path, rows)
+        out = ex.recent_actions(_path=path, limit=3, include_skipped=True)
+        assert "THE REAL MOVE" in out          # not buried by 10 newer no-ops
+        assert "10 other run(s) changed nothing" in out
+        assert out.count("no action") <= 2     # summarised, not enumerated
+
+    def test_a_corrected_row_is_not_reported_twice(self, tmp_path):
+        """Same supersession rule as the weekly cap: a corrected row and its
+        correction are ONE event. Listing both would report a move that
+        happened once as though it happened twice."""
+        rows = [self._row(100, why=["dropped A for B"]),
+                self._row(200, why=["dropped A for B"], correction_of_ts=100)]
+        out = ex.recent_actions(_path=rows and self._write(tmp_path, rows))
+        assert out.count("dropped A for B") == 1
+
+    def test_an_uncertain_write_says_so(self, tmp_path):
+        path = self._write(tmp_path, [self._row(100, executed="unknown")])
+        assert "errored" in ex.recent_actions(_path=path)
+
+    def test_filters_by_team(self, tmp_path):
+        rows = [self._row(100, name="Alpha", why=["alpha move"]),
+                self._row(200, name="Beta", why=["beta move"])]
+        path = self._write(tmp_path, rows)
+        out = ex.recent_actions("alpha", _path=path)
+        assert "alpha move" in out and "beta move" not in out
+
+    def test_missing_ledger_degrades_to_a_sentence(self, tmp_path):
+        out = ex.recent_actions(_path=str(tmp_path / "nope.jsonl"))
+        assert isinstance(out, str) and "don't have any" in out
+
+    def test_a_corrupt_line_does_not_hide_the_rest(self, tmp_path):
+        p = tmp_path / "l.jsonl"
+        p.write_text(json.dumps(self._row(100)) + "\n{ broken\n"
+                     + json.dumps(self._row(200, why=["still here"])) + "\n",
+                     encoding="utf-8")
+        assert "still here" in ex.recent_actions(_path=str(p))

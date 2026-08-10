@@ -1114,3 +1114,34 @@ payload. Expect the first live run to correct them; that's what the canary is fo
   writes matter. Next concrete step: spin out **#030 = P0 (Yahoo read)** and
   prototype the OAuth flow. Design doc is the source of truth; keep this ticket's
   phase checklist in sync as sub-tickets close.
+
+## `fantasy_recent_moves` — Jarvis can read its own ledger (2026-08-09)
+
+Owner: *"why can't jarvis look up the ledger of recent moves?"* He couldn't —
+all five fantasy tools were forward-looking ("what should I do"), none
+backward-looking ("what did I do"). The ledger held every answer and the model
+had no way to reach it.
+
+That was the real fix behind the "no recollection" bug. Conversation memory is
+fragile by construction — a restart, a window roll, or (as actually happened)
+the nightly eval clearing the channel all lose it. The ledger is durable, so a
+question about a past move should be answered from the record, not from chat
+context.
+
+`wes_execute.recent_actions()` relays the `why` that was **computed and stored
+at decision time**, never re-derived. Re-deriving would explain yesterday's
+decision using today's numbers, which is how an audit trail starts quietly
+lying. It reuses the supersession rule from `count_recent_moves`, so a corrected
+row and its correction are one event rather than a move reported twice.
+
+**Shape lesson, caught live.** The first version listed rows newest-first under
+a limit. The scheduler runs four times a week and most runs change nothing, so
+the real moves were buried under a wall of "no action" — and the model then told
+the owner nothing had happened when it had. Fixed: executed actions get the
+list, no-op runs collapse to one summary line ("62 other run(s) changed
+nothing"). **Frequent no-ops must never displace rare real events.** Pinned by
+a test.
+
+Second-order effect worth knowing: after the model answers wrongly once, that
+wrong answer is in the conversation window and it stays consistent with it.
+Verified the fix on a clean channel; the poisoned window ages out on its own.

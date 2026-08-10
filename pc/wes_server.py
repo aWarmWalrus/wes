@@ -595,6 +595,38 @@ TOOLS = [
         },
     },
     {
+        "name": "fantasy_recent_moves",
+        "description": (
+            "What YOU actually did to the owner's fantasy team recently — the "
+            "real record of executed lineup changes and add/drops, each with "
+            "the reason recorded at the time it was made. Use whenever the "
+            "owner asks about a move that ALREADY HAPPENED: 'why did you make "
+            "that move', 'why did you drop him', 'what did you change', 'what "
+            "have you done this week', 'why did you start X'. ALSO call it "
+            "when you don't recognise the move they mean — you may have made "
+            "it and messaged them about it in a session you no longer have in "
+            "context, so check here before saying you don't know. Set "
+            "include_skipped=true for 'why didn't you do anything'. This is "
+            "history: it reads a log and changes nothing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team": {"type": "string",
+                         "description": "which fantasy team, by name; omit for all"},
+                "limit": {"type": "integer",
+                          "description": "how many recent actions (default 5)"},
+                "include_skipped": {
+                    "type": "boolean",
+                    "description": ("also list runs that decided to do "
+                                    "nothing — answers 'why didn't you do "
+                                    "anything'"),
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "fantasy_my_team",
         "description": (
             "The owner's Yahoo fantasy basketball team, read live from Yahoo "
@@ -1078,6 +1110,11 @@ def run_tool(name, tool_input):
             return wes_fantasy.fantasy_optimize_lineup(tool_input.get("team"))
         if name == "fantasy_propose_lineup_change":
             return wes_execute.propose_lineup_change(tool_input.get("team"))
+        if name == "fantasy_recent_moves":
+            return wes_execute.recent_actions(
+                tool_input.get("team"),
+                limit=tool_input.get("limit") or 5,
+                include_skipped=tool_input.get("include_skipped") is True)
         if name == "fantasy_roster_moves":
             # Only a well-formed {drop, add} pair authorises a write. Anything
             # else — absent, null, a bare string, half filled in — is recommend

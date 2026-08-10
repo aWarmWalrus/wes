@@ -471,6 +471,111 @@ def _append_ledger(entry, _path=None):
         print(f"[execute] ledger write failed: {e!r}", flush=True)
 
 
+def _read_ledger(_path=None):
+    """Every ledger row, oldest first. [] if unreadable — this backs a
+    conversational lookup, so a missing ledger should answer "nothing on
+    record", never raise into a turn."""
+    path = _path or LEDGER_FILE
+    if not os.path.exists(path):
+        return []
+    rows = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue      # one bad line must not hide the rest
+    except OSError:
+        return []
+    return rows
+
+
+def recent_actions(team=None, limit=5, include_skipped=False, _path=None):
+    """What WES actually DID, newest first, in natural language.
+
+    The ledger is the durable record of every write; conversation memory is
+    not. Before this existed, "why did you drop him?" could only be answered
+    from the chat window — so a restart, a window roll, or (as actually
+    happened) the nightly eval clearing the channel left Jarvis unable to
+    explain a move it had made hours earlier and DMed about (2026-08-09).
+
+    Relays the `why` that was COMPUTED AND STORED at decision time rather than
+    re-deriving it. Re-deriving would explain yesterday's decision using today's
+    numbers, which is how an audit trail starts quietly lying.
+
+    `include_skipped` also reports runs that decided to do nothing — that is
+    what answers "why didn't you do anything this week?".
+
+    Degrades to a string; never raises."""
+    rows = _read_ledger(_path)
+    if not rows:
+        return "I don't have any fantasy actions on record yet."
+
+    # Same supersession rule as count_recent_moves: a corrected row and its
+    # correction are ONE event, and listing both would report a move twice.
+    superseded = set()
+    for e in rows:
+        ref = e.get("correction_of_ts")
+        if ref is not None:
+            try:
+                superseded.add(float(ref))
+            except (TypeError, ValueError):
+                pass
+
+    want = (team or "").strip().lower()
+    did_rows, skipped_rows = [], []
+    for e in rows:
+        if float(e.get("ts") or 0) in superseded:
+            continue
+        if want and want not in str(e.get("name", "")).lower():
+            continue
+        if e.get("executed") in (True, "unknown"):
+            did_rows.append(e)
+        else:
+            skipped_rows.append(e)
+
+    # Real moves are NEVER displaced by no-ops. The scheduler runs four times a
+    # week and most runs change nothing, so a plain newest-first list under a
+    # limit buried actual moves under a wall of "no action" — the model then
+    # told the owner nothing had happened when it had (caught live 2026-08-09).
+    # Executed actions get the list; skipped runs get one summary line.
+    did_rows.sort(key=lambda e: float(e.get("ts") or 0), reverse=True)
+    skipped_rows.sort(key=lambda e: float(e.get("ts") or 0), reverse=True)
+
+    if not did_rows and not (include_skipped and skipped_rows):
+        scope = f" for {team}" if team else ""
+        return f"I haven't made any fantasy moves{scope} that I have a record of."
+
+    lines = []
+    for e in did_rows[:max(1, int(limit or 5))]:
+        when = time.strftime("%a %b %d %I:%M%p",
+                             time.localtime(float(e.get("ts") or 0)))
+        name = e.get("name", "your team")
+        why = e.get("why") or []
+        if e.get("executed") == "unknown":
+            head = f"{when} — tried a change to {name}, but the write errored"
+        else:
+            head = f"{when} — {name}"
+        detail = "; ".join(why) if why else (e.get("reason")
+                                             or "no detail recorded")
+        lines.append(f"{head}: {detail}")
+
+    if not lines:
+        lines.append("No moves were actually made.")
+    if include_skipped and skipped_rows:
+        newest = skipped_rows[0]
+        when = time.strftime("%a %b %d %I:%M%p",
+                             time.localtime(float(newest.get("ts") or 0)))
+        why = "; ".join(newest.get("why") or []) or (newest.get("reason")
+                                                     or "no detail recorded")
+        lines.append(f"({len(skipped_rows)} other run(s) changed nothing; "
+                     f"most recent {when}: {why})")
+    return "\n".join(lines)
+
+
 def _dom_slot(slot):
     """Yahoo's row-level `data-pos` spells multi-position slots with
     underscores ("W_R_T"); everything upstream of this module (the scraped
