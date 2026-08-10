@@ -126,6 +126,9 @@ checking rather than trusting.
 - [ ] Judgment gate can VETO or ANNOTATE a candidate move; it cannot originate
       one or alter a value (test-enforced — this is the safety property)
 - [ ] A veto blocks the **unattended** path and routes to the owner via Discord
+- [ ] A veto **never blocks a move the owner explicitly approved** — it warns
+      once, in the same message, and the move proceeds (the human has the final
+      say; re-asking after "do it" is not taking the answer)
 - [ ] Veto reasoning is natural language, recorded in the ledger as its own
       field, and never surfaced as a separate voice in the message
 - [ ] User-facing output reads as one agent; hedging conveys confidence without
@@ -147,21 +150,30 @@ adjusters are pure, numeric and bounded, and this is none of those; it is a
 distinct gate between layers 4 and 5, which keeps the regression layer testable
 by arithmetic.
 
-**OPEN — owner decision needed.** May a veto argue against a move the owner has
-**explicitly approved**, or only block the unattended path?
+**RESOLVED 2026-08-09 — the human has the final say.** A veto blocks only the
+UNATTENDED path. Against a move the owner explicitly approved, the gate may
+warn but the move proceeds.
 
-*Recommendation: only the unattended path.* An approved move should proceed with
-the model's caution attached to the message, not be blocked. Overriding an
-explicit human instruction is a different kind of authority from declining to
-act alone, and a 12b (or even Claude) countermanding a direct instruction is a
-worse failure than a missed edge. The owner approved with information; the model
-should speak, not veto.
+Declining to act alone and countermanding a direct instruction are different
+kinds of authority, and only the first is delegated here. A model overriding an
+explicit human decision is a worse failure than a missed edge — especially given
+the model is sometimes a 12b and its judgment is exactly the part that cannot be
+verified by arithmetic.
 
-The counter-argument, recorded honestly: if the model learns something the owner
-could not have known at approval time (a starter ruled out minutes ago), a
-warning that arrives *after* an irreversible drop is worthless. If that case
-matters, the answer is probably a narrow set of hard-checkable facts that can
-block anything — which is a constraint, not judgment, and belongs with
-`never_drop` rather than here.
+Two consequences to build to:
+
+- **Warn once, then act.** The caution rides along with the move; it does not
+  become a confirmation prompt. Re-asking after an explicit "do it" is a way of
+  not taking the answer, and it trains the owner to click through warnings.
+- **The warning must be visible BEFORE the write where that's possible.** If the
+  approval and execution are in the same turn, say the concern in the same
+  message that reports the move — a caution arriving after an irreversible drop
+  is worth nothing.
+
+The case this deliberately does not cover: the model learning something the
+owner could not have known at approval time (a starter ruled out minutes
+earlier). If that turns out to matter, the answer is a narrow set of
+hard-checkable facts that block anything — which is a *constraint*, belongs with
+`never_drop`, and must not be smuggled in here as judgment.
 
 **Status: DESIGN ONLY — not approved to build.** No code written.
