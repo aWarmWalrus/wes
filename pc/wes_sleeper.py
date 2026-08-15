@@ -508,6 +508,21 @@ def drafted_player_ids(draft_id, _get_fn=None):
     return {str(p.get("player_id")) for p in picks if p.get("player_id")}
 
 
+def _draft_pool():
+    """The valuation pool for a DRAFT: forward-looking projections, with last
+    season's actuals as a fallback.
+
+    Kept separate from the in-season pool on purpose. The two answer different
+    questions — "what will this player do this year" vs "what has this player
+    been doing" — and quietly swapping one for the other is how a draft board
+    ends up confidently out of date."""
+    proj = wes_nfl.season_projections()
+    if proj:
+        return proj
+    pool, _failed = wes_nfl.pool_by_position()
+    return pool
+
+
 def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
                      _index_fn=None, _pool_fn=None, _picks=None):
     """Live draft STATE + verified candidates, as STRUCTURED DATA.
@@ -597,7 +612,12 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
 
     # Value the AVAILABLE players by joining Sleeper ids to the ESPN pool on
     # espn_id — an exact join, not a name match.
-    pool, _failed = (_pool_fn or wes_nfl.pool_by_position)()
+    # SEASON PROJECTIONS, not last year's actuals. A draft is about expected
+    # season-long production; valuing on 2025 results is why the board kept
+    # recommending last year's producers a hundred picks after the market had
+    # moved on (Tyreek Hill on top at pick 146, 2026-08-15). Falls back to
+    # actuals rather than emptying the board if projections are unavailable.
+    pool = (_pool_fn or _draft_pool)()
     by_espn = {str(p["espn_id"]): p for p in pool if p.get("espn_id")}
     board = []
     for pid, info in index.items():

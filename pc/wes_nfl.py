@@ -27,6 +27,7 @@ stat names (see _ALIASES for the spellings accepted).
 SCOPE: offensive skill positions + K + DEF/ST, i.e. standard redraft roster
 slots. IDP (individual defensive players) is not modelled — see NOT_MODELLED.
 """
+import json
 import re
 
 import wes_http  # noqa: E402 — raw data layer (#034); same dir on path
@@ -898,3 +899,97 @@ def pool_by_position(limit_each=60, season=None, _get_fn=None,
     for line in defences:
         merged.setdefault(line["name"], line)
     return list(merged.values()), failed
+
+
+# --- forward-looking SEASON projections (#039) -------------------------------
+# A draft is about expected SEASON-LONG production. Valuing players by last
+# season's ACTUALS — which is what the pool above does — is why a draft board
+# still loves last year's producers long after the market has moved on
+# (Tyreek Hill topping a shortlist at pick 146, 2026-08-15).
+#
+# NOT to be confused with #036's weekly projections: that is matchup adjustment
+# for in-season lineup calls. Different question, different data.
+_KONA = ("https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/"
+         "{season}/segments/0/leaguedefaults/3?view=kona_player_info")
+
+# ESPN statIds -> our canonical cats. INFERRED FROM THE DATA rather than copied
+# from a blog post: a QB's largest number is passing yards (3), a receiver's is
+# receiving yards (42), receptions (53) and targets (58) sit where a WR/TE has
+# them, and a back's rushing yards (24) / TDs (25) check out. Validated by
+# scoring a player under PPR and comparing with ESPN's own appliedTotal.
+_KONA_STAT = {
+    "0": None, "1": None,                  # attempts/completions: not scored
+    "3": "PassYds", "4": "PassTD", "20": "Int",
+    "23": None, "24": "RushYds", "25": "RushTD",
+    "42": "RecYds", "43": "RecTD", "53": "Rec", "58": None,   # 58 = targets
+    "72": "FumLost",
+}
+_KONA_POS = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DEF"}
+
+
+def _default_season():
+    """The season a draft is FOR. Uses the calendar year: an NFL season is named
+    for the year it starts in, and drafts happen months before January, so the
+    current year is right for every month a draft actually occurs."""
+    import datetime
+    return datetime.date.today().year
+
+
+def parse_projections(payload, season):
+    """ESPN kona payload -> our stat-line shape, from the SEASON projection.
+
+    PURE. Picks the entry with statSourceId=1 (projected) and statSplitTypeId=0
+    (whole season) — the weekly entries in the same payload are #036's problem,
+    not a draft's.
+
+    Returns the same {name, espn_id, positions, team, gp, cats} shape the actuals
+    pool produces, so `rank_by_points` and everything above it cannot tell which
+    it was handed."""
+    out = []
+    players = (payload or {}).get("players") if isinstance(payload, dict) else None
+    for p in players if isinstance(players, list) else []:
+        if not isinstance(p, dict):
+            continue
+        pl = p.get("player") or {}
+        proj = next((s for s in pl.get("stats") or []
+                     if s.get("statSourceId") == 1
+                     and s.get("statSplitTypeId") == 0
+                     and str(s.get("seasonId")) == str(season)), None)
+        if not proj:
+            continue
+        cats = {}
+        for sid, val in (proj.get("stats") or {}).items():
+            key = _KONA_STAT.get(str(sid))
+            if key and _num(val):
+                cats[key] = round(float(val), 3)
+        if not cats:
+            continue
+        pos = _KONA_POS.get(pl.get("defaultPositionId"))
+        out.append({
+            "name": pl.get("fullName") or "",
+            "espn_id": str(pl.get("id")) if pl.get("id") is not None else None,
+            "positions": [pos] if pos else [],
+            "team": None,
+            "gp": 17,                     # a season projection IS the full year
+            "cats": cats,
+            "espn_applied_total": proj.get("appliedTotal"),
+            "projected": True,            # so a caller can never confuse the two
+        })
+    return out
+
+
+def season_projections(season=None, limit=400, _get_fn=None):
+    """Forward-looking season projections, best-ranked first. [] on failure —
+    a draft board must fall back to actuals rather than silently emptying."""
+    season = season or _default_season()
+    headers = {"x-fantasy-filter": json.dumps({"players": {
+        "limit": int(limit),
+        "sortDraftRanks": {"sortPriority": 1, "sortAsc": True, "value": "PPR"},
+    }})}
+    try:
+        payload = (_get_fn or wes_http.get_json)(
+            _KONA.format(season=season), ttl=wes_http.SEASON_TTL,
+            timeout=30.0, headers=headers)
+    except Exception:  # noqa: BLE001 — advisory; the caller falls back
+        return []
+    return parse_projections(payload, season)

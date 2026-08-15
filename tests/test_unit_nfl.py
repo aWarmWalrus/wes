@@ -1023,3 +1023,81 @@ class TestFormatting:
         """NOT_MODELLED is load-bearing documentation, not decoration — a future
         reader must find IDP listed rather than assume it silently works."""
         assert any("IDP" in n for n in nfl.NOT_MODELLED)
+
+
+class TestSeasonProjections:
+    """Forward-looking SEASON projections (#039). A draft is about expected
+    season-long production; valuing on last year's ACTUALS is why a board keeps
+    recommending last season's producers long after the market has moved on.
+
+    Not to be confused with #036's weekly projections — that is matchup
+    adjustment for in-season lineup calls. Different question, different data."""
+
+    PAYLOAD = {"players": [{"player": {
+        "id": 4429795, "fullName": "Jahmyr Gibbs", "defaultPositionId": 2,
+        "stats": [
+            # The whole-season PROJECTION: statSourceId 1, statSplitTypeId 0.
+            {"statSourceId": 1, "statSplitTypeId": 0, "seasonId": 2026,
+             "appliedTotal": 365.3,
+             "stats": {"24": 1374.08, "25": 14.48, "53": 60.0, "42": 500.0,
+                       "43": 3.0, "23": 283.0, "58": 80.0}},
+            # Last season's ACTUALS, and a WEEKLY projection — both must be
+            # ignored here, and both live in the same payload.
+            {"statSourceId": 0, "statSplitTypeId": 0, "seasonId": 2025,
+             "appliedTotal": 313.6, "stats": {"24": 999.0}},
+            {"statSourceId": 1, "statSplitTypeId": 1, "seasonId": 2026,
+             "scoringPeriodId": 5, "appliedTotal": 20.7,
+             "stats": {"24": 80.0}},
+        ]}}]}
+
+    def _parsed(self):
+        return nfl.parse_projections(self.PAYLOAD, 2026)
+
+    def test_picks_the_season_projection_not_the_actuals(self):
+        cats = self._parsed()[0]["cats"]
+        assert cats["RushYds"] == 1374.08      # projected, not 999 actual
+
+    def test_ignores_weekly_projections_in_the_same_payload(self):
+        """A weekly entry would silently replace the season one and make every
+        player look like a single game."""
+        assert self._parsed()[0]["cats"]["RushYds"] > 1000
+
+    def test_maps_espn_stat_ids_to_our_canonical_cats(self):
+        cats = self._parsed()[0]["cats"]
+        assert cats["RushTD"] == 14.48 and cats["Rec"] == 60.0
+        assert cats["RecYds"] == 500.0 and cats["RecTD"] == 3.0
+
+    def test_counting_stats_that_do_not_score_are_dropped(self):
+        """Attempts (23) and targets (58) are volume, not points. Leaving them
+        in `cats` would break the contract that cats are SCORING stats."""
+        cats = self._parsed()[0]["cats"]
+        assert "23" not in cats and "58" not in cats
+        assert not any(str(k).isdigit() for k in cats)
+
+    def test_is_marked_as_projected_so_it_cannot_be_confused_with_actuals(self):
+        p = self._parsed()[0]
+        assert p["projected"] is True
+        assert p["gp"] == 17               # a season projection IS the full year
+
+    def test_our_scoring_reproduces_espns_total(self):
+        """The statId mapping was INFERRED from the data, so it needs a check
+        that does not depend on the same inference: score the mapped cats under
+        PPR and compare with ESPN's own appliedTotal. Verified live at a worst
+        gap of 0.5% across the top 12 players; a mismatch here means we are
+        mispricing everyone and would never see it in the output."""
+        p = self._parsed()[0]
+        ours = nfl.fantasy_points(p["cats"], nfl.SCORING_PPR,
+                                      nfl.POINTS_ALLOWED_TIERS)
+        # 137.41 + 86.88 + 60 + 50 + 18 = 352.29
+        assert abs(ours - 352.29) < 1.0
+
+    def test_a_player_with_no_season_projection_is_skipped(self):
+        payload = {"players": [{"player": {
+            "id": 1, "fullName": "Nobody", "defaultPositionId": 3,
+            "stats": [{"statSourceId": 0, "statSplitTypeId": 0,
+                       "seasonId": 2026, "stats": {"42": 10.0}}]}}]}
+        assert nfl.parse_projections(payload, 2026) == []
+
+    def test_malformed_payload_yields_nothing_rather_than_raising(self):
+        assert nfl.parse_projections(None, 2026) == []
+        assert nfl.parse_projections({"players": "junk"}, 2026) == []

@@ -113,7 +113,7 @@ def _fetch(url, headers, timeout, retries):
 
 
 def get_json(url, ttl=DEFAULT_TTL, timeout=DEFAULT_TIMEOUT, retries=1,
-             ua=UA, _now=None, _fetch_fn=None, cacheable=None):
+             ua=UA, _now=None, _fetch_fn=None, cacheable=None, headers=None):
     """Fetch and parse JSON, cached per URL. Raises on failure — the layer above
     owns how that becomes a sentence.
 
@@ -123,9 +123,18 @@ def get_json(url, ttl=DEFAULT_TTL, timeout=DEFAULT_TIMEOUT, retries=1,
     now = _now if _now is not None else time.time()
     fetch = _fetch_fn or _fetch
 
+    hdrs = {"User-Agent": ua}
+    if headers:
+        hdrs.update(headers)
+
     def produce():
-        return json.loads(fetch(url, {"User-Agent": ua}, timeout, retries).decode())
-    return _cached((url, "json"), ttl, produce, now, cacheable)
+        return json.loads(fetch(url, hdrs, timeout, retries).decode())
+    # The cache key includes the extra headers. ESPN's kona endpoint varies its
+    # RESPONSE by an `x-fantasy-filter` header on an otherwise identical URL, so
+    # keying on the URL alone would serve one filter's answer for another's
+    # question — a cache hit that is silently the wrong data.
+    key = (url, "json", tuple(sorted((headers or {}).items())))
+    return _cached(key, ttl, produce, now, cacheable)
 
 
 def get_text(url, ttl=TEXT_TTL, timeout=DEFAULT_TIMEOUT, retries=1,

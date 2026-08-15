@@ -539,3 +539,64 @@ markdown fence, which `json.loads` rejected. Ollama's `format=json` guarantees a
 bare object; the Anthropic API does not. `_strip_fence` handles it, and the
 fallback message now says "no usable reply" rather than claiming unavailability,
 because the original wording sent the diagnosis in the wrong direction entirely.
+
+
+## Draft valuation moved to season projections (2026-08-15)
+
+Implemented the corrected fix. `wes_nfl.season_projections` reads ESPN's kona
+endpoint for the entry with `statSourceId=1` (projected) and `statSplitTypeId=0`
+(whole season) — deliberately NOT the weekly entries sitting in the same
+payload, which are #036's problem.
+
+**The statId mapping was inferred from the data, not copied from a blog post.**
+A QB's largest number is passing yards (3), a receiver's is receiving yards (42)
+with receptions (53) and targets (58) where a WR/TE has them, and a back's
+rushing yards (24) / TDs (25) check out. Volume-only stats (attempts, targets)
+are dropped rather than stuffed into `cats`, which by contract holds SCORING
+stats.
+
+Because that mapping was inferred, it needed a check that does not lean on the
+same inference: score the mapped cats under PPR and compare with ESPN's own
+`appliedTotal`.
+
+```
+player                    ours(PPR)       espn     diff
+Jahmyr Gibbs                  364.5      365.3     -0.8
+Puka Nacua                    356.2      356.6     -0.3
+Christian McCaffrey           341.9      343.4     -1.5
+worst relative gap: 0.5%
+```
+
+Consistently ~1 point low, which is the handful of things ESPN's default league
+scores and we do not (2PTs, return yards). A silent mapping error would have
+mispriced every player with nothing in the output to show it.
+
+**`wes_http.get_json` gained optional headers**, since kona varies its RESPONSE
+by an `x-fantasy-filter` header on an otherwise identical URL. The cache key now
+includes the headers — keying on URL alone would serve one filter's answer to
+another filter's question, a cache hit that is silently the wrong data.
+
+### The board before and after
+
+Same completed mock, same 15 picks, only the valuation changed:
+
+```
+BEFORE (2025 actuals)          AFTER (2026 projections)
+R5  George Kittle              R5  Terry McLaurin
+R6  George Kittle              R6  Courtland Sutton
+R7  George Kittle              R7  Courtland Sutton
+R8  George Kittle              R8  ...
+R12 Tyreek Hill                R12 Michael Pittman
+R15 Tyreek Hill                R15 Deebo Samuel
+```
+
+It now *progresses* — value declining round by round — instead of repeating one
+stale name the market abandoned a hundred picks earlier. Model/engine agreement
+moved 87% → 73%, i.e. the model disagrees MORE now, which is at least consistent
+with there being something worth disagreeing about.
+
+Kept as a fallback rather than a replacement: `_draft_pool` uses projections and
+falls back to actuals, so an ESPN outage degrades the board instead of emptying
+it. The two pools stay separate functions on purpose — "what will this player do
+this year" and "what has this player been doing" are different questions, and
+quietly swapping one for the other is how a board ends up confidently out of date.
