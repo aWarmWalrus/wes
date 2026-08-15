@@ -506,8 +506,32 @@ these are **2025 season aggregates**, and Sleeper's own rankings have moved on.
 This is #036 showing up as concrete bad advice rather than a theoretical gap:
 *a chooser cannot be better than the board it chooses from.*
 
-So the ordering is now clear. **Fix the valuations (#036) before tuning the
-chooser.** A better model on a stale board is a more articulate wrong answer.
+So the ordering is clear: **fix the valuations before tuning the chooser.** A
+better model on a stale board is a more articulate wrong answer.
+
+**CORRECTED 2026-08-15 — the fix is NOT #036.** I pointed at weekly projections;
+the owner pushed back, correctly: *"weekly projection should not affect draft
+strategy."* A draft is about expected SEASON-LONG production. #036 is weekly
+matchup adjustment for in-season lineup calls. Different problem, different data,
+and conflating them would have built the wrong thing.
+
+The real defect is narrower: **we value players by 2025 ACTUALS as a proxy for
+2026 expected value.** There is no forward-looking season projection in the board
+at all — which is exactly why it still loves last year's producers.
+
+The data exists and is free:
+
+```
+ESPN kona:  PROJ season=2026 split=0 scoringPeriod=0 total=336.12   <- season total
+            draftRanks: {'STANDARD': 3, 'PPR': 3, 'SUPERFLEX': 9}   <- market view
+Sleeper:    search_rank — Bijan 1, Gibbs 1, Chase 3, Nacua 4        <- market view
+```
+
+`statSourceId=1` + `statSplitTypeId=0` is a full-season 2026 projection, in the
+same endpoint #036 already found for weekly numbers. The draft board should be
+valued on that, with `search_rank`/`draftRanks` available as a market
+sanity-check — a player our board loves and the market has abandoned is a signal
+to distrust the valuation, not a bargain.
 
 **One real bug came out of it too.** Every Claude call fell back with "model
 unavailable" — but Claude had answered perfectly well and wrapped its JSON in a
