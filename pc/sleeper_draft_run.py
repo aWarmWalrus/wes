@@ -113,19 +113,22 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
                "starting_slots": board.get("starting_slots"),
                "roster_so_far": board.get("roster"),
                "still_unfilled": board.get("still_unfilled")}
+        # Re-verify availability against FRESH picks — cache BYPASSED. The
+        # board was true a moment ago, and a moment is enough for someone to
+        # take him; reading a 15s-old pick list here is not a re-check at all.
+        taken = wes_sleeper.drafted_player_ids_fresh(draft_id)
+        cands = [c for c in cands if str(c.get("player_key")) not in taken]
+        if not cands:
+            _log(f"pick {pick_no}: everyone on the shortlist is gone — "
+                 f"standing down")
+            acted_on.add(pick_no)
+            continue
+
         pick, reason, source = (_decide_fn or wes_draft_agent.choose)(
             cands, context=ctx)
         if pick is None:
             _log(f"pick {pick_no}: no decision — standing down")
             acted_on.add(pick_no)
-            continue
-
-        # Re-verify availability against FRESH picks: the board was true a
-        # moment ago, and a moment is enough for someone to take him.
-        taken = wes_sleeper.drafted_player_ids(draft_id)
-        if str(pick.get("player_key")) in taken:
-            _log(f"pick {pick_no}: {pick['name']} was taken while we thought — "
-                 f"re-deciding")
             continue
 
         if not wes_execute.writes_enabled():
@@ -140,9 +143,36 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             made.append(pick["name"])
             _log(f"pick {pick_no}: DRAFTED {pick['name']} ({source}: {reason})")
         except Exception as e:  # noqa: BLE001 — one failure must not end the run
-            # No retry, on purpose. submit_pick already polled ~15s; retrying is
-            # a coin flip on whether the first attempt landed late, and that coin
-            # flip is a double pick. cpu_autopick covers us.
+            # TWO KINDS OF FAILURE, and only one is dangerous.
+            #
+            # "not in the draft room's available list" happens BEFORE any click,
+            # so nothing was submitted and the next candidate is safe to try.
+            # Treating it like an uncertain write forfeited nine picks in one
+            # draft (2026-08-15).
+            #
+            # Anything else may have half-landed. submit_pick already polled
+            # ~15s, so retrying is a coin flip on whether the first attempt
+            # arrived late — and that coin flip is a double pick. Stand down and
+            # let cpu_autopick have it.
+            if "not available in the draft room" in str(e):
+                alt = next((c for c in cands
+                            if c["player_key"] != pick["player_key"]), None)
+                if alt is not None:
+                    # LOUDLY. Substituting is correct only when the player is
+                    # genuinely gone, and a quiet substitution is worse than a
+                    # forfeit: seven silent swaps produced a roster with four
+                    # tight ends and no defence, and nothing in the log said the
+                    # agent had not got what it asked for (2026-08-15).
+                    _log(f"pick {pick_no}: SUBSTITUTED — wanted "
+                         f"{pick['name']}, he is gone; taking {alt['name']} "
+                         f"instead")
+                    try:
+                        submit(draft_id, alt["player_key"], alt["name"])
+                        made.append(alt["name"])
+                        _log(f"pick {pick_no}: DRAFTED {alt['name']} (fallback)")
+                        continue
+                    except Exception as e2:  # noqa: BLE001
+                        e = e2
             _log(f"pick {pick_no}: FAILED ({e}) — standing down, cpu_autopick "
                  f"will take it")
 

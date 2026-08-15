@@ -44,7 +44,8 @@ def _states(seq):
 class TestRails:
     def test_does_not_pick_when_not_on_the_clock(self, monkeypatch):
         monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
-        monkeypatch.setattr(wes_sleeper, "drafted_player_ids", lambda d: set())
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
         calls = []
         loop.run("D", "L", 1, _state_fn=_states([_state(3), _state(1)]),
                  _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
@@ -54,7 +55,8 @@ class TestRails:
 
     def test_picks_when_on_the_clock(self, monkeypatch):
         monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
-        monkeypatch.setattr(wes_sleeper, "drafted_player_ids", lambda d: set())
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
         calls = []
         out = loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
                        _board_fn=_board(),
@@ -69,7 +71,8 @@ class TestRails:
         picks_made unchanged and would otherwise submit again — a double pick,
         which costs a roster spot and cannot be undone."""
         monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
-        monkeypatch.setattr(wes_sleeper, "drafted_player_ids", lambda d: set())
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
         calls = []
         loop.run("D", "L", 1,
                  # Same pick number three times, as a lagging API would report.
@@ -84,7 +87,8 @@ class TestRails:
         coin flip on whether the first landed late — and that coin flip is a
         double pick. cpu_autopick covers the miss."""
         monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
-        monkeypatch.setattr(wes_sleeper, "drafted_player_ids", lambda d: set())
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
         calls = []
 
         def boom(*a):
@@ -97,10 +101,14 @@ class TestRails:
 
     def test_rechecks_availability_immediately_before_submitting(self, monkeypatch):
         """The board was true a moment ago; a moment is enough for someone to
-        take him. Clicking a row that no longer means what we think is how the
-        wrong player gets drafted."""
+        take him — and the re-check must bypass the 15s pick cache, or it is
+        reading the same stale list the board was built from. That is exactly
+        how a pick was wasted on a kicker who had already been drafted.
+
+        A taken player is now FILTERED OUT of the shortlist rather than
+        aborting the pick, so the next-best candidate can still be taken."""
         monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
-        monkeypatch.setattr(wes_sleeper, "drafted_player_ids",
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
                             lambda d: {"77"})       # taken while we thought
         calls = []
         loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
@@ -111,7 +119,8 @@ class TestRails:
 
     def test_writes_off_reports_but_does_not_act(self, monkeypatch):
         monkeypatch.setattr(wes_execute, "writes_enabled", lambda: False)
-        monkeypatch.setattr(wes_sleeper, "drafted_player_ids", lambda d: set())
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
         calls = []
         loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
                  _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
@@ -121,7 +130,8 @@ class TestRails:
 
     def test_no_candidates_stands_down_rather_than_looping(self, monkeypatch):
         monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
-        monkeypatch.setattr(wes_sleeper, "drafted_player_ids", lambda d: set())
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
         out = loop.run("D", "L", 1,
                        _state_fn=_states([_state(0), _state(0)]),
                        _board_fn=_board(cands=()),
@@ -138,7 +148,8 @@ class TestRails:
     def test_a_transient_state_error_does_not_end_the_run(self, monkeypatch):
         """A blip in the API should cost a poll interval, not the draft."""
         monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
-        monkeypatch.setattr(wes_sleeper, "drafted_player_ids", lambda d: set())
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
         calls = []
         loop.run("D", "L", 1,
                  _state_fn=_states(["I couldn't reach Sleeper", _state(0)]),
@@ -159,3 +170,67 @@ class TestRails:
                        _state_fn=lambda *a, **k: _state(5),
                        _sleep_fn=lambda _s: None, _now_fn=now)
         assert "stopped after" in out
+
+
+class TestFailureKinds:
+    """Two kinds of submit failure, and only one is dangerous (2026-08-15).
+
+    "not in the draft room's available list" happens BEFORE any click, so
+    nothing was submitted and the next candidate is safe to try. Treating it
+    like an uncertain write forfeited nine picks in a single draft."""
+
+    CANDS = [CAND, {"player_key": "88", "name": "Backup Guy",
+                    "positions": ["WR"], "team": "NYJ", "vor": 9.0}]
+
+    def _setup(self, monkeypatch, taken=frozenset()):
+        monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set(taken))
+
+    def test_a_pre_click_failure_falls_through_to_the_next_candidate(
+            self, monkeypatch):
+        self._setup(monkeypatch)
+        calls = []
+
+        def submit(draft_id, key, name):
+            calls.append(name)
+            if key == "77":
+                raise RuntimeError(
+                    f"{name!r} is not available in the draft room")
+            return True
+        loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
+                 _board_fn=_board(cands=self.CANDS),
+                 _decide_fn=lambda c, **kw: (self.CANDS[0], "why", "model"),
+                 _submit_fn=submit, _sleep_fn=lambda _s: None)
+        assert calls == ["Target Guy", "Backup Guy"]     # tried the next one
+
+    def test_an_UNCERTAIN_failure_still_stands_down(self, monkeypatch):
+        """submit_pick already polled ~15s, so retrying is a coin flip on
+        whether the first attempt landed late — and that coin flip is a double
+        pick."""
+        self._setup(monkeypatch)
+        calls = []
+
+        def submit(draft_id, key, name):
+            calls.append(name)
+            raise RuntimeError("clicked but the pick never appeared")
+        loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
+                 _board_fn=_board(cands=self.CANDS),
+                 _decide_fn=lambda c, **kw: (self.CANDS[0], "why", "model"),
+                 _submit_fn=submit, _sleep_fn=lambda _s: None)
+        assert calls == ["Target Guy"]                   # no second attempt
+
+    def test_players_taken_since_the_board_was_built_are_filtered_out(
+            self, monkeypatch):
+        """The fresh check removes them from the shortlist, so the model
+        chooses among players who actually exist to be drafted."""
+        self._setup(monkeypatch, taken={"77"})
+        seen = {}
+
+        def decide(cands, **kw):
+            seen["keys"] = [c["player_key"] for c in cands]
+            return cands[0], "why", "model"
+        loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
+                 _board_fn=_board(cands=self.CANDS), _decide_fn=decide,
+                 _submit_fn=lambda *a: True, _sleep_fn=lambda _s: None)
+        assert seen["keys"] == ["88"]

@@ -528,7 +528,7 @@ class TestSubmitPick:
                            _session_cls=self._session(page))
             assert False, "should have refused"
         except RuntimeError as e:
-            assert "not in the draft room" in str(e)
+            assert "not available in the draft room" in str(e)
 
     def test_refuses_when_the_button_is_disabled(self, monkeypatch):
         """`disable` means not on the clock. Clicking anyway would do nothing
@@ -699,3 +699,84 @@ class TestProjectionJoin:
                     "roster_positions": ["RB", "WR", "BN"], "season": "2026"}
         return {"settings": {"teams": 10, "rounds": 15},
                 "slot_to_roster_id": {"1": 1}, "season": "2026"}
+
+
+class TestWindowedList:
+    """Sleeper renders ~59 player rows at a time, ordered by ITS ranking. A
+    player we rate highly can sit far outside that window and be perfectly
+    available while simply not drawn — a kicker failed seven times in one draft
+    for this reason, never having been taken (2026-08-15). The search box is how
+    a human reaches him."""
+
+    class Box:
+        def __init__(self):
+            self.query = None
+
+        def click(self):
+            pass
+
+        def fill(self, text):
+            self.query = text
+
+    class Page:
+        """Rows appear only AFTER the search box is filled — the windowing,
+        modelled."""
+
+        def __init__(self, box, row_factory):
+            self.box, self._rows = box, row_factory
+
+        def goto(self, *a, **k):
+            pass
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+        def evaluate(self, *a, **k):
+            return True
+
+        def query_selector_all(self, _sel):
+            return self._rows() if self.box.query else []
+
+        def query_selector(self, sel):
+            return self.box if "Find player" in sel else None
+
+    def test_it_searches_before_declaring_a_player_unavailable(self, monkeypatch):
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        btn = TestSubmitPick.FakeBtn("draft-button")
+        box = self.Box()
+        page = self.Page(box, lambda: [TestSubmitPick.FakeRow("Deep Guy", btn)])
+
+        class S:
+            def __enter__(_s):
+                return page
+
+            def __exit__(_s, *a):
+                return False
+        ok = sl.submit_pick("D", "42", "Deep Guy", _session_cls=S,
+                            _picks_fn=lambda d: [{"player_id": "42"}],
+                            _sleep_fn=lambda _s: None)
+        assert ok is True
+        assert box.query == "Deep Guy"       # it actually searched
+        assert btn.clicked
+
+    def test_the_error_now_distinguishes_gone_from_merely_unrendered(self,
+                                                                    monkeypatch):
+        """Two very different causes wore the same message before, and only one
+        of them means 'pick someone else'."""
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        box = self.Box()
+        page = self.Page(box, lambda: [])     # search finds nothing either
+
+        class S:
+            def __enter__(_s):
+                return page
+
+            def __exit__(_s, *a):
+                return False
+        try:
+            sl.submit_pick("D", "42", "Ghost", _session_cls=S)
+            assert False, "should have refused"
+        except RuntimeError as e:
+            assert "even after searching" in str(e)

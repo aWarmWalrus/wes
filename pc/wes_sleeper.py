@@ -514,6 +514,21 @@ def draft_picks(draft_id, _get_fn=None):
     return _get(f"/draft/{draft_id}/picks", ttl=15.0, _get_fn=_get_fn)
 
 
+def drafted_player_ids_fresh(draft_id, _get_fn=None):
+    """Taken ids, CACHE BYPASSED — for the check made immediately before a pick.
+
+    `draft_picks` holds a 15s TTL, which is fine for polling and fatal here:
+    the loop's "re-check availability before submitting" rail was reading a
+    pick list up to 15 seconds old, so a player taken moments earlier still
+    looked available. That is exactly how a pick was wasted on Ka'imi
+    Fairbairn, who had already been drafted (2026-08-15). Verifying against a
+    cache is not verifying — the same lesson as the post-write check."""
+    picks = _get(f"/draft/{draft_id}/picks", ttl=0, _get_fn=_get_fn)
+    if not isinstance(picks, list):
+        return set()
+    return {str(p.get("player_id")) for p in picks if p.get("player_id")}
+
+
 def drafted_player_ids(draft_id, _get_fn=None):
     """Ids already taken by ANYONE.
 
@@ -719,7 +734,13 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
         # bench flyer competing against a starting slot nobody has filled.
         startable = targets.get(pos, 0) + (flex if pos in flex_pos else 0)
         surplus = have.get(pos, 0) - (startable + 1)
-        p["need_bump"] = (2.0 * gap if gap else
+        # An unfilled slot is not equally urgent at every position. Once the
+        # skill slots were full, K and DEF were the only gaps left and took the
+        # full bump, which put a KICKER on the board in round 7 — real drafters
+        # take them last because replacement level there is nearly flat, so the
+        # 1st kicker is barely better than the 12th. Scale their urgency down.
+        urgency = 0.25 if pos in ("K", "DEF") else 2.0
+        p["need_bump"] = (urgency * gap if gap else
                           (0.5 if (pos in flex_pos and flex) else 0.0))
         if surplus > 0:
             p["need_bump"] -= 2.5 * surplus
@@ -826,16 +847,33 @@ def submit_pick(draft_id, player_key, player_name, _session_cls=None,
                   wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(6000)
 
-        row = None
-        for r in page.query_selector_all(".player-rank-item2"):
-            nm = r.query_selector(".name-wrapper")
-            if nm and _norm_name((nm.inner_text() or "").split("\n")[0]) == want:
-                row = r
-                break
+        def _find_row():
+            for r in page.query_selector_all(".player-rank-item2"):
+                nm = r.query_selector(".name-wrapper")
+                first = (nm.inner_text() or "").split("\n")[0] if nm else ""
+                if nm and _norm_name(first) == want:
+                    return r
+            return None
+
+        row = _find_row()
+        if row is None:
+            # THE LIST IS WINDOWED — roughly 59 rows render at a time, ordered
+            # by Sleeper's own ranking. A player we rate highly can sit far
+            # outside that window and be perfectly available while simply not
+            # drawn: a kicker failed seven times in one draft for exactly this,
+            # never having been taken at all (2026-08-15). The search box is how
+            # a human reaches him, so use it before concluding anything.
+            box = page.query_selector("input[placeholder*='Find player']")
+            if box is not None:
+                box.click()
+                box.fill(player_name)
+                page.wait_for_timeout(2500)
+                row = _find_row()
         if row is None:
             raise RuntimeError(
-                f"{player_name!r} is not in the draft room's available list — "
-                f"refusing to click a different row")
+                f"{player_name!r} is not available in the draft room even "
+                f"after searching — he has most likely just been taken. "
+                f"Refusing to click a different row")
 
         btn = row.query_selector(".draft-button")
         if btn is None:
