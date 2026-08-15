@@ -548,8 +548,17 @@ def draft_board(league_id, draft_id, roster_id, limit=8, _get_fn=None,
         return f"That draft is over — all {made} picks are in."
 
     taken = {str(p.get("player_id")) for p in picks if p.get("player_id")}
+    # Identify MY picks by DRAFT SLOT, not roster_id. A real mock draft returns
+    # `roster_id: null` on every pick (there is no league behind it), so keying
+    # on roster_id silently found none of my players and the need bump was
+    # computed against an empty roster — found 2026-08-15 by reading a live
+    # pick record rather than by testing. roster_id stays as a fallback for
+    # league drafts, where it is populated.
     mine = [str(p.get("player_id")) for p in picks
-            if str(p.get("roster_id")) == str(roster_id) and p.get("player_id")]
+            if p.get("player_id")
+            and (p.get("draft_slot") == my_slot
+                 or (p.get("roster_id") is not None
+                     and str(p.get("roster_id")) == str(roster_id)))]
 
     index = (_index_fn or players_index)()
     scoring = league_scoring(league_id, _get_fn)

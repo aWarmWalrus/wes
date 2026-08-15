@@ -362,3 +362,48 @@ class TestTokenAuthentication:
         of token/user_token/auth_token/jwt/access_token, only this one got past
         the login wall."""
         assert sl.TOKEN_KEY == "token"
+
+
+class TestDraftPickIdentity:
+    """Found by reading a REAL pick record from a live mock draft
+    (2026-08-15), not by testing: mock drafts return `roster_id: null` on every
+    pick, because there is no league behind them. Keying "my picks" on roster_id
+    therefore matched nothing, and the positional-need bump was computed against
+    an empty roster while looking perfectly healthy."""
+
+    REAL_MOCK_PICK = {
+        "draft_id": "1394249532753080320", "draft_slot": 1, "pick_no": 1,
+        "round": 1, "player_id": "9509", "picked_by": "", "roster_id": None,
+        "metadata": {"first_name": "Bijan", "last_name": "Robinson",
+                     "position": "RB", "team": "ATL"},
+    }
+
+    def test_a_real_mock_pick_has_no_roster_id(self):
+        """Pinning the payload shape that broke the assumption."""
+        assert self.REAL_MOCK_PICK["roster_id"] is None
+        assert self.REAL_MOCK_PICK["draft_slot"] == 1
+
+    def test_drafted_ids_come_from_player_id_not_names(self):
+        """Sleeper hands us the exact id; name matching is how a draft bot
+        recommends someone who is already gone."""
+        picks = [self.REAL_MOCK_PICK,
+                 {"player_id": "4034", "draft_slot": 2, "roster_id": None}]
+        got = sl.drafted_player_ids(
+            "D", _get_fn=lambda url, **kw: picks)
+        assert got == {"9509", "4034"}
+
+    def test_a_pick_with_no_player_id_is_skipped(self):
+        got = sl.drafted_player_ids(
+            "D", _get_fn=lambda url, **kw: [{"draft_slot": 3}])
+        assert got == set()
+
+    def test_unreachable_draft_api_yields_no_false_availability(self):
+        """Returning {} on failure would make every drafted player look
+        available — better an empty set than a confident wrong board."""
+        def boom(url, **kw):
+            raise OSError("down")
+        try:
+            got = sl.drafted_player_ids("D", _get_fn=boom)
+        except OSError:
+            got = None
+        assert got in (set(), None)

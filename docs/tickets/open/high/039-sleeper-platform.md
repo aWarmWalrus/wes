@@ -217,17 +217,16 @@ div.start-draft-text   <- the words; clicking this does NOTHING, silently
 div.claim-text  ->  div  ->  div.header-button   (inside div.draft-user-header)
 ```
 
-**But driving them does not work.** Playwright's full actionability checks pass
-— element visible, stable, real bounding box (`x:35 y:88 148x62`) — the click
-dispatches, and the app does not react. Tried element-level clicks, page-level
-clicks with actionability enforced, and visible-only filtering (the layout
-renders 20 `.draft-user-header` nodes for 10 teams, so a hidden duplicate was a
-plausible culprit; it was not). Consistent with the app requiring trusted user
-events.
+**~~But driving them does not work.~~ CORRECTED 2026-08-15 — the click DID
+work.** I concluded the app ignored synthetic clicks after `.start-draft-button`
+appeared to do nothing. The owner spotted the actual cause: **it opens an "are
+you sure you want to start the draft?" confirmation dialog**, which I never
+looked for. The click landed; I just never handled the modal.
 
-**This is a real update to the "Playwright for writes" decision** and should not
-be papered over: if the draft room ignores synthetic clicks, the lineup page may
-too.
+Recorded because the wrong conclusion was the expensive part: it would have
+condemned the whole Playwright approach on a false negative. **A control that
+appears not to respond deserves a check for a modal before it earns a verdict
+about the platform.**
 
 **The reframe that keeps this cheap:** claiming a seat and starting a draft are
 ONE-TIME HUMAN actions that never needed automating. The only gesture that must
@@ -271,3 +270,46 @@ GraphQL or Playwright.
 
 `pre_draft` also means there is no urgency on the management loop but there IS a
 deadline on the draft: `start_time` 1788552000000 (~2026-09-06).
+
+
+## Live mock draft — what running one actually taught us (2026-08-15)
+
+The owner started the mock by hand. `status: drafting`, real picks flowing.
+Three things came out of it that no amount of offline reasoning would have.
+
+**1. `roster_id` is null in mock drafts.** The real pick record:
+
+```json
+{"pick_no": 1, "draft_slot": 1, "roster_id": null, "player_id": "9509",
+ "metadata": {"first_name": "Bijan", "last_name": "Robinson", ...}}
+```
+
+`draft_board` identified "my picks" by `roster_id`, so in a mock it matched
+NONE of them — and the positional-need bump was computed against an empty
+roster while the output looked perfectly healthy. Now keyed on `draft_slot`,
+with `roster_id` kept as a fallback for league drafts where it is populated.
+
+**2. Sleeper has a QUEUE with AUTO-PICK.** The live room exposes
+`draft-queue` / `queue-action` / `AUTO-PICK` alongside the `draft-button`.
+Players are ranked into a queue and Sleeper drafts from it when you are on the
+clock.
+
+**This should be the auto-draft design, not on-the-clock clicking.** Racing a
+timer means being right, awake and connected at an unpredictable moment;
+populating a queue means being right once, in advance, with Sleeper's own
+machinery doing the execution. It is strictly more robust, and it degrades
+well — a stale queue still drafts something sane.
+
+**3. The board works on live data.** Mid-draft, on the clock at slot 6 of 10,
+with the five already-drafted players correctly excluded:
+
+```
+Round 1, 5 picks in — you're ON THE CLOCK (slot 6 of 10).
+  1. Derrick Henry (RB, BAL) — 10.55 over replacement (16.44 pts/g) +4 need
+  2. Davante Adams (WR, LAR) — 9.94 over replacement (15.92 pts/g) +4 need
+```
+
+**Caveat worth carrying:** `draft_board` takes a `league_id` for scoring, and a
+mock draft has no league — this run scored a Standard mock under the real
+league's PPR settings. Fine for a test, wrong in general; the scoring source
+needs to come from the draft when there is no league behind it.
