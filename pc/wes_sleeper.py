@@ -13,21 +13,38 @@ against a logged-in DOM. Concretely, compared with `wes_yahoo`:
     fuzzy name match — the identity problem that would otherwise dominate this
     work is simply absent.
 
-WHAT THIS MODULE DOES NOT DO: **write.** Sleeper's public v1 API is read-only;
-there is no documented endpoint for setting a lineup or making a transaction.
-The write path is unresolved (see #039) and deliberately absent here rather than
-half-built, so nothing can call a write that does not exist.
+WHAT THIS MODULE DOES NOT DO YET: **write.** Sleeper's public v1 API is
+read-only, so writes go through the browser (owner decision 2026-08-14, same
+approach as Yahoo). The SESSION for that is here; the lineup and add/drop
+gestures are NOT, because they cannot be reconned yet: the league is
+`pre_draft` and every roster holds 0 players, so the controls that would be
+automated do not exist on the page. Building them from guesswork is exactly how
+the Yahoo swapper benched the wrong player, so they wait for a real roster.
 
 Layering (docs/data-architecture.md): raw + fantasy-data. Every fetch goes
 through `wes_http`; every parser below it is PURE and takes already-fetched
 payloads, so the translation is testable with no network at all.
 """
+import os
 import time
 
 import wes_http
 import wes_nfl
 
 BASE = "https://api.sleeper.app/v1"
+WEB = "https://sleeper.com"
+
+# The browser profile that holds the Sleeper login. Separate from the Yahoo one
+# so a re-login on either platform cannot disturb the other. PC-local, never the
+# repo: it contains real session cookies.
+PROFILE_DIR = os.environ.get(
+    "WES_SLEEPER_PROFILE_DIR",
+    os.path.join(os.path.expanduser("~"), "wes-pc", "sleeper_profile"))
+# Visible by default, like the Yahoo session: the one-time login is interactive,
+# and a headless window the owner cannot see is a bad place to discover that a
+# session expired.
+HEADLESS = os.environ.get("WES_SLEEPER_HEADLESS", "0") == "1"
+BROWSER_CHANNEL = os.environ.get("WES_SLEEPER_BROWSER_CHANNEL", "chrome")
 
 # League metadata changes rarely; the player dump changes ~daily and Sleeper's
 # docs ask callers not to pull it more than once a day (it is 14MB).
@@ -351,3 +368,75 @@ def find_roster_id(league_id, username, _get_fn=None):
         return None
     return next((r.get("roster_id") for r in all_rosters
                  if str(r.get("owner_id")) == str(uid)), None)
+
+
+# --- browser session (writes, #039) -----------------------------------------
+# Sleeper's public API is read-only, so anything that CHANGES a team has to go
+# through the web app. Mirrors wes_yahoo._Session deliberately: same persistent
+# -profile trick, same automation-tell stripping, same context-manager shape, so
+# there is one pattern to understand rather than two.
+class _Session:
+    """A launched persistent browser context holding the Sleeper login.
+
+        with _Session() as page:
+            page.goto(...)
+    """
+
+    def __init__(self, headless=None):
+        self.headless = HEADLESS if headless is None else headless
+        self._pw = None
+        self._ctx = None
+
+    def __enter__(self):
+        from playwright.sync_api import sync_playwright
+        os.makedirs(PROFILE_DIR, exist_ok=True)
+        self._pw = sync_playwright().start()
+        launch = dict(
+            headless=self.headless,
+            args=["--disable-blink-features=AutomationControlled"],
+            ignore_default_args=["--enable-automation"],
+        )
+        try:
+            self._ctx = self._pw.chromium.launch_persistent_context(
+                PROFILE_DIR, channel=BROWSER_CHANNEL or None, **launch)
+        except Exception:  # noqa: BLE001 — no Chrome/Edge: bundled Chromium
+            self._ctx = self._pw.chromium.launch_persistent_context(
+                PROFILE_DIR, **launch)
+        return self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
+
+    def __exit__(self, *exc):
+        try:
+            if self._ctx:
+                self._ctx.close()
+        finally:
+            if self._pw:
+                self._pw.stop()
+        return False
+
+
+def _is_login_wall(url, body):
+    """Sleeper bounces a signed-out request to `/?redirect=...&login=` rather
+    than showing an error, so a scrape of a logged-out session returns a
+    perfectly valid page about something else entirely. Detect it explicitly —
+    silently parsing the marketing page would look like an empty roster."""
+    return "login=" in (url or "") or "redirect=" in (url or "") \
+        or "LOG IN" in (body or "")
+
+
+def logged_in(league_id, _session_cls=None):
+    """Is the stored profile still signed in? (bool, detail).
+
+    Never raises: this is the check the owner runs to find out WHY something
+    else failed, so it has to survive the failure it is diagnosing."""
+    try:
+        with (_session_cls or _Session)() as page:
+            page.goto(f"{WEB}/leagues/{league_id}/team",
+                      wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(4000)
+            body = " ".join((page.inner_text("body") or "").split())
+            if _is_login_wall(page.url, body):
+                return False, ("Sleeper bounced to the login page — log in "
+                               "once in the browser profile (see #039).")
+            return True, f"signed in; team page loaded ({len(body)} chars)"
+    except Exception as e:  # noqa: BLE001
+        return False, f"couldn't check the Sleeper session: {e}"

@@ -92,6 +92,33 @@ Worth weighing against the fact that this is explicitly a **for-fun league** —
 the same reasoning that made `nfl.l.957011` the auto soak target applies here,
 so the risk appetite is high. The constraint is capability, not caution.
 
+## Write path: BROWSER AUTOMATION (owner decision, 2026-08-14)
+
+Playwright, as with Yahoo — not the internal GraphQL. Recon confirmed the shape:
+
+- `sleeper.com/leagues/<id>` and `/team` **bounce a signed-out request to
+  `/?redirect=...&login=`** rather than erroring. That matters more than it
+  sounds: a logged-out scrape returns a perfectly valid page *about something
+  else*, which would parse as an empty roster. `_is_login_wall` detects it
+  explicitly.
+- The **draft room is publicly viewable** without login (it already renders
+  "12-team PPR Snake, 15 Rounds, 10 Min Timer" and the full pick grid), though
+  joining a draft needs an account.
+
+Built: `_Session` (its own persistent profile, separate from Yahoo's so a
+re-login on either cannot disturb the other), `logged_in()`, and
+`pc/sleeper_login.py` for the one-time interactive sign-in. Verified against the
+real signed-out profile: correctly reports not-signed-in.
+
+**The gestures themselves are NOT built, and cannot be yet.** The league is
+`pre_draft` with 0 players on every roster, so the lineup and add/drop controls
+do not exist on the page to recon. Writing them from guesswork is precisely how
+the Yahoo swapper benched the wrong player (#029) — that recon waits for a real
+roster.
+
+**BLOCKED ON THE OWNER:** sign in once via `pc/sleeper_login.py`, or the session
+holds nothing and every write path stays untestable.
+
 ## Remaining work
 
 - [ ] **Platform dispatch.** `teams.yaml` gains `platform: yahoo|sleeper`, and

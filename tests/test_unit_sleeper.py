@@ -273,3 +273,33 @@ class TestScoringGapsFoundLive:
         Silently ignoring it would hide a known mispricing; it stays visible
         until there's data behind it."""
         assert "ff" in sl.parse_scoring({"ff": 1.0})["unknown"]
+
+
+class TestLoginWallDetection:
+    """Sleeper bounces a signed-out request to a marketing page instead of
+    erroring, so a logged-out scrape returns a valid page about something else.
+    Detecting that explicitly is what stops it looking like an empty roster."""
+
+    def test_redirect_url_is_a_login_wall(self):
+        assert sl._is_login_wall(
+            "https://sleeper.com/?redirect=%2Fleagues%2F1%2Fteam&login=", "")
+
+    def test_login_text_is_a_login_wall(self):
+        assert sl._is_login_wall("https://sleeper.com/leagues/1/team",
+                                 "SCORES FANTASY LOG IN SIGN UP")
+
+    def test_a_real_team_page_is_not(self):
+        assert not sl._is_login_wall("https://sleeper.com/leagues/1/team",
+                                     "My Team QB Josh Allen BN")
+
+    def test_logged_in_degrades_rather_than_raising(self):
+        """This is the check run to diagnose another failure, so it has to
+        survive the failure it is diagnosing."""
+        class Boom:
+            def __enter__(self):
+                raise RuntimeError("no browser")
+
+            def __exit__(self, *a):
+                return False
+        ok, detail = sl.logged_in("L", _session_cls=Boom)
+        assert ok is False and "couldn't check" in detail
