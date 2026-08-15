@@ -297,3 +297,73 @@ def replacement_levels(players, targets, flex, flex_pos, teams):
         else:
             out[pos] = vals[-1]            # shallower pool than slots
     return out
+
+
+# --- roster construction constraints (#039) ---------------------------------
+# PURE. Value over replacement says who is BEST; these say who FITS. A board
+# that only knows value will happily hand you three Bengals and four players on
+# the week-9 bye, and be arithmetically correct while losing you the week.
+#
+# Owner, 2026-08-15, arguing against a pre-ranked queue: "there is some decision
+# making around team fit, making sure bye weeks are staggered, not having too
+# many players from same team". A queue fixed in advance cannot express any of
+# that, because it cannot know what fell to you.
+def _ordinal(n):
+    """1 -> '1st'. Teens are the exception that catches naive implementations
+    (11th, not 11st)."""
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }".replace(" ", "")
+
+
+DEFAULT_MAX_PER_NFL_TEAM = 3
+BYE_PENALTY_PER_EXTRA = 1.25
+BYE_FREE_ALLOWANCE = 2
+
+
+def roster_fit(candidate, my_players, byes, max_per_team=DEFAULT_MAX_PER_NFL_TEAM,
+               bye_free=BYE_FREE_ALLOWANCE,
+               bye_penalty=BYE_PENALTY_PER_EXTRA):
+    """(allowed, penalty, reasons) for adding `candidate` to `my_players`.
+
+    Two different KINDS of rule, deliberately kept apart:
+
+    * **Same-team stacking is a hard cap.** It is countable, so it is a
+      constraint rather than a judgement (#038's distinction) — at the cap the
+      candidate is excluded outright, not merely discouraged, because "one more
+      Bengal" is never a matter of degree once the correlation risk is taken.
+    * **Bye clustering is a soft penalty.** Some overlap is unavoidable and
+      harmless; the harm scales with how many players already share the week.
+      A hard rule here would refuse good players for a cost that is real but
+      small.
+
+    Penalties are in the same units as value-over-replacement, so they trade off
+    against it honestly, and every one comes back with a REASON so the
+    recommendation can explain itself rather than just reordering silently.
+
+    An unknown bye contributes nothing — the honest reading of missing data, and
+    the alternative (treating it as some default week) would cluster a roster
+    onto a week nobody is actually on bye."""
+    reasons = []
+    team = (candidate.get("team") or "").strip()
+    pos = (candidate.get("positions") or [None])[0]
+
+    same_team = sum(1 for p in my_players
+                    if (p.get("team") or "").strip() == team and team)
+    if team and same_team >= max_per_team:
+        return False, 0.0, [f"already have {same_team} from {team}"]
+
+    penalty = 0.0
+    if team and same_team == max_per_team - 1:
+        penalty += 0.5
+        reasons.append(f"would be your {_ordinal(same_team + 1)} from {team}")
+
+    bye = byes.get(team) if team else None
+    if bye is not None:
+        shared = sum(1 for p in my_players
+                     if byes.get((p.get("team") or "").strip()) == bye)
+        if shared >= bye_free:
+            extra = shared - bye_free + 1
+            penalty += bye_penalty * extra
+            reasons.append(f"{shared + 1} players on the week-{bye} bye")
+    return True, round(penalty, 2), reasons

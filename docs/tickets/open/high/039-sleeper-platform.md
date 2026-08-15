@@ -294,11 +294,18 @@ with `roster_id` kept as a fallback for league drafts where it is populated.
 Players are ranked into a queue and Sleeper drafts from it when you are on the
 clock.
 
-**This should be the auto-draft design, not on-the-clock clicking.** Racing a
-timer means being right, awake and connected at an unpredictable moment;
-populating a queue means being right once, in advance, with Sleeper's own
-machinery doing the execution. It is strictly more robust, and it degrades
-well — a stale queue still drafts something sane.
+~~**This should be the auto-draft design, not on-the-clock clicking.**~~
+**OVERRULED by the owner, 2026-08-15, and correctly.** I argued the queue was
+"strictly more robust". That overstated it: robustness is not the only axis, and
+a pre-committed ordering *cannot express the things that make a pick good*.
+Owner: *"there is some decision making around team fit, making sure bye weeks
+are staggered, not having too many players from same team... I know it's hard
+but we do hard things."*
+
+A queue is fixed before the draft and cannot know what fell to you — it cannot
+say "I now need a bye that isn't week 9" or "that's my third Bengal". So:
+**live decision-making is the target; the queue is a SAFETY NET underneath it**,
+kept populated so a missed clock still drafts something sane.
 
 **3. The board works on live data.** Mid-draft, on the clock at slot 6 of 10,
 with the five already-drafted players correctly excluded:
@@ -313,3 +320,49 @@ Round 1, 5 picks in — you're ON THE CLOCK (slot 6 of 10).
 mock draft has no league — this run scored a Standard mock under the real
 league's PPR settings. Fine for a test, wrong in general; the scoring source
 needs to come from the draft when there is no league behind it.
+
+
+## Roster construction constraints (2026-08-15)
+
+Value over replacement says who is BEST. These say who FITS. A board that knows
+only value hands you three Bengals and four players on the week-9 bye, and is
+arithmetically right while losing you the week.
+
+Two different KINDS of rule, deliberately kept apart:
+
+- **Same-team stacking is a HARD cap** (`DEFAULT_MAX_PER_NFL_TEAM = 3`). It is
+  countable, so it is a constraint rather than a judgement (#038's distinction),
+  and at the cap the player is excluded outright — "one more Bengal" is not a
+  matter of degree once the correlation risk is taken.
+- **Bye clustering is a SOFT penalty**, growing with the pile-up. Some overlap
+  is unavoidable and harmless; a hard rule would refuse good players for a small
+  real cost.
+
+Penalties are denominated in value-over-replacement, so they trade against it
+honestly, and each returns a REASON so a pick can explain itself.
+
+**Bye weeks had to be derived.** No platform we read supplies one — Sleeper's
+player object has 40-odd fields and none is the bye. `pc/wes_schedule.py` gets
+them from nflverse's schedules release: a bye is the regular-season week a team
+does not appear in. Derived rather than looked up, so it survives the league
+changing the number of weeks. A team with no missing week is OMITTED, never
+defaulted — an unknown bye must not read as "no bye", or a board would stack a
+whole roster onto one week believing it had staggered them.
+
+Verified against the completed mock's slot-6 roster (15 real players, which had
+3 on the week-7 bye and 3 on week-11):
+
+```
+Samuel Womack (NYJ): -1.75; would be your 3rd from NYJ; 3 players on the week-13 bye
+Geno Stone    (BUF): -2.5;  4 players on the week-7 bye
+```
+
+**Also harvested from the player dump, unused so far but relevant to #036:**
+`depth_chart_order`, `depth_chart_position` (the depth-chart data #036 wanted,
+sitting in a feed we already fetch) and `search_rank` (Sleeper's own consensus
+ranking — a free market signal).
+
+**Still to do for live drafting:** the pick submission itself. The mock
+completed (150 CPU picks) before its controls could be reconned, and
+`.draft-button` only exists while a draft runs — so that needs another mock.
+Note the confirm-dialog lesson applies: expect a modal after the click.

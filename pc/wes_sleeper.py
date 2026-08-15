@@ -566,9 +566,20 @@ def draft_board(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     targets, flex, flex_pos = wes_draft.targets_from_slots(slots)
 
     have = {}
+    my_players = []
     for pid in mine:
-        for pos in (index.get(pid) or {}).get("positions") or []:
+        info = index.get(pid) or {}
+        my_players.append({"team": info.get("team"),
+                           "positions": info.get("positions") or []})
+        for pos in info.get("positions") or []:
             have[pos] = have.get(pos, 0) + 1
+
+    # Bye weeks come from the SCHEDULE — no fantasy platform we read supplies
+    # one. Degrades to {} (unknown), never to "no bye".
+    import wes_schedule
+    byes = wes_schedule.bye_weeks((d.get("season")
+                                   or (league(league_id, _get_fn) or {})
+                                   .get("season") or ""))
 
     # Value the AVAILABLE players by joining Sleeper ids to the ESPN pool on
     # espn_id — an exact join, not a name match.
@@ -595,13 +606,24 @@ def draft_board(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     # the top eight of this very board, because a quarterback out-scores a back
     # while being far easier to replace. Then add the roster-need bump on top.
     repl = wes_draft.replacement_levels(board, targets, flex, flex_pos, teams)
+    fitted = []
     for p in board:
         pos = (p["positions"] or [None])[0]
+        # Value says who is BEST; fit says who belongs on THIS roster. A board
+        # that knows only value hands you three Bengals and four players on the
+        # week-9 bye, and is arithmetically right while losing you the week.
+        allowed, penalty, why = wes_draft.roster_fit(p, my_players, byes)
+        if not allowed:
+            continue                       # hard cap: excluded, not discouraged
         p["vor"] = round(p["value"] - repl.get(pos, 0.0), 2)
         gap = max(0, targets.get(pos, 0) - have.get(pos, 0))
         p["need_bump"] = 2.0 * gap if gap else (
             0.5 if (pos in flex_pos and flex) else 0.0)
-        p["adj_value"] = round(p["vor"] + p["need_bump"], 2)
+        p["fit_penalty"] = penalty
+        p["fit_reasons"] = why
+        p["adj_value"] = round(p["vor"] + p["need_bump"] - penalty, 2)
+        fitted.append(p)
+    board = fitted or board
     board.sort(key=lambda x: x["adj_value"], reverse=True)
 
     when = "you're ON THE CLOCK" if wait == 0 else f"{wait} picks until your turn"
@@ -611,7 +633,9 @@ def draft_board(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     for i, p in enumerate(board[:limit], 1):
         pos = "/".join(p["positions"] or []) or "?"
         need = f" +{p['need_bump']:g} need" if p["need_bump"] else ""
+        fit = ("; ".join(p.get("fit_reasons") or []))
+        fit = f" [-{p['fit_penalty']:g}: {fit}]" if fit else ""
         lines.append(f"  {i}. {p['name']} ({pos}, {p['team']}) — "
                      f"{p['vor']:g} over replacement "
-                     f"({p['value']:g} pts/g){need}")
+                     f"({p['value']:g} pts/g){need}{fit}")
     return "\n".join(lines)

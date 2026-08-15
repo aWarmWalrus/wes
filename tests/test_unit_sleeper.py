@@ -407,3 +407,54 @@ class TestDraftPickIdentity:
         except OSError:
             got = None
         assert got in (set(), None)
+
+
+class TestByeWeeks:
+    """Bye weeks come from the SCHEDULE — no fantasy platform we read supplies
+    one. Sleeper's player object has 40-odd fields and none is the bye."""
+
+    ROWS = [
+        {"season": "2026", "game_type": "REG", "week": "1",
+         "home_team": "SF", "away_team": "SEA"},
+        {"season": "2026", "game_type": "REG", "week": "2",
+         "home_team": "SEA", "away_team": "SF"},
+        {"season": "2026", "game_type": "REG", "week": "3",
+         "home_team": "SF", "away_team": "SEA"},
+        # SEA sits out week 4; SF plays someone else.
+        {"season": "2026", "game_type": "REG", "week": "4",
+         "home_team": "SF", "away_team": "KC"},
+    ]
+
+    def _byes(self, weeks=range(1, 5)):
+        import wes_schedule
+        return wes_schedule.parse_byes(self.ROWS, "2026", weeks=weeks)
+
+    def test_the_missing_week_is_the_bye(self):
+        assert self._byes()["SEA"] == 4
+
+    def test_a_team_playing_every_week_has_no_bye_entry(self):
+        """Omitted rather than guessed. Fantasy code treats a missing bye as
+        UNKNOWN; inventing week 0 would read as 'never on bye'."""
+        assert "SF" not in self._byes()
+
+    def test_only_regular_season_games_count(self):
+        """Preseason and playoffs would both invent phantom byes for teams
+        simply not playing then."""
+        import wes_schedule
+        rows = self.ROWS + [{"season": "2026", "game_type": "POST",
+                             "week": "4", "home_team": "SEA",
+                             "away_team": "KC"}]
+        assert wes_schedule.parse_byes(rows, "2026", weeks=range(1, 5))["SEA"] == 4
+
+    def test_other_seasons_are_ignored(self):
+        import wes_schedule
+        rows = self.ROWS + [{"season": "2025", "game_type": "REG", "week": "4",
+                             "home_team": "SEA", "away_team": "KC"}]
+        assert wes_schedule.parse_byes(rows, "2026", weeks=range(1, 5))["SEA"] == 4
+
+    def test_malformed_weeks_do_not_crash(self):
+        import wes_schedule
+        rows = self.ROWS + [{"season": "2026", "game_type": "REG",
+                             "week": "N/A", "home_team": "SEA",
+                             "away_team": "KC"}]
+        assert wes_schedule.parse_byes(rows, "2026", weeks=range(1, 5))["SEA"] == 4

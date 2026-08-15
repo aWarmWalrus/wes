@@ -286,3 +286,65 @@ class TestReplacementLevels:
                 {"positions": ["QB"], "value": None}]
         repl = draft.replacement_levels(pool, {"QB": 1}, 0, set(), teams=1)
         assert repl["QB"] == 20.0
+
+
+class TestRosterFit:
+    """Roster construction (#039). Value over replacement says who is BEST;
+    this says who FITS. Owner, arguing against a pre-ranked queue: 'there is
+    some decision making around team fit, making sure bye weeks are staggered,
+    not having too many players from same team' — none of which a queue fixed
+    in advance can express, because it cannot know what fell to you."""
+
+    BYES = {"CIN": 10, "PHI": 10, "SF": 8, "KC": 6}
+
+    def test_same_team_cap_is_HARD_not_a_penalty(self):
+        """Countable, so it is a constraint rather than a judgement (#038). At
+        the cap the player is excluded outright — 'one more Bengal' is not a
+        matter of degree once you've taken the correlation risk."""
+        mine = [{"team": "CIN"}, {"team": "CIN"}, {"team": "CIN"}]
+        allowed, penalty, why = draft.roster_fit(
+            {"team": "CIN", "positions": ["WR"]}, mine, self.BYES)
+        assert allowed is False
+        assert "already have 3 from CIN" in why[0]
+
+    def test_approaching_the_cap_is_a_soft_nudge(self):
+        mine = [{"team": "CIN"}, {"team": "CIN"}]
+        allowed, penalty, why = draft.roster_fit(
+            {"team": "CIN", "positions": ["WR"]}, mine, {"CIN": 10})
+        assert allowed is True and penalty > 0
+        assert "3rd from CIN" in why[0]      # not "3th"
+
+    def test_bye_clustering_is_SOFT_not_hard(self):
+        """Some overlap is unavoidable and harmless; the harm scales. A hard
+        rule would refuse good players for a small real cost."""
+        mine = [{"team": "CIN"}, {"team": "PHI"}]      # both week 10
+        allowed, penalty, why = draft.roster_fit(
+            {"team": "PHI", "positions": ["RB"]}, mine, self.BYES)
+        assert allowed is True and penalty > 0
+        assert "week-10 bye" in why[0]
+
+    def test_penalty_grows_with_the_pile_up(self):
+        two = [{"team": "CIN"}, {"team": "PHI"}]
+        three = two + [{"team": "PHI"}]
+        _, p2, _ = draft.roster_fit({"team": "PHI"}, two, self.BYES)
+        _, p3, _ = draft.roster_fit({"team": "PHI"}, three, self.BYES)
+        assert p3 > p2
+
+    def test_a_staggered_roster_is_not_penalised(self):
+        mine = [{"team": "SF"}, {"team": "KC"}]        # weeks 8 and 6
+        allowed, penalty, why = draft.roster_fit(
+            {"team": "CIN", "positions": ["RB"]}, mine, self.BYES)
+        assert allowed is True and penalty == 0.0 and why == []
+
+    def test_an_unknown_bye_costs_nothing(self):
+        """The honest reading of missing data. Treating it as some default week
+        would cluster a roster onto a week nobody is actually on bye."""
+        mine = [{"team": "CIN"}, {"team": "PHI"}]
+        allowed, penalty, why = draft.roster_fit(
+            {"team": "ZZZ", "positions": ["RB"]}, mine, self.BYES)
+        assert allowed is True and penalty == 0.0
+
+    def test_reasons_come_back_so_the_pick_can_explain_itself(self):
+        mine = [{"team": "CIN"}, {"team": "CIN"}]
+        _, _, why = draft.roster_fit({"team": "CIN"}, mine, {"CIN": 10})
+        assert why and all(isinstance(r, str) for r in why)
