@@ -637,3 +637,65 @@ class TestVerificationIsPolled:
         except RuntimeError:
             pass
         assert calls["n"] == 6      # bounded, not infinite
+
+
+class TestProjectionJoin:
+    """Measured 2026-08-15: joining Sleeper players to ESPN projections by
+    espn_id ALONE reached 91 of 324 projections, and 13 of the top 25 projected
+    players — Gibbs, Nacua, Bijan Robinson, Chase — could never be drafted,
+    because Sleeper leaves espn_id null for a great many players.
+
+    A skipped player is not ranked low, he is ABSENT. That is why the drafts
+    looked plausible while the best players were simply missing."""
+
+    def test_name_fallback_recovers_a_player_with_no_espn_id(self):
+        index = {"9221": {"name": "Jahmyr Gibbs", "positions": ["RB"],
+                          "team": "DET", "espn_id": None}}
+        pool = [{"name": "Jahmyr Gibbs", "espn_id": "4429795",
+                 "positions": ["RB"], "gp": 17,
+                 "cats": {"RushYds": 1000.0, "RushTD": 10.0}}]
+        out = sl.draft_candidates(
+            "L", "D", 1, limit=5,
+            _get_fn=self._draft_get, _index_fn=lambda: index,
+            _pool_fn=lambda: pool)
+        assert not isinstance(out, str)
+        assert [c["name"] for c in out["candidates"]] == ["Jahmyr Gibbs"]
+
+    def test_the_id_join_still_wins_when_present(self):
+        """Exact beats fuzzy: a player WITH an id must join on it, not on a
+        name that might belong to someone else."""
+        index = {"1": {"name": "Displayed Differently", "positions": ["RB"],
+                       "team": "SF", "espn_id": "999"}}
+        pool = [{"name": "Real Name", "espn_id": "999", "positions": ["RB"],
+                 "gp": 17, "cats": {"RushYds": 500.0}}]
+        out = sl.draft_candidates(
+            "L", "D", 1, limit=5, _get_fn=self._draft_get,
+            _index_fn=lambda: index, _pool_fn=lambda: pool)
+        assert out["candidates"][0]["value"] > 0
+
+    def test_position_is_part_of_the_name_key(self):
+        """A shared surname must not cross-join a receiver onto some other
+        position's projection."""
+        index = {"1": {"name": "Same Name", "positions": ["WR"], "team": "SF",
+                       "espn_id": None}}
+        pool = [{"name": "Same Name", "espn_id": "5", "positions": ["LB"],
+                 "gp": 17, "cats": {"RecYds": 900.0}}]
+        out = sl.draft_candidates(
+            "L", "D", 1, limit=5, _get_fn=self._draft_get,
+            _index_fn=lambda: index, _pool_fn=lambda: pool)
+        # Nothing joinable, so the board DEGRADES with a message rather than
+        # returning an empty list — the cross-join is refused, not silently
+        # accepted, and the caller is told why.
+        assert isinstance(out, str) and "couldn't value" in out
+
+    @staticmethod
+    def _draft_get(path, **kw):
+        if path.endswith("/picks"):
+            return []
+        if "/league/" in path and path.endswith("/rosters"):
+            return []
+        if "/league/" in path:
+            return {"scoring_settings": {"rec": 1.0},
+                    "roster_positions": ["RB", "WR", "BN"], "season": "2026"}
+        return {"settings": {"teams": 10, "rounds": 15},
+                "slot_to_roster_id": {"1": 1}, "season": "2026"}

@@ -791,3 +791,67 @@ snapshot over time"): nflverse weekly stats and depth charts for #036, Sleeper's
 `search_rank` as a market sanity-check, and a staleness check in the startup
 checklist so a forgotten rebuild is visible before draft day rather than during
 it.
+
+
+## What the projection ACTUALLY is, and two defects the question exposed
+
+Owner: *"what data are we actually using to build the 2026 projection? what is
+the actual schema?"*
+
+**We do not build a projection. ESPN does.** We consume theirs and re-score it
+under each league's rules. Worth stating plainly: the model, its inputs and its
+assumptions are ESPN's and opaque to us. What we own is the mapping and the
+scoring.
+
+### Schema
+
+```
+snapshot            created_at, season, counts, players{}, projections[], byes{}
+
+projections[i]      {"name", "espn_id", "positions", "team": null, "gp": 17,
+                     "cats": {...}, "espn_applied_total", "projected": true}
+
+  cats <- ESPN statIds:  PassYds<-3  PassTD<-4   Int<-20
+                         RushYds<-24 RushTD<-25
+                         RecYds<-42  RecTD<-43   Rec<-53   FumLost<-72
+  dropped (volume, not scoring): 0 att, 1 cmp, 23 rush att, 58 targets
+
+players{id}         {"name", "positions", "team", "espn_id", "gsis_id",
+                     "yahoo_id", "status"}          <- Sleeper, identity only
+byes{team}          week int                        <- derived from nflverse
+```
+
+### Defect 1: most of the board was invisible
+
+The join was espn_id ONLY, and **Sleeper leaves `espn_id` null for a great many
+players**. Measured: **91 of 324 projections reachable**, and **13 of the top 25
+projected players could never be drafted** — Gibbs, Nacua, Bijan Robinson,
+Chase, Smith-Njigba, St. Brown.
+
+A skipped player is not ranked low, he is ABSENT. That is exactly why the
+autonomous draft looked fine: the names it took were plausible, and the better
+ones were never on the list to reject.
+
+Fixed with a fallback to normalised name + POSITION (position included so a
+shared surname cannot cross-join a receiver onto a linebacker's projection).
+**320 of 324 now join**; 229 recovered by name. The board went from repeating
+mid-tier names to opening with Gibbs, St. Brown, Breece Hall.
+
+### Defect 2: no kickers, no defenses
+
+The league starts a K and a DEF. The projection feed returns 32 of each — and
+`parse_projections` dropped them all, because kicking and defensive statIds are
+unmapped so their `cats` came back empty.
+
+Interim: fill those two positions from last season's ACTUALS. It mixes bases,
+which is normally the sort of quiet wrongness worth refusing — but replacement
+level is computed WITHIN a position, so a kicker is still measured against
+kickers, and K/DEF are low-variance and late-round, which is where the
+compromise costs least. **The real fix is mapping their statIds**, the same
+infer-and-validate exercise the offensive ones got.
+
+Pool is now 394: WR 125, RB 91, TE 59, QB 49, K 38, DEF 32.
+
+**The lesson worth keeping:** both defects were invisible in every output we had
+looked at. A board that silently omits players produces confident, plausible,
+wrong advice — and only a question about the schema surfaced it.

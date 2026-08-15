@@ -532,10 +532,29 @@ def _draft_pool():
     ends up confidently out of date."""
     import wes_snapshot
     proj = wes_snapshot.projections()      # snapshot first, live fetch if none
-    if proj:
-        return proj
-    pool, _failed = wes_nfl.pool_by_position()
-    return pool
+    if not proj:
+        pool, _failed = wes_nfl.pool_by_position()
+        return pool
+
+    # K and DEF are FETCHED in the projection feed (32 of each) but dropped by
+    # parse_projections, because kicking and defensive statIds are not mapped —
+    # so their `cats` come back empty. A league with K and DEF slots cannot
+    # draft either position from a projections-only pool.
+    #
+    # Interim: fill those two positions from last season's ACTUALS. It mixes
+    # bases, which is normally exactly the kind of quiet wrongness worth
+    # refusing — but replacement level is computed WITHIN a position, so a
+    # kicker is still compared against other kickers. K and DEF are also
+    # low-variance and late-round, which is the one place this compromise costs
+    # least. The real fix is mapping their statIds, same inference-and-validate
+    # exercise as the offensive ones (#039).
+    have = {(pl.get("positions") or [None])[0] for pl in proj}
+    missing = {"K", "DEF"} - have
+    if missing:
+        actuals, _failed = wes_nfl.pool_by_position()
+        proj = list(proj) + [a for a in actuals
+                             if (a.get("positions") or [None])[0] in missing]
+    return proj
 
 
 def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
@@ -631,13 +650,31 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     # moved on (Tyreek Hill on top at pick 146, 2026-08-15). Falls back to
     # actuals rather than emptying the board if projections are unavailable.
     pool = (_pool_fn or _draft_pool)()
+    # Join by espn_id FIRST — exact — then fall back to normalised name+position.
+    #
+    # The id join alone silently hid most of the board: Sleeper leaves `espn_id`
+    # null for a great many players, including Gibbs, Nacua, Bijan Robinson and
+    # Chase, so only 91 of 324 projections were reachable and 13 of the top 25
+    # projected players could never be drafted (measured 2026-08-15). A skipped
+    # player is not ranked low, he is ABSENT — which is why the drafts looked
+    # plausible while the best players were missing.
+    #
+    # Position is part of the name key so a shared surname cannot cross-join a
+    # receiver onto a linebacker's projection.
     by_espn = {str(p["espn_id"]): p for p in pool if p.get("espn_id")}
+    by_name = {}
+    for sp in pool:
+        key = (_norm_name(sp.get("name")), (sp.get("positions") or [None])[0])
+        by_name.setdefault(key, sp)
     board = []
     for pid, info in index.items():
         if pid in taken:
             continue
         espn = info.get("espn_id")
         stat = by_espn.get(espn) if espn else None
+        if stat is None:
+            stat = by_name.get((_norm_name(info.get("name")),
+                                (info.get("positions") or [None])[0]))
         if stat is None:
             continue                      # unvalued: never recommend a guess
         pos = (info.get("positions") or [None])[0]
