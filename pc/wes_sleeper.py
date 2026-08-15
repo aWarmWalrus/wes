@@ -815,3 +815,41 @@ def LIVE_WRITES_OK():
     already surfaces at GET /health."""
     import wes_execute
     return wes_execute.writes_enabled()
+
+
+def draft_turn(draft_id, roster_id, _get_fn=None):
+    """CHEAP "is it my turn?" — two small API reads, no valuation.
+
+    Split from `draft_candidates` because the loop has to poll FAST and that
+    function is expensive: it pulls the ESPN projection pool and the 12k-player
+    index every call. Polling with it meant each look cost seconds, so a draft
+    moving at ~4s per pick was over before the loop ever saw its own turn
+    (observed live 2026-08-15: 65 picks elapsed, 0 taken).
+
+    The expensive board is built ONLY once this says we are close."""
+    try:
+        d = draft(draft_id, _get_fn)
+        picks = _get(f"/draft/{draft_id}/picks", ttl=3.0, _get_fn=_get_fn)
+    except Exception as e:  # noqa: BLE001
+        return f"I couldn't reach Sleeper's draft API ({e})."
+    if not isinstance(d, dict):
+        return "Sleeper returned no draft for that id."
+    if d.get("status") == "complete":
+        return "That draft is over."
+    picks = picks if isinstance(picks, list) else []
+
+    settings = d.get("settings") or {}
+    teams = int(settings.get("teams") or 0)
+    rounds = int(settings.get("rounds") or 0)
+    reversal = int(settings.get("reversal_round") or 0)
+    slot_of = {str(v): int(k)
+               for k, v in (d.get("slot_to_roster_id") or {}).items()}
+    my_slot = slot_of.get(str(roster_id))
+    if not (teams and rounds and my_slot):
+        return "That draft hasn't published its order yet."
+
+    import wes_draft
+    made = len(picks)
+    wait = wes_draft.picks_until_turn(my_slot, teams, made, rounds, reversal)
+    return {"picks_made": made, "picks_until_turn": wait,
+            "on_the_clock": wait == 0, "my_slot": my_slot, "teams": teams}

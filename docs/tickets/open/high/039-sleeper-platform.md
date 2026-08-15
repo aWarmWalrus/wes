@@ -654,3 +654,40 @@ Two causes, both ours:
    verifying.** Post-write checks now bypass it.
 
 The wait is injectable so the suite does not actually sleep 15 seconds.
+
+
+## The draft loop (2026-08-15)
+
+`pc/sleeper_draft_run.py` — poll, decide, submit, verify. Ten rails, all tested
+without a live draft because the rails are the part that can cost a roster spot:
+
+- **Never picks twice for the same pick.** Turn is derived from `len(picks)`,
+  which only advances once a pick is COMMITTED, and `submit_pick` polls until it
+  sees ours committed. `_acted_on` is a cheaper second belt for a mid-pick
+  restart.
+- **Re-checks availability immediately before submitting.** The board was true a
+  moment ago; a moment is enough for someone to take him.
+- **One attempt per pick, no retry.** `submit_pick` already polled ~15s, so a
+  retry is a coin flip on whether the first landed late — and that coin flip is
+  a double pick. `cpu_autopick` covers the miss, which is the cheaper failure.
+- Stands down on: no candidates, no decision, writes off, submit failure.
+- Time-bounded, and survives a transient API blip.
+
+**A real design flaw, found only by running it live.** The first version polled
+with `draft_candidates`, which pulls the ESPN projection pool and the 12k-player
+index EVERY call. Each look cost seconds, so a draft moving at ~4s a pick was
+over before the loop ever saw its turn — 65 picks elapsed, 0 taken. Now split:
+`draft_turn` is two small reads and does no valuation, and the expensive board is
+built only once we are actually on the clock. Cheap to ask, expensive to answer,
+and only answer when it matters.
+
+**Still not proven end to end, and the reason is worth stating.** Two live runs
+took 0 picks even after the split — because **we never successfully claim a
+seat**, and an unclaimed team is a CPU team that autopicks in ~2 seconds. There
+was no turn to see. Claiming remains the one gesture that resists automation
+(`.header-button` clicks land and change nothing, dialogs handled or not).
+
+That is **not on the critical path**: claiming is a one-time human action, and in
+the real league the owner already holds roster_id 3. It only blocks building a
+realistic mock. To rehearse the loop, a human claims a seat in a mock first —
+about twenty seconds — and then it can run against a human-paced clock.
