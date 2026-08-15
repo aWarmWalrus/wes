@@ -201,6 +201,47 @@ real draft with real picks, and that is the only way to (a) see a live pick
 record shape — `/picks` has returned `[]` every time so far — and (b) recon the
 draft-room DOM for auto-submit, without waiting for ~Sept 6.
 
+## Mock draft created — and the draft room resists synthetic clicks (2026-08-15)
+
+Created a mock via `/draftboards` -> "NEW MOCK NFL DRAFT": draft
+`1394249532753080320`, private 10-team snake, 2 min/pick, 15 rounds,
+`cpu_autopick` on. The public API reads it, so the read path is confirmed
+against a draft we own.
+
+**Control shape (same trap as Yahoo).** Every label is a text div nested inside
+the element that carries the handler:
+
+```
+div.start-draft-text   <- the words; clicking this does NOTHING, silently
+  div.start-draft-button   <- the actual control
+div.claim-text  ->  div  ->  div.header-button   (inside div.draft-user-header)
+```
+
+**But driving them does not work.** Playwright's full actionability checks pass
+— element visible, stable, real bounding box (`x:35 y:88 148x62`) — the click
+dispatches, and the app does not react. Tried element-level clicks, page-level
+clicks with actionability enforced, and visible-only filtering (the layout
+renders 20 `.draft-user-header` nodes for 10 teams, so a hidden duplicate was a
+plausible culprit; it was not). Consistent with the app requiring trusted user
+events.
+
+**This is a real update to the "Playwright for writes" decision** and should not
+be papered over: if the draft room ignores synthetic clicks, the lineup page may
+too.
+
+**The reframe that keeps this cheap:** claiming a seat and starting a draft are
+ONE-TIME HUMAN actions that never needed automating. The only gesture that must
+work unattended is MAKING A PICK while on the clock — a different screen, with
+different controls, unreachable until a draft is actually running. So the
+lobby's resistance may simply not matter.
+
+**Next step is 30 seconds of owner time**: claim a seat and press START DRAFT at
+`https://sleeper.com/draft/nfl/1394249532753080320`. That unblocks three things
+at once — verifying pick parsing against real records (`/picks` has returned
+`[]` every time so far), reconning the on-the-clock pick control, and finding
+out whether THAT control takes a synthetic click, which is the question that
+actually decides auto-draft.
+
 ## Remaining work
 
 - [ ] **Platform dispatch.** `teams.yaml` gains `platform: yahoo|sleeper`, and
