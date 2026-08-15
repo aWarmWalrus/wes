@@ -103,7 +103,18 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             acted_on.add(pick_no)
             continue
 
-        pick, reason, source = (_decide_fn or wes_draft_agent.choose)(cands)
+        # CONTEXT. The `context` parameter existed from the start and was
+        # never populated, so the model saw eight players with numbers and no
+        # idea what was already on the roster — which is how it took nine
+        # running backs and no quarterback (2026-08-15).
+        ctx = {"round": board.get("round"),
+               "pick_number": pick_no,
+               "picks_until_next_turn": board.get("picks_until_turn"),
+               "starting_slots": board.get("starting_slots"),
+               "roster_so_far": board.get("roster"),
+               "still_unfilled": board.get("still_unfilled")}
+        pick, reason, source = (_decide_fn or wes_draft_agent.choose)(
+            cands, context=ctx)
         if pick is None:
             _log(f"pick {pick_no}: no decision — standing down")
             acted_on.add(pick_no)

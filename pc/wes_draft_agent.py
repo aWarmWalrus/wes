@@ -62,6 +62,11 @@ SYSTEM = (
     "You may disagree with the ordering — that is why you are here rather than "
     "a sort. Consider positional runs, scarcity, roster balance and bye-week "
     "spread. But you may ONLY choose from the shortlist, by player_key.\n"
+    "The context gives your CURRENT ROSTER, the starting slots you must fill, "
+    "and which of them are still empty. An unfilled starting slot is usually "
+    "worth more than another backup at a position you have already stacked: "
+    "you can only start so many of one position, and an empty slot scores "
+    "zero all season.\n"
     'Reply as JSON: {"player_key": "<key>", "reason": "<one short sentence>"}'
 )
 

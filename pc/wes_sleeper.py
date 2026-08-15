@@ -708,8 +708,21 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
             continue                       # hard cap: excluded, not discouraged
         p["vor"] = round(p["value"] - repl.get(pos, 0.0), 2)
         gap = max(0, targets.get(pos, 0) - have.get(pos, 0))
-        p["need_bump"] = 2.0 * gap if gap else (
-            0.5 if (pos in flex_pos and flex) else 0.0)
+        # Filling a gap is a bonus; OVER-filling has to be a cost. Without
+        # this the bump merely goes to zero once a position is satisfied, so a
+        # tenth running back still outranks a first quarterback whenever RBs
+        # have the higher raw VOR — which is exactly what happened: nine
+        # consecutive RBs and no QB, TE, K or DEF (2026-08-15, full mock).
+        #
+        # `startable` is how many of this position can actually take the field;
+        # one backup beyond that is reasonable, and every one after that is a
+        # bench flyer competing against a starting slot nobody has filled.
+        startable = targets.get(pos, 0) + (flex if pos in flex_pos else 0)
+        surplus = have.get(pos, 0) - (startable + 1)
+        p["need_bump"] = (2.0 * gap if gap else
+                          (0.5 if (pos in flex_pos and flex) else 0.0))
+        if surplus > 0:
+            p["need_bump"] -= 2.5 * surplus
         p["fit_penalty"] = penalty
         p["fit_reasons"] = why
         p["adj_value"] = round(p["vor"] + p["need_bump"] - penalty, 2)
@@ -717,11 +730,44 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     board = fitted or board
     board.sort(key=lambda x: x["adj_value"], reverse=True)
 
+    # The shortlist must offer a real CHOICE. Top-N by adj_value alone was
+    # positionally monotone — at picks 28, 48, 68 and 73 it was eight running
+    # backs and nothing else, and no quarterback appeared on any shortlist all
+    # draft. "The model decided" is not true when the engine has already
+    # narrowed the options to one position; it is the engine deciding, with a
+    # model rubber-stamping. So: the best few overall, PLUS the best available
+    # at every position, so roster construction is actually on the table.
+    best_overall = board[:max(1, limit - 3)]
+    seen = {id(c) for c in best_overall}
+    per_pos = []
+    for want in ("QB", "RB", "WR", "TE", "K", "DEF"):
+        pick = next((c for c in board
+                     if (c["positions"] or [None])[0] == want
+                     and id(c) not in seen), None)
+        if pick is not None:
+            per_pos.append(pick)
+            seen.add(id(pick))
+    board = sorted(best_overall + per_pos,
+                   key=lambda x: x["adj_value"], reverse=True)
+
     return {
         "round": made // teams + 1, "picks_made": made,
         "picks_until_turn": wait, "on_the_clock": wait == 0,
         "my_slot": my_slot, "teams": teams, "roster_size": len(mine),
-        "candidates": board[:limit],
+        # The ROSTER and what is still unfilled — the model cannot reason about
+        # roster construction from a shortlist alone, and passing only the
+        # shortlist is why it took nine running backs without noticing.
+        "roster": [{"name": (index.get(p) or {}).get("name"),
+                    "position": ((index.get(p) or {}).get("positions")
+                                 or [None])[0],
+                    "team": (index.get(p) or {}).get("team"),
+                    "bye": byes.get((index.get(p) or {}).get("team"))}
+                   for p in mine],
+        "starting_slots": list(slots),
+        "still_unfilled": {pos: max(0, n - have.get(pos, 0))
+                           for pos, n in targets.items()
+                           if max(0, n - have.get(pos, 0)) > 0},
+        "candidates": board,
     }
 
 

@@ -911,3 +911,59 @@ matching, which is worse but not broken.
 **Consequence for #036:** I had said Sleeper's `gsis_id` would join players to
 nflverse. It will not — Sleeper has it for **86/300** of its own top 300. That
 join has to go through this table too.
+
+
+## The first full draft, and why it was bad (2026-08-15)
+
+It drafted 11 picks unattended and the mechanism worked end to end. The roster
+did not:
+
+```
+  8 Nacua WR   13 St. Brown WR   28 Williams RB   33 Skattebo RB   48 Swift RB
+ 53 Tuten RB   68 Price RB       73 Pollard RB    88 Jones RB      93 Gainwell RB
+108 White RB   <- CPU took the rest: TE, DEF, QB, K
+```
+
+**Nine consecutive running backs, and never a QB, TE, K or DEF.** In a league
+starting QB/RB/RB/WR/WR/TE/FLEX/FLEX/K/DEF that cannot field a legal lineup.
+
+Owner, on being told the need model was at fault: *"but aren't we using the
+local model to make the decision dynamically using context engineering?"* — and
+that question found the real defect. Replaying the board at each of our picks:
+
+```
+pick 28  shortlist = {'RB': 8}     <- eight running backs, nothing else
+pick 48  shortlist = {'RB': 8}
+pick 68  shortlist = {'RB': 8}
+```
+
+**A quarterback never appeared on a single shortlist all draft.** The model
+could not have taken one. And `choose(cands)` was called with NO context — the
+parameter existed from the first commit and the loop never populated it — so it
+also had no idea it already held six running backs.
+
+So "the model decides" was not true. **The engine had already decided by
+narrowing the choice set to one position, and the model was rubber-stamping.**
+My "engine constrains, model chooses" design preserved the safety property and
+destroyed the usefulness — and the agreement numbers from the replay harness
+(87% / 80%) look very different in that light: they were not measuring judgment,
+they were measuring how often a model agrees with a list of one thing.
+
+### Three fixes, one per layer
+
+1. **Over-filling now COSTS.** The bump previously fell to zero once a position
+   was satisfied, so a tenth RB still beat a first QB whenever RBs had higher
+   raw VOR. Past `startable + 1` at a position, each extra body is penalised.
+2. **The shortlist is positionally DIVERSE** — the best few overall plus the
+   best available at every position, so roster construction is on the table at
+   all. Verified across the same replay: every pick now offers all six
+   positions, and the RB count falls from 6 to 1 as the roster fills.
+3. **Context is actually populated** — round, picks until next turn, the roster
+   so far with byes, the starting slots, and which are still empty. The prompt
+   now says what to do with it: an unfilled starting slot is usually worth more
+   than another backup at a position already stacked, because an empty slot
+   scores zero all season.
+
+**The lesson:** a shortlist is not a neutral input. Constraining the choice set
+IS deciding, and a model handed one option per turn is not exercising judgment
+no matter how good it is.

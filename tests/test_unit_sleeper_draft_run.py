@@ -47,7 +47,7 @@ class TestRails:
         monkeypatch.setattr(wes_sleeper, "drafted_player_ids", lambda d: set())
         calls = []
         loop.run("D", "L", 1, _state_fn=_states([_state(3), _state(1)]),
-                 _board_fn=_board(), _decide_fn=lambda c: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
                  _submit_fn=lambda *a: calls.append(a),
                  _sleep_fn=lambda _s: None)
         assert calls == []
@@ -58,7 +58,7 @@ class TestRails:
         calls = []
         out = loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
                        _board_fn=_board(),
-                       _decide_fn=lambda c: (CAND, "why", "model"),
+                       _decide_fn=lambda c, **kw: (CAND, "why", "model"),
                        _submit_fn=lambda *a: calls.append(a),
                        _sleep_fn=lambda _s: None)
         assert calls == [("D", "77", "Target Guy")]
@@ -74,7 +74,7 @@ class TestRails:
         loop.run("D", "L", 1,
                  # Same pick number three times, as a lagging API would report.
                  _state_fn=_states([_state(0), _state(0), _state(0)]),
-                 _board_fn=_board(), _decide_fn=lambda c: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
                  _submit_fn=lambda *a: calls.append(a),
                  _sleep_fn=lambda _s: None)
         assert len(calls) == 1
@@ -91,7 +91,7 @@ class TestRails:
             calls.append(a)
             raise RuntimeError("click failed")
         loop.run("D", "L", 1, _state_fn=_states([_state(0), _state(0)]),
-                 _board_fn=_board(), _decide_fn=lambda c: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
                  _submit_fn=boom, _sleep_fn=lambda _s: None)
         assert len(calls) == 1
 
@@ -104,7 +104,7 @@ class TestRails:
                             lambda d: {"77"})       # taken while we thought
         calls = []
         loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
-                 _board_fn=_board(), _decide_fn=lambda c: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
                  _submit_fn=lambda *a: calls.append(a),
                  _sleep_fn=lambda _s: None)
         assert calls == []
@@ -114,7 +114,7 @@ class TestRails:
         monkeypatch.setattr(wes_sleeper, "drafted_player_ids", lambda d: set())
         calls = []
         loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
-                 _board_fn=_board(), _decide_fn=lambda c: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
                  _submit_fn=lambda *a: calls.append(a),
                  _sleep_fn=lambda _s: None)
         assert calls == []
@@ -125,7 +125,7 @@ class TestRails:
         out = loop.run("D", "L", 1,
                        _state_fn=_states([_state(0), _state(0)]),
                        _board_fn=_board(cands=()),
-                       _decide_fn=lambda c: (CAND, "w", "model"),
+                       _decide_fn=lambda c, **kw: (CAND, "w", "model"),
                        _submit_fn=lambda *a: None, _sleep_fn=lambda _s: None)
         assert "0 pick" in out
 
@@ -142,7 +142,7 @@ class TestRails:
         calls = []
         loop.run("D", "L", 1,
                  _state_fn=_states(["I couldn't reach Sleeper", _state(0)]),
-                 _board_fn=_board(), _decide_fn=lambda c: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
                  _submit_fn=lambda *a: calls.append(a),
                  _sleep_fn=lambda _s: None)
         assert len(calls) == 1

@@ -143,3 +143,33 @@ class TestFencedOutput:
     def test_genuine_garbage_still_falls_back_with_an_honest_reason(self):
         _, reason, source = agent.choose(CANDS, _post_fn=lambda _b: "not json")
         assert source == "engine" and "no usable reply" in reason
+
+
+class TestContextReachesTheModel:
+    """The `context` parameter existed from the start and the loop never
+    populated it, so the model saw eight players with numbers and no idea what
+    was already on the roster. It took nine running backs and no quarterback
+    (2026-08-15, full mock) — and could not have known better."""
+
+    def test_context_is_actually_sent(self):
+        seen = {}
+
+        def capture(body):
+            seen["payload"] = json.loads(body)
+            return json.dumps({"player_key": "1", "reason": "ok"})
+        ctx = {"round": 4, "still_unfilled": {"QB": 1, "TE": 1},
+               "roster_so_far": [{"name": "A Back", "position": "RB"}]}
+        agent.choose(CANDS, context=ctx, _post_fn=capture)
+        sent = json.loads(seen["payload"]["messages"][1]["content"])
+        assert sent["context"]["still_unfilled"] == {"QB": 1, "TE": 1}
+        assert sent["context"]["roster_so_far"][0]["position"] == "RB"
+
+    def test_the_prompt_tells_the_model_what_to_do_with_it(self):
+        """Context nobody is told to use is decoration."""
+        assert "starting slot" in agent.SYSTEM.lower()
+        assert "current roster" in agent.SYSTEM.lower()
+
+    def test_absent_context_still_works(self):
+        pick, _, source = agent.choose(
+            CANDS, _post_fn=_model({"player_key": "2", "reason": "x"}))
+        assert pick["name"] == "Second" and source == "model"
