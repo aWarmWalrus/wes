@@ -553,7 +553,8 @@ class TestSubmitPick:
         page = self.FakePage([self.FakeRow("Target Guy", btn)])
         ok = sl.submit_pick("D", "77", "Target Guy",
                             _session_cls=self._session(page),
-                            _picks_fn=lambda d: [{"player_id": "77"}])
+                            _picks_fn=lambda d: [{"player_id": "77"}],
+                            _sleep_fn=lambda _s: None)
         assert ok is True and btn.clicked
 
     def test_a_click_that_drafted_someone_else_raises(self, monkeypatch):
@@ -565,10 +566,11 @@ class TestSubmitPick:
         try:
             sl.submit_pick("D", "77", "Target Guy",
                            _session_cls=self._session(page),
-                           _picks_fn=lambda d: [{"player_id": "99"}])
+                           _picks_fn=lambda d: [{"player_id": "99"}],
+                           _sleep_fn=lambda _s: None)
             assert False, "should have raised"
         except RuntimeError as e:
-            assert "not in the draft's picks" in str(e)
+            assert "never appeared in the draft's picks" in str(e)
 
     def test_writes_off_blocks_everything(self, monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: False)
@@ -583,3 +585,55 @@ class TestSubmitPick:
         assert sl._norm_name("Ja'Marr Chase") == sl._norm_name("JaMarr Chase")
         assert sl._norm_name("Marvin Harrison Jr.") == \
             sl._norm_name("Marvin Harrison Jr")
+
+
+class TestVerificationIsPolled:
+    """Found live, 2026-08-15: the first version read the picks ONCE, ~3s after
+    the click, and reported failure on a pick that had actually succeeded.
+
+    A false "did it work?" is worse than a slow yes — it invites a human into a
+    live draft to fix something that is not broken, and the obvious fix (pick
+    again) drafts twice."""
+
+    def _page_and_session(self):
+        btn = TestSubmitPick.FakeBtn("draft-button")
+        page = TestSubmitPick.FakePage([TestSubmitPick.FakeRow("Guy", btn)])
+
+        class S:
+            def __enter__(_s):
+                return page
+
+            def __exit__(_s, *a):
+                return False
+        return S
+
+    def test_a_pick_that_appears_late_still_verifies(self, monkeypatch):
+        """Sleeper takes a moment to commit; one eager read is not proof."""
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        calls = {"n": 0}
+
+        def picks(_d):
+            calls["n"] += 1
+            return [{"player_id": "77"}] if calls["n"] >= 3 else []
+        ok = sl.submit_pick("D", "77", "Guy",
+                            _session_cls=self._page_and_session(),
+                            _picks_fn=picks, _sleep_fn=lambda _s: None)
+        assert ok is True and calls["n"] == 3
+
+    def test_it_gives_up_rather_than_polling_forever(self, monkeypatch):
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        calls = {"n": 0}
+
+        def picks(_d):
+            calls["n"] += 1
+            return []
+        try:
+            sl.submit_pick("D", "77", "Guy",
+                           _session_cls=self._page_and_session(),
+                           _picks_fn=picks, _sleep_fn=lambda _s: None)
+            assert False, "should have raised"
+        except RuntimeError:
+            pass
+        assert calls["n"] == 6      # bounded, not infinite

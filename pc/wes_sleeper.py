@@ -421,7 +421,21 @@ class _Session:
         except Exception:  # noqa: BLE001 — no Chrome/Edge: bundled Chromium
             self._ctx = self._pw.chromium.launch_persistent_context(
                 PROFILE_DIR, **launch)
-        return self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
+        page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
+        # ACCEPT NATIVE DIALOGS. Sleeper confirms destructive actions with
+        # window.confirm ("Are you sure you want to start the draft? This action
+        # cannot be undone"), and Playwright AUTO-DISMISSES native dialogs
+        # unless a handler is registered. That is invisible: the click lands,
+        # nothing appears in the DOM (a native dialog is not in the DOM), and
+        # nothing happens — which was twice misread as "the app ignores
+        # synthetic clicks" (2026-08-15).
+        #
+        # Accepting is right for this module because nothing here clicks
+        # anything the caller has not already decided to do: every write is
+        # gated by the kill switch, and the guardrails live above this layer,
+        # not in a browser prompt.
+        page.on("dialog", lambda d: d.accept())
+        return page
 
     def __exit__(self, *exc):
         try:
@@ -689,7 +703,7 @@ def draft_board(league_id, draft_id, roster_id, limit=8, **kw):
 
 
 def submit_pick(draft_id, player_key, player_name, _session_cls=None,
-                _picks_fn=None):
+                _picks_fn=None, _sleep_fn=None):
     """Draft ONE player in the live draft room. Raises on any doubt.
 
     THE ID/NAME SEAM, and why this verifies afterwards. The engine reasons in
@@ -757,13 +771,33 @@ def submit_pick(draft_id, player_key, player_name, _session_cls=None,
         page.wait_for_timeout(3000)
 
     # Verify by ID — the only thing that closes the name-matching gap.
-    picks = (_picks_fn or draft_picks)(draft_id) or []
-    got = {str(p.get("player_id")) for p in picks if p.get("player_id")}
-    if str(player_key) not in got:
-        raise RuntimeError(
-            f"clicked {player_name!r} but {player_key} is not in the draft's "
-            f"picks — check the draft room before assuming either way")
-    return True
+    #
+    # POLLED, and UNCACHED. Two ways the first version got this wrong, both of
+    # which reported failure on a pick that had actually succeeded (2026-08-15,
+    # live): Sleeper takes a moment to commit, so a single read ~3s after the
+    # click can legitimately miss it; and `draft_picks` caches for 15s, so the
+    # verification could be served the pre-write answer — verifying against a
+    # cache is not verifying at all.
+    #
+    # A false "did it work?" is worse here than a slow yes: it invites a human
+    # into a live draft to fix something that is not broken, and the obvious
+    # fix (pick again) drafts twice.
+    for attempt in range(6):
+        if attempt:
+            (_sleep_fn or time.sleep)(2.5)
+        picks = (_picks_fn or _draft_picks_uncached)(draft_id) or []
+        got = {str(p.get("player_id")) for p in picks if p.get("player_id")}
+        if str(player_key) in got:
+            return True
+    raise RuntimeError(
+        f"clicked {player_name!r} but {player_key} never appeared in the "
+        f"draft's picks after ~15s — check the draft room before assuming "
+        f"either way")
+
+
+def _draft_picks_uncached(draft_id):
+    """Picks with the cache bypassed, for post-write verification only."""
+    return _get(f"/draft/{draft_id}/picks", ttl=0)
 
 
 def _norm_name(s):

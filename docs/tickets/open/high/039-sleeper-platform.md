@@ -600,3 +600,57 @@ falls back to actuals, so an ESPN outage degrades the board instead of emptying
 it. The two pools stay separate functions on purpose — "what will this player do
 this year" and "what has this player been doing" are different questions, and
 quietly swapping one for the other is how a board ends up confidently out of date.
+
+
+## THE DIALOG: a native confirm, auto-dismissed by Playwright (2026-08-15)
+
+Owner: *"you should be able to start it yourself, try again. it's just a dialog
+box that pops up."* Correct, and the cause is specific and worth writing down
+because it fooled me twice.
+
+**Sleeper confirms with `window.confirm`, and Playwright AUTO-DISMISSES native
+dialogs unless a handler is registered.** A native dialog is not in the DOM, so
+the symptom is: the click lands, nothing appears anywhere, nothing happens. That
+is indistinguishable from "the app ignores synthetic clicks" — which is exactly
+what I concluded, twice, having searched the DOM for a modal that could never
+have been there.
+
+```
+[dialog] confirm: 'Are you sure you want to start the draft?
+                   This action cannot be undone
+                   Drafting will commence immediately for everyone in your league'
+```
+
+`_Session` now registers `page.on("dialog", accept)`. Accepting is right for
+this module: nothing here clicks anything the caller has not already decided to
+do, every write is behind the kill switch, and the guardrails live above this
+layer rather than in a browser prompt.
+
+**Lesson worth keeping:** an element that "does nothing" deserves a check for a
+native dialog before it earns a verdict about the platform. The DOM-modal search
+was reasonable and found nothing, and finding nothing felt like evidence.
+
+## FIRST REAL PICK SUBMITTED (2026-08-15)
+
+Started a mock, was on the clock at 1.1, and `submit_pick` drafted for real:
+
+```
+pick 1  player 9221  Jahmyr Gibbs  slot 1
+```
+
+**And it reported failure.** The verification read the picks once, ~3s after the
+click, and Sleeper had not committed yet — so a pick that succeeded came back as
+*"check the draft room before assuming either way"*.
+
+That is the more dangerous direction of wrong. A false "did it work?" invites a
+human into a live draft to fix something that is not broken, and the obvious fix
+— pick again — drafts twice.
+
+Two causes, both ours:
+
+1. **One eager read.** Now polled, up to ~15s, bounded.
+2. **The read was CACHED.** `draft_picks` holds a 15s TTL, so the verification
+   could be served the pre-write answer. **Verifying against a cache is not
+   verifying.** Post-write checks now bypass it.
+
+The wait is injectable so the suite does not actually sleep 15 seconds.
