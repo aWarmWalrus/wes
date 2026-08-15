@@ -508,9 +508,19 @@ def drafted_player_ids(draft_id, _get_fn=None):
     return {str(p.get("player_id")) for p in picks if p.get("player_id")}
 
 
-def draft_board(league_id, draft_id, roster_id, limit=8, _get_fn=None,
-                _index_fn=None, _pool_fn=None):
-    """Live draft advice: who is gone, when I pick next, and who to take.
+def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
+                     _index_fn=None, _pool_fn=None):
+    """Live draft STATE + verified candidates, as STRUCTURED DATA.
+
+    Split from the prose version so the draft agent has something to reason
+    over. An agent handed a formatted string would have to parse back out
+    what this already knows — and per docs/data-architecture.md the decision
+    layer sits BELOW the model layer, so the data must exist without the
+    words. `draft_board` formats this.
+
+    Every candidate returned is verified available BY ID, legal under the
+    hard same-team cap, and actually valued — which is what makes it safe to
+    let a model choose freely among them (#039).
 
     Everything here is READ-ONLY and needs no login — the whole recommendation
     path works today even with the write session blocked by hCaptcha. With a
@@ -626,14 +636,27 @@ def draft_board(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     board = fitted or board
     board.sort(key=lambda x: x["adj_value"], reverse=True)
 
-    when = "you're ON THE CLOCK" if wait == 0 else f"{wait} picks until your turn"
-    head = (f"Round {made // teams + 1}, {made} picks in — {when} "
-            f"(slot {my_slot} of {teams}).")
-    lines = [head, "Best available:"]
-    for i, p in enumerate(board[:limit], 1):
+    return {
+        "round": made // teams + 1, "picks_made": made,
+        "picks_until_turn": wait, "on_the_clock": wait == 0,
+        "my_slot": my_slot, "teams": teams, "roster_size": len(mine),
+        "candidates": board[:limit],
+    }
+
+
+def draft_board(league_id, draft_id, roster_id, limit=8, **kw):
+    """The same state as prose, for a human or a chat reply."""
+    out = draft_candidates(league_id, draft_id, roster_id, limit=limit, **kw)
+    if isinstance(out, str):
+        return out
+    when = ("you're ON THE CLOCK" if out["on_the_clock"]
+            else f"{out['picks_until_turn']} picks until your turn")
+    lines = [f"Round {out['round']}, {out['picks_made']} picks in — {when} "
+             f"(slot {out['my_slot']} of {out['teams']}).", "Best available:"]
+    for i, p in enumerate(out["candidates"], 1):
         pos = "/".join(p["positions"] or []) or "?"
-        need = f" +{p['need_bump']:g} need" if p["need_bump"] else ""
-        fit = ("; ".join(p.get("fit_reasons") or []))
+        need = f" +{p['need_bump']:g} need" if p.get("need_bump") else ""
+        fit = "; ".join(p.get("fit_reasons") or [])
         fit = f" [-{p['fit_penalty']:g}: {fit}]" if fit else ""
         lines.append(f"  {i}. {p['name']} ({pos}, {p['team']}) — "
                      f"{p['vor']:g} over replacement "

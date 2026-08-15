@@ -366,3 +366,70 @@ ranking — a free market signal).
 completed (150 CPU picks) before its controls could be reconned, and
 `.draft-button` only exists while a draft runs — so that needs another mock.
 Note the confirm-dialog lesson applies: expect a modal after the click.
+
+
+## Agentic drafting (2026-08-15)
+
+Owner: *"I want this to be handled agentically."* Fair — what existed was an
+ALGORITHM. `draft_board` computed value over replacement, positional need and
+roster-fit penalties, then stopped at an ordered list. Nothing about it was
+reactive or judgment-driven.
+
+### The safety property had to change, and that is the interesting part
+
+#038's rule is **"the LLM may SUBTRACT, never ADD"** — it can veto a roster move
+but never originate one, so its worst case is inaction. **Drafting breaks that
+rule outright, because a pick is MANDATORY.** The clock expires, `cpu_autopick`
+takes it, and "do nothing" does not exist. A model that may only veto cannot
+draft at all.
+
+So the property is preserved a different way:
+
+```
+the ENGINE constrains the choice set   ->   the MODEL chooses within it
+```
+
+Every shortlisted candidate is already verified available BY ID, legal under the
+hard same-team cap, and actually valued. The model picks one of N and never
+names a player freely. That keeps what #038 is really protecting — **the
+model's output is a choice among verified options, not an unverified
+assertion** — the same reason `approve={drop,add}` is re-checked against the
+live recommendation rather than trusted.
+
+A returned key that is not on the shortlist is discarded in favour of the
+engine's top pick. **A hallucination cannot become a pick.** Nor can a stale
+board: if someone took that player while we were thinking, the key no longer
+matches and we fall back.
+
+### Built
+
+- `wes_sleeper.draft_candidates` — the state and shortlist as STRUCTURED data.
+  Split out of `draft_board` because an agent handed formatted prose would have
+  to parse back out what the code already knew, and #034 puts the decision layer
+  below the model layer. `draft_board` now formats this.
+- `wes_draft_agent.choose` — model picks one, validated against the shortlist,
+  falling back to the engine on a bad key, an unparseable reply, or no model at
+  all.
+- **`source` ("model" or "engine") is recorded, not hidden.** An agent whose
+  judgment silently degrades to a sort is one you cannot evaluate later; "was
+  the model right the twelve times it disagreed with the board?" has to stay
+  answerable. It also surfaces in the reply as "(engine fallback)" so a
+  degraded pick does not read as a considered one.
+- The shortlist sent to the model carries the fit concerns, so it can weigh
+  bye clustering and stacking rather than re-deriving what it cannot see.
+
+11 agent tests, all model-free — the injected call tests the SAFETY property
+rather than the model's taste.
+
+### Still missing before this drafts unattended
+
+1. **Pick submission.** `.draft-button` only exists while a draft runs, and the
+   mock completed (150 CPU picks) before it could be reconned. Expect a confirm
+   modal, per the START DRAFT lesson.
+2. **The loop.** Poll draft state, act inside `PREPARE_WITHIN_PICKS`, re-verify
+   availability immediately before submitting, confirm the pick landed by
+   reading `/picks` back — the same "verify after write" discipline as the
+   Yahoo executor.
+3. **Timing rails.** Decide well inside the clock and stand down if late:
+   `cpu_autopick` is a perfectly good fallback, and racing the timer risks a
+   half-submitted pick, which is worse than an autopick.
