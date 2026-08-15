@@ -31,7 +31,11 @@ class TestBuild:
         assert s["players"] == PLAYERS
         assert s["projections"] == PROJ
         assert s["byes"] == BYES
-        assert s["counts"] == {"players": 1, "projections": 1, "byes": 1}
+        # `crosswalk` joined the counts when the sleeper->espn bridge was added.
+        assert s["counts"]["players"] == 1
+        assert s["counts"]["projections"] == 1
+        assert s["counts"]["byes"] == 1
+        assert "crosswalk" in s["counts"]
 
     def test_the_write_is_atomic(self, tmp_path):
         """A half-written snapshot found at draft time is worse than none: the
@@ -120,3 +124,23 @@ class TestFallback:
         Serving that would value nobody; falling back at least tries."""
         monkeypatch.setattr(snap, "load", lambda *a, **k: {"projections": []})
         assert snap.projections(_fallback_fn=lambda: [{"n": 1}]) == [{"n": 1}]
+
+
+class TestCrosswalkInSnapshot:
+    """The sleeper->espn bridge is resolved ONCE at build time, not fuzzily per
+    lookup under a draft clock (#039)."""
+
+    def test_a_failed_crosswalk_does_not_fail_the_build(self, tmp_path,
+                                                        monkeypatch):
+        """The board falls back to name matching, which is worse but not
+        broken. Losing the whole snapshot over it would be worse still."""
+        import wes_players
+        monkeypatch.setattr(wes_players, "build",
+                            lambda **k: (_ for _ in ()).throw(OSError("down")))
+        s = _build(tmp_path)
+        assert s["counts"]["crosswalk"] == 0
+        assert s["players"] == PLAYERS          # the rest still built
+
+    def test_crosswalk_reads_empty_when_there_is_no_snapshot(self, monkeypatch):
+        monkeypatch.setattr(snap, "load", lambda *a, **k: None)
+        assert snap.crosswalk() == {}

@@ -55,12 +55,29 @@ def build(season=None, _players_fn=None, _proj_fn=None, _byes_fn=None,
     projections = (_proj_fn or wes_nfl.season_projections)(season)
     byes = (_byes_fn or wes_schedule.bye_weeks)(season)
 
+    # The CROSSWALK: sleeper_id -> espn_id, resolved once here rather than
+    # fuzzily per lookup under a draft clock. Sleeper stopped maintaining its
+    # own espn_id for newer players (106/300 of its top 300), which made 13 of
+    # the top 25 projected players invisible to the board (#039).
+    import wes_players
+    try:
+        table, xreport = wes_players.build(_sleeper_fn=lambda: players)
+        crosswalk = {r["sleeper_id"]: r["espn_id"]
+                     for r in table.values()
+                     if r.get("sleeper_id") and r.get("espn_id")}
+    except Exception:  # noqa: BLE001 — advisory; the board falls back to names
+        crosswalk, xreport = {}, {"error": "crosswalk build failed"}
+
     snap = {
         "created_at": now,
         "season": str(season),
         "counts": {"players": len(players or {}),
                    "projections": len(projections or []),
-                   "byes": len(byes or {})},
+                   "byes": len(byes or {}),
+                   "crosswalk": len(crosswalk)},
+        "crosswalk_report": {k: (len(v) if isinstance(v, list) else v)
+                             for k, v in (xreport or {}).items()},
+        "crosswalk": crosswalk,
         "players": players or {},
         "projections": projections or [],
         "byes": byes or {},
@@ -141,6 +158,13 @@ def byes(_fallback_fn=None):
         __import__("wes_nfl")._default_season())
 
 
+def crosswalk(_fallback=None):
+    """{sleeper_id: espn_id}. Empty when there is no snapshot — the board then
+    falls back to name matching, which is worse but not broken."""
+    snap = load()
+    return (snap or {}).get("crosswalk") or (_fallback or {})
+
+
 def describe(snap=None):
     """One human-readable line per fact. What you read before trusting it."""
     snap = snap if snap is not None else load()
@@ -157,6 +181,7 @@ def describe(snap=None):
             f"  players     {c.get('players')}\n"
             f"  projections {c.get('projections')}\n"
             f"  byes        {c.get('byes')} teams\n"
+            f"  crosswalk   {c.get('crosswalk')} sleeper->espn\n"
             f"  path        {SNAPSHOT_PATH}")
 
 

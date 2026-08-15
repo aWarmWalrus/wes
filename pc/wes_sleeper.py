@@ -213,6 +213,10 @@ def parse_players(payload):
             "espn_id": str(p["espn_id"]) if p.get("espn_id") else None,
             "gsis_id": p.get("gsis_id"),
             "yahoo_id": str(p["yahoo_id"]) if p.get("yahoo_id") else None,
+            # Carried for the CROSSWALK, not for fantasy: birth date is the
+            # strongest disambiguator when two players share a name and
+            # position, and dropping it left 31 such pairs unresolvable (#039).
+            "birth_date": p.get("birth_date") or "",
             "status": p.get("injury_status") or "",
         }
     return out
@@ -625,6 +629,7 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
 
     import wes_snapshot
     index = (_index_fn or wes_snapshot.players)()
+    _xwalk = wes_snapshot.crosswalk()
     scoring = league_scoring(league_id, _get_fn)
     slots = league_slots(league_id, _get_fn)
     targets, flex, flex_pos = wes_draft.targets_from_slots(slots)
@@ -670,8 +675,10 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     for pid, info in index.items():
         if pid in taken:
             continue
-        espn = info.get("espn_id")
-        stat = by_espn.get(espn) if espn else None
+        # espn_id from Sleeper, else from the crosswalk, else name+position.
+        # The crosswalk is the one that actually covers modern players.
+        espn = info.get("espn_id") or _xwalk.get(str(pid))
+        stat = by_espn.get(str(espn)) if espn else None
         if stat is None:
             stat = by_name.get((_norm_name(info.get("name")),
                                 (info.get("positions") or [None])[0]))

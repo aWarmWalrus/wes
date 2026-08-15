@@ -855,3 +855,59 @@ Pool is now 394: WR 125, RB 91, TE 59, QB 49, K 38, DEF 32.
 **The lesson worth keeping:** both defects were invisible in every output we had
 looked at. A board that silently omits players produces confident, plausible,
 wrong advice — and only a question about the schema surfaced it.
+
+
+## A canonical player table (2026-08-15)
+
+Owner: *"can we build our own player id system... with columns to help map to
+other systems' player_ids?"* Yes — and checking first showed **most of it is
+already maintained by someone else**, which changed what we had to build.
+
+**nflverse maintains what Sleeper abandoned.** Its `players` release carries
+`espn_id` for **3993/4033** recent players and `gsis_id` for **4033/4033**, plus
+`pfr_id`, `pff_id`, `otc_id`, `smart_id`. What it does NOT carry is
+`sleeper_id`. So the one bridge nobody publishes is **Sleeper → everything
+else**, and that is all `pc/wes_players.py` builds.
+
+### The design point
+
+Identity is resolved **once, at build time**, into a durable table — not fuzzily,
+per-lookup, under a draft clock. A name match made here can be inspected,
+corrected and reused; a name match made at pick time is invisible and
+unrepeatable.
+
+Matching runs strongest-evidence-first, and a weaker rule never overrides a
+stronger one:
+
+```
+1. espn_id / gsis_id, where Sleeper actually has them   5692 matched
+2. name + position + BIRTH DATE                         2027 matched
+3. name + position, only when unambiguous BOTH ways      264 matched
+   ambiguous -> reported, never guessed                   10
+   sleeper-only (kept, not dropped)                     4236
+```
+
+**Ambiguity is reported rather than resolved.** A missing player costs a pick; a
+wrong one silently values a different human and nothing in the output says so.
+
+**Birth date earned its place immediately.** The first build had `by_dob: 0`
+because the slim Sleeper index dropped `birth_date`, so 2270 players fell
+through to the weakest rule and 31 pairs were unresolvable. Carrying it moved
+2027 of those onto name+position+DOB and cut ambiguities to 10.
+
+### Result
+
+```
+crosswalk   8949 sleeper->espn
+players the board can value by id: 358   (was 91)
+Jahmyr Gibbs   sleeper=9221 espn=4429795 gsis=00-0039139
+Ja'Marr Chase  sleeper=7564 espn=4362628 gsis=00-0036900
+```
+
+The crosswalk lives in the snapshot, so draft-time lookup is a dict hit. A
+failed crosswalk build does not fail the snapshot — the board falls back to name
+matching, which is worse but not broken.
+
+**Consequence for #036:** I had said Sleeper's `gsis_id` would join players to
+nflverse. It will not — Sleeper has it for **86/300** of its own top 300. That
+join has to go through this table too.
