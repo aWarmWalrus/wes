@@ -433,3 +433,44 @@ rather than the model's taste.
 3. **Timing rails.** Decide well inside the clock and stand down if late:
    `cpu_autopick` is a perfectly good fallback, and racing the timer risks a
    half-submitted pick, which is worse than an autopick.
+
+
+## The pick gesture, captured live (2026-08-15)
+
+Second mock (`1394383922141364224`), started by the owner. The live room:
+
+```html
+<div class="player-rank-item2 TE show-watchlist-action odd">
+  <div class="draft-button-wrapper">
+    <div class="draft-button disable"><svg/></div>   <- PER ROW; `disable` = not your turn
+  <div class="rank">114</div>
+  <div class="name col-border-right"><div class="name-wrapper">Brenton Strange…
+```
+
+Also present: a `Find player Ctrl + U` search input, `[class*=timer]` showing
+`02:00`, and `[class*=current-pick]` showing `4.2 02:00` — so the clock and the
+current pick are readable from the DOM as well as the API.
+
+**Every row has its own `.draft-button`.** "Click the draft button" would draft
+whoever happens to sit at the top of a re-sorting list — the Yahoo swap bug
+wearing a different hat. So `submit_pick` targets the ROW belonging to a named
+player and never a bare control.
+
+**THE ID/NAME SEAM.** The engine reasons in `player_id` — exact, and the id
+Sleeper hands us on every pick. **The draft room's DOM contains no player id
+anywhere.** So the click must be matched by NAME, and names are the ambiguous
+thing (suffixes, punctuation, shared names). That gap is closed the only honest
+way: read the pick back from the API and confirm the id that actually got
+drafted is the id we intended. `_norm_name` handles the ordinary cases
+("A.J. Brown" / "AJ Brown", "Ja'Marr" / "JaMarr", "Jr." / "Jr").
+
+`submit_pick` refuses rather than guessing when: the player is not listed, the
+button carries `disable` (not on the clock — clicking would do nothing and we
+would report a pick that never happened), or the verification does not find our
+id in the picks. It shares #029's kill switch rather than inventing a second
+one.
+
+**Not yet exercised against a live clock** — the button is disabled until it is
+your turn, and both mocks completed without one coming round while a script was
+watching. That is the remaining unknown, along with whether this click opens a
+confirm modal like START DRAFT did (the code assumes it might).

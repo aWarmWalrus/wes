@@ -458,3 +458,128 @@ class TestByeWeeks:
                              "week": "N/A", "home_team": "SEA",
                              "away_team": "KC"}]
         assert wes_schedule.parse_byes(rows, "2026", weeks=range(1, 5))["SEA"] == 4
+
+
+class TestSubmitPick:
+    """The draft-room write (#039). Every row has its own `.draft-button`, and
+    the DOM carries NO player id — so the click is matched by NAME and then
+    verified by ID. Same discipline as the Yahoo executor: never assume a click
+    did what it looked like."""
+
+    class FakeBtn:
+        def __init__(self, cls=""):
+            self.cls = cls
+            self.clicked = False
+
+        def get_attribute(self, _n):
+            return self.cls
+
+        def scroll_into_view_if_needed(self):
+            pass
+
+        def click(self):
+            self.clicked = True
+
+    class FakeRow:
+        def __init__(self, name, btn):
+            self.name, self.btn = name, btn
+
+        def query_selector(self, sel):
+            if "name-wrapper" in sel:
+                return type("N", (), {"inner_text": lambda _s: self.name})()
+            return self.btn
+
+    class FakePage:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def goto(self, *a, **k):
+            pass
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+        def evaluate(self, *a, **k):
+            return True
+
+        def query_selector_all(self, _sel):
+            return self.rows
+
+        def query_selector(self, _sel):
+            return None
+
+    def _session(self, page):
+        class S:
+            def __enter__(_s):
+                return page
+
+            def __exit__(_s, *a):
+                return False
+        return S
+
+    def test_refuses_when_the_player_is_not_listed(self, monkeypatch):
+        """Refusing beats clicking a different row — that is the Yahoo swap bug
+        wearing a different hat."""
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        page = self.FakePage([self.FakeRow("Someone Else", self.FakeBtn())])
+        try:
+            sl.submit_pick("D", "1", "Target Guy",
+                           _session_cls=self._session(page))
+            assert False, "should have refused"
+        except RuntimeError as e:
+            assert "not in the draft room" in str(e)
+
+    def test_refuses_when_the_button_is_disabled(self, monkeypatch):
+        """`disable` means not on the clock. Clicking anyway would do nothing
+        and we would report a pick that never happened."""
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        btn = self.FakeBtn("draft-button disable")
+        page = self.FakePage([self.FakeRow("Target Guy", btn)])
+        try:
+            sl.submit_pick("D", "1", "Target Guy",
+                           _session_cls=self._session(page))
+            assert False, "should have refused"
+        except RuntimeError as e:
+            assert "disabled" in str(e) and not btn.clicked
+
+    def test_verifies_the_pick_by_ID_not_by_the_click(self, monkeypatch):
+        """The name matched and the click landed, but the id that actually got
+        drafted is the only proof."""
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        btn = self.FakeBtn("draft-button")
+        page = self.FakePage([self.FakeRow("Target Guy", btn)])
+        ok = sl.submit_pick("D", "77", "Target Guy",
+                            _session_cls=self._session(page),
+                            _picks_fn=lambda d: [{"player_id": "77"}])
+        assert ok is True and btn.clicked
+
+    def test_a_click_that_drafted_someone_else_raises(self, monkeypatch):
+        """The whole reason verification exists: names are ambiguous, ids are
+        not."""
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        page = self.FakePage([self.FakeRow("Target Guy", self.FakeBtn())])
+        try:
+            sl.submit_pick("D", "77", "Target Guy",
+                           _session_cls=self._session(page),
+                           _picks_fn=lambda d: [{"player_id": "99"}])
+            assert False, "should have raised"
+        except RuntimeError as e:
+            assert "not in the draft's picks" in str(e)
+
+    def test_writes_off_blocks_everything(self, monkeypatch):
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: False)
+        try:
+            sl.submit_pick("D", "1", "X")
+            assert False, "should have refused"
+        except RuntimeError as e:
+            assert "writes are off" in str(e)
+
+    def test_name_normalisation_survives_real_punctuation(self):
+        assert sl._norm_name("A.J. Brown") == sl._norm_name("AJ Brown")
+        assert sl._norm_name("Ja'Marr Chase") == sl._norm_name("JaMarr Chase")
+        assert sl._norm_name("Marvin Harrison Jr.") == \
+            sl._norm_name("Marvin Harrison Jr")

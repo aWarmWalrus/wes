@@ -662,3 +662,98 @@ def draft_board(league_id, draft_id, roster_id, limit=8, **kw):
                      f"{p['vor']:g} over replacement "
                      f"({p['value']:g} pts/g){need}{fit}")
     return "\n".join(lines)
+
+
+def submit_pick(draft_id, player_key, player_name, _session_cls=None,
+                _picks_fn=None):
+    """Draft ONE player in the live draft room. Raises on any doubt.
+
+    THE ID/NAME SEAM, and why this verifies afterwards. The engine reasons in
+    `player_id` — exact, unambiguous, the id Sleeper itself hands us on every
+    pick. **But the draft room's DOM contains no player id anywhere**: a row is
+    `div.player-rank-item2` holding a `.name-wrapper` with a display name and a
+    per-row `.draft-button`. So the click has to be matched by NAME, and names
+    are the ambiguous thing (suffixes, punctuation, two players sharing one).
+
+    That gap is closed the only honest way — by reading the pick back from the
+    API and confirming the id that actually got drafted is the id we intended.
+    Same discipline as `_submit_lineup` and `_submit_add_drop`: never assume a
+    click did what it looked like.
+
+    Note EVERY row has its own `.draft-button`, so "click the draft button"
+    would draft whoever happens to sit at the top of a re-sorting list. That is
+    the Yahoo swap bug wearing a different hat, and it is why this targets the
+    ROW belonging to a named player and never a bare control.
+
+    NOT YET EXERCISED AGAINST A LIVE CLOCK — the button carries a `disable`
+    class until it is your turn, and the mock finished before one came round.
+    """
+    if not LIVE_WRITES_OK():
+        raise RuntimeError("Sleeper writes are off")
+
+    want = _norm_name(player_name)
+    with (_session_cls or _Session)() as page:
+        if not authenticate(page):
+            raise RuntimeError("no WES_SLEEPER_TOKEN — cannot reach the draft")
+        page.goto(f"{WEB}/draft/nfl/{draft_id}",
+                  wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(6000)
+
+        row = None
+        for r in page.query_selector_all(".player-rank-item2"):
+            nm = r.query_selector(".name-wrapper")
+            if nm and _norm_name((nm.inner_text() or "").split("\n")[0]) == want:
+                row = r
+                break
+        if row is None:
+            raise RuntimeError(
+                f"{player_name!r} is not in the draft room's available list — "
+                f"refusing to click a different row")
+
+        btn = row.query_selector(".draft-button")
+        if btn is None:
+            raise RuntimeError(f"no draft control on {player_name}'s row")
+        if "disable" in (btn.get_attribute("class") or ""):
+            raise RuntimeError(
+                "the draft button is disabled — not on the clock, so a click "
+                "would do nothing and we would report a pick that never was")
+        btn.scroll_into_view_if_needed()
+        page.wait_for_timeout(300)
+        btn.click()
+        page.wait_for_timeout(1500)
+
+        # START DRAFT opens a confirmation modal; assume this does too rather
+        # than rediscovering it the expensive way (2026-08-15).
+        for sel in ("button:has-text('Confirm')", "button:has-text('Draft')",
+                    "[class*='confirm'] button", "[class*='modal'] button"):
+            el = page.query_selector(sel)
+            if el and el.is_visible():
+                el.click()
+                break
+        page.wait_for_timeout(3000)
+
+    # Verify by ID — the only thing that closes the name-matching gap.
+    picks = (_picks_fn or draft_picks)(draft_id) or []
+    got = {str(p.get("player_id")) for p in picks if p.get("player_id")}
+    if str(player_key) not in got:
+        raise RuntimeError(
+            f"clicked {player_name!r} but {player_key} is not in the draft's "
+            f"picks — check the draft room before assuming either way")
+    return True
+
+
+def _norm_name(s):
+    """Loose name key: case, punctuation and suffixes removed, so 'A.J. Brown'
+    matches 'AJ Brown' and 'Marvin Harrison Jr.' matches 'Marvin Harrison Jr'."""
+    s = (s or "").lower()
+    for junk in (".", ",", "'", "-", " jr", " sr", " ii", " iii", " iv"):
+        s = s.replace(junk, "")
+    return " ".join(s.split())
+
+
+def LIVE_WRITES_OK():
+    """Sleeper writes share the fantasy kill switch rather than inventing a
+    second one — one switch to reason about, and #029's `fantasy_live_writes`
+    already surfaces at GET /health."""
+    import wes_execute
+    return wes_execute.writes_enabled()
