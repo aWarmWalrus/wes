@@ -1,0 +1,13 @@
+[Unit]
+# Seeds /etc/hosts with the .local names from hosts.yaml so STATICALLY linked
+# Go binaries (Grafana) can resolve them -- they have no cgo resolver and so
+# never consult NSS/mdns4_minimal. See pi/wes-mdns-hosts.sh for the full story.
+Description=WES: seed /etc/hosts from hosts.yaml mDNS names
+After=network-online.target avahi-daemon.service
+Wants=avahi-daemon.service
+
+[Service]
+Type=oneshot
+# System unit (needs root to write /etc/hosts), so $HOME is not the owner's.
+Environment=WES_REPO=/home/walrus/claude/wes
+ExecStart=/home/walrus/claude/wes/pi/wes-mdns-hosts.sh

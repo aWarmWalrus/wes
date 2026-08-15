@@ -1,0 +1,13 @@
+[Unit]
+Description=WES: refresh /etc/hosts mDNS entries (PC's DHCP lease flaps)
+
+[Timer]
+# Soon after boot, then every 5 minutes. The PC's Wi-Fi lease moves between
+# addresses, so a write-once entry would go stale silently -- which is the same
+# class of failure the mDNS name was adopted to avoid in the first place.
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
