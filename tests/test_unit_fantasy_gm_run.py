@@ -37,13 +37,17 @@ class TestRunAll:
         assert calls == ["A", "B"]
         assert ok is True
 
-    def test_both_the_lineup_and_roster_checks_run(self):
-        """#035: the scheduled job now does two things per team."""
+    def test_roster_runs_BEFORE_lineup(self):
+        """#035, order corrected 2026-08-14. Both checks run, and the ORDER is
+        load-bearing: a pickup lands on the BENCH, so optimizing the lineup
+        first leaves the player just acquired -- picked because he beats someone
+        already rostered -- benched until the next run, up to 24h later and
+        possibly through kickoff. The move gets made and then wasted."""
         seen = []
         run.run_all(self._teams({"name": "A", "autonomy": "auto"}),
                     lambda name: seen.append("lineup") or "ok",
                     lambda name: seen.append("roster") or "ok")
-        assert seen == ["lineup", "roster"]
+        assert seen == ["roster", "lineup"]
 
     def test_autonomy_is_case_insensitive(self):
         calls = []
@@ -79,6 +83,18 @@ class TestRunAll:
         ok = run.run_all(self._teams({"name": "A", "autonomy": "auto"}),
                          boom, lambda name: seen.append("roster") or "ok")
         assert seen == ["roster"]
+        assert ok is False
+
+    def test_a_failing_roster_check_does_not_skip_the_lineup_check(self):
+        """The mirror case, and the reason putting the IRREVERSIBLE step first
+        costs nothing: if the roster pass blows up, the lineup still gets set."""
+        seen = []
+
+        def boom(name):
+            raise RuntimeError("roster blew up")
+        ok = run.run_all(self._teams({"name": "A", "autonomy": "auto"}),
+                         lambda name: seen.append("lineup") or "ok", boom)
+        assert seen == ["lineup"]
         assert ok is False
 
     def test_all_teams_succeeding_is_ok_even_with_no_moves(self):

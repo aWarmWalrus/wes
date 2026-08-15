@@ -1145,3 +1145,28 @@ a test.
 Second-order effect worth knowing: after the model answers wrongly once, that
 wrong answer is in the conversation window and it stays consistent with it.
 Verified the fix on a clean channel; the poisoned window ages out on its own.
+
+## Roster before lineup — order is load-bearing (2026-08-14)
+
+Owner: *"we should probably do lineup changes after roster moves right? because
+if we pick someone up and drop someone else, we'll need to make sure that new
+player is added to the active lineup."*
+
+Correct, and the old order (lineup → roster) quietly wasted moves. A Yahoo
+pickup lands on the **bench**. Optimizing the lineup first means the player just
+acquired — chosen precisely because he beats someone already rostered — sits
+benched until the *next* scheduled run: up to 24h later, and on a Sunday pickup
+straight through kickoff. The system paid the irreversible cost of a drop and
+then didn't collect the benefit.
+
+`run_all` now runs **roster → lineup**. Two properties make that safe:
+
+- Nothing caches the Yahoo roster scrape (only `teams.yaml` is cached), so the
+  lineup pass re-reads and sees the new player in the same run.
+- `_submit_add_drop` already **verifies** after writing — it re-reads the roster
+  and raises unless the drop is gone and the add is present. So the lineup step
+  cannot run against a roster Yahoo hasn't acknowledged yet.
+
+Putting the irreversible step first costs nothing in robustness: each step has
+its own try/except, so a roster crash still leaves the lineup to be set. Both
+directions are now tested.

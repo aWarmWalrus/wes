@@ -39,9 +39,23 @@ def _report(label, name, out):
 
 
 def run_all(_teams_fn=None, _propose_fn=None, _roster_fn=None):
-    """Run the GM cycle for every propose/auto team: the LINEUP check, then the
-    ROSTER check. Returns True if every team's cycle completed without raising
+    """Run the GM cycle for every propose/auto team: the ROSTER check, then the
+    LINEUP check. Returns True if every team's cycle completed without raising
     (regardless of what it decided to do); False if any team's cycle errored.
+
+    **ROSTER FIRST, and the order is load-bearing** (owner, 2026-08-14). A
+    pickup lands on the BENCH, so optimizing the lineup before changing roster
+    membership means the player just acquired — chosen precisely because he is
+    better than someone on the roster — sits benched until the *next* scheduled
+    run, up to 24h later and possibly straight through kickoff. The move is made
+    and then wasted, which is worse than not making it.
+
+    Reversed, the lineup step re-scrapes the roster (nothing caches it) and so
+    sees the new player immediately, in the same run that acquired him.
+
+    A crash in the roster step still leaves the lineup step to run, so putting
+    the irreversible action first costs nothing in robustness (each step has its
+    own try/except below).
 
     Both checks now honour PER-ACTION autonomy (`wes_execute.autonomy_for`), so
     a team can run its lineups unattended while still asking before a drop —
@@ -66,7 +80,9 @@ def run_all(_teams_fn=None, _propose_fn=None, _roster_fn=None):
     ok = True
     for team in teams:
         name = team.get("name", "?")
-        for label, fn in (("lineup", propose), ("roster", roster)):
+        # Roster BEFORE lineup — see the docstring. A pickup lands on the bench,
+        # so the lineup pass has to run after it to actually start him.
+        for label, fn in (("roster", roster), ("lineup", propose)):
             stamp = time.strftime("%Y-%m-%d %H:%M:%S")
             try:
                 out = fn(name)
