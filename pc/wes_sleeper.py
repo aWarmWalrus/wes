@@ -509,7 +509,7 @@ def drafted_player_ids(draft_id, _get_fn=None):
 
 
 def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
-                     _index_fn=None, _pool_fn=None):
+                     _index_fn=None, _pool_fn=None, _picks=None):
     """Live draft STATE + verified candidates, as STRUCTURED DATA.
 
     Split from the prose version so the draft agent has something to reason
@@ -532,7 +532,11 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     import wes_draft
     try:
         d = draft(draft_id, _get_fn)
-        picks = draft_picks(draft_id, _get_fn)
+        # `_picks` lets a caller supply a HISTORICAL pick prefix, so the board
+        # can be reconstructed as it stood at an earlier moment. That is what
+        # makes a completed draft replayable — otherwise every question about
+        # "what would we have done at pick 37" needs a live draft to answer.
+        picks = _picks if _picks is not None else draft_picks(draft_id, _get_fn)
     except Exception as e:  # noqa: BLE001
         return f"I couldn't reach Sleeper's draft API ({e})."
     if not isinstance(d, dict):

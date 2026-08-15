@@ -474,3 +474,44 @@ one.
 your turn, and both mocks completed without one coming round while a script was
 watching. That is the remaining unknown, along with whether this click opens a
 confirm modal like START DRAFT did (the code assumes it might).
+
+
+## Replay harness — and what it says about the judgment layer (2026-08-15)
+
+`tests/draft_replay.py` rebuilds the board as it stood at each of our picks in a
+COMPLETED draft (via `draft_candidates(_picks=history)`) and runs every
+contender over the identical shortlist. Offline, repeatable, no live draft, no
+risk. The engine's own top pick is a contender on purpose, because the question
+worth answering is not "12b or Claude" but **"does LLM judgment beat the sort at
+all?"**
+
+Result over 15 picks of the completed mock:
+
+```
+local (gemma4:12b) agreed with the engine on 13/15 (87%)
+claude (haiku)     agreed with the engine on 12/15 (80%)
+```
+
+**The model choice barely matters, and that is the finding.** Read the reasons
+rather than the percentages: nearly every one is a restatement of the input —
+*"offers the highest value-over-replacement"*. Neither model is contributing
+judgment; both are rubber-stamping the sort. The judgment layer is not currently
+earning its cost, and swapping models would not change that.
+
+**And the harness surfaced something worse about the BOARD.** Tyreek Hill and
+George Kittle sit on top of our shortlist at picks 75, 86, 95, 106, 115, 126,
+135 and 146 — the CPU passed on them for over a hundred picks. Either we have
+found a market-wide inefficiency, or our valuations are wrong. It is the second:
+these are **2025 season aggregates**, and Sleeper's own rankings have moved on.
+This is #036 showing up as concrete bad advice rather than a theoretical gap:
+*a chooser cannot be better than the board it chooses from.*
+
+So the ordering is now clear. **Fix the valuations (#036) before tuning the
+chooser.** A better model on a stale board is a more articulate wrong answer.
+
+**One real bug came out of it too.** Every Claude call fell back with "model
+unavailable" — but Claude had answered perfectly well and wrapped its JSON in a
+markdown fence, which `json.loads` rejected. Ollama's `format=json` guarantees a
+bare object; the Anthropic API does not. `_strip_fence` handles it, and the
+fallback message now says "no usable reply" rather than claiming unavailability,
+because the original wording sent the diagnosis in the wrong direction entirely.

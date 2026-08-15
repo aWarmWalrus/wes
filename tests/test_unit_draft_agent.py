@@ -117,3 +117,29 @@ class TestDecide:
             _post_fn=_model({"player_key": "2", "reason": "WR run starting"}))
         assert "Second" in out and "WR run starting" in out
         assert "engine fallback" not in out
+
+
+class TestFencedOutput:
+    """Found by the replay harness, 2026-08-15. Ollama's format=json guarantees
+    a bare object; the Anthropic API does not, and Claude wraps its reply in a
+    markdown fence. Every Claude call parsed as garbage and was reported as
+    'model unavailable' — a misleading diagnosis, since it had answered fine."""
+
+    def test_a_fenced_reply_is_parsed(self):
+        fenced = '```json\n{"player_key": "2", "reason": "WR run"}\n```'
+        pick, reason, source = agent.choose(CANDS, _post_fn=lambda _b: fenced)
+        assert pick["name"] == "Second" and source == "model"
+
+    def test_a_bare_reply_still_works(self):
+        pick, _, source = agent.choose(
+            CANDS, _post_fn=_model({"player_key": "2", "reason": "x"}))
+        assert pick["name"] == "Second" and source == "model"
+
+    def test_a_fence_without_the_json_tag(self):
+        fenced = '```\n{"player_key": "3", "reason": "need TE"}\n```'
+        pick, _, source = agent.choose(CANDS, _post_fn=lambda _b: fenced)
+        assert pick["name"] == "Third" and source == "model"
+
+    def test_genuine_garbage_still_falls_back_with_an_honest_reason(self):
+        _, reason, source = agent.choose(CANDS, _post_fn=lambda _b: "not json")
+        assert source == "engine" and "no usable reply" in reason

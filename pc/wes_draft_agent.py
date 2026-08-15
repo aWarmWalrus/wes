@@ -79,6 +79,24 @@ def shortlist(league_id, draft_id, roster_id, limit=8, _board_fn=None):
     return out.get("candidates") or []
 
 
+def _strip_fence(raw):
+    """Unwrap a markdown code fence if the model added one.
+
+    Ollama's `format=json` guarantees a bare object; the Anthropic API does not,
+    and Claude wraps its reply in ```json ... ```. Without this every Claude
+    call parsed as garbage and was reported as "model unavailable" — a
+    misleading diagnosis, since the model had answered perfectly well
+    (found 2026-08-15 by the replay harness)."""
+    t = (raw or "").strip()
+    if not t.startswith("```"):
+        return t
+    t = t.split("```", 2)
+    body = t[1] if len(t) > 1 else ""
+    if body.startswith("json"):
+        body = body[4:]
+    return body.strip()
+
+
 def _ask_model(payload, _post_fn=None):
     """One structured call. Returns the parsed dict, or None on any failure —
     the caller falls back to the engine, so this must never raise."""
@@ -97,7 +115,7 @@ def _ask_model(payload, _post_fn=None):
                 headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=90) as r:
                 raw = json.load(r)["message"]["content"]
-        return json.loads(raw)
+        return json.loads(_strip_fence(raw))
     except Exception:  # noqa: BLE001 — a failed model call must fall back, not raise
         return None
 
@@ -123,7 +141,10 @@ def choose(candidates, context=None, _post_fn=None):
 
     got = _ask_model(payload, _post_fn=_post_fn)
     if not isinstance(got, dict):
-        return top, "model unavailable; took the board's top pick", "engine"
+        # Deliberately says "no usable reply", not "unavailable": the first
+        # version claimed unavailability for what was really an unparseable
+        # (fenced) answer, which sent the diagnosis in the wrong direction.
+        return top, "no usable reply from the model; took the board's top pick", "engine"
 
     key = str(got.get("player_key") or "")
     match = next((c for c in candidates
