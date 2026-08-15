@@ -24,7 +24,15 @@ def post_stream(server_url, wav_bytes, timeout=120, collect_audio=False):
     t0 = time.perf_counter()
     req = urllib.request.Request(
         server_url + "/respond_stream", data=wav_bytes,
-        headers={"Content-Type": "audio/wav"}, method="POST",
+        # X-WES-No-Writes: every caller of this client is a TEST HARNESS (the
+        # nightly eval, perf_check, e2e), and a test must not mutate the owner's
+        # real Yahoo account. The eval's "check if my lineup needs changes" case
+        # made the model call the executor, which wrote for real at 03:36 every
+        # eval night until 2026-08-14. The server's LIVE_WRITES switch cannot
+        # help here — it lives in the server process, not the harness — so the
+        # suppression has to travel WITH the request.
+        headers={"Content-Type": "audio/wav", "X-WES-No-Writes": "1"},
+        method="POST",
     )
     pcm = bytearray()
     with urllib.request.urlopen(req, timeout=timeout) as r:

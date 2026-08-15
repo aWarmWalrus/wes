@@ -70,6 +70,7 @@ WHAT THIS MODULE DOES:
 """
 import json
 import os
+import threading
 import time
 
 import wes_fantasy  # noqa: E402 — same dir on path (server/tests add it)
@@ -86,6 +87,35 @@ LEDGER_FILE = os.environ.get(
 # _submit_lineup lands, this must be set explicitly — mirrors WES_YAHOO_LIVE for
 # the schema-drift canary (docs/fantasy-gm-design.md §10).
 LIVE_WRITES = os.environ.get("WES_YAHOO_LIVE_WRITES", "0") == "1"
+
+# Per-REQUEST write suppression, on top of the process-wide kill switch above.
+#
+# The nightly eval drives the LIVE server, and one golden case ("check if my
+# team needs lineup changes") makes the model call the executor. LIVE_WRITES is
+# read by the SERVER process, so nothing the eval sets in its own environment
+# can stop that -- and it was writing to the real Yahoo account at 03:36 every
+# eval night (found 2026-08-14 by diffing executed-write timestamps against the
+# scheduler's triggers). A test suite must not mutate a live account.
+#
+# threading.local, not a ContextVar: Flask serves each request (including the
+# consumption of a streaming generator) on one thread, so thread-local state
+# covers the whole request. The server sets it from a header and clears it on
+# teardown, so it cannot leak into the next request on a recycled thread.
+_local = threading.local()
+
+
+def set_writes_suppressed(on):
+    _local.suppressed = bool(on)
+
+
+def writes_suppressed():
+    return getattr(_local, "suppressed", False)
+
+
+def writes_enabled():
+    """The single question every write path asks. Reads the module attribute at
+    call time so tests can still monkeypatch LIVE_WRITES."""
+    return LIVE_WRITES and not writes_suppressed()
 
 # Bench-type slots are interchangeable on Yahoo's side (BN/BE/IL/IL+/IR/IR+/NA) —
 # moving someone from IR to BN isn't a meaningful "move" for our purposes, it's
@@ -1095,7 +1125,7 @@ def propose_roster_moves(team=None, approve=None, _roster_fn=None,
         return f"Not making a roster move for {name}: {reason}.\n{body}" + rest
     entry["allowed"] = True
 
-    if not LIVE_WRITES:
+    if not writes_enabled():
         entry["reason"] = "live writes are off"
         _append_ledger(entry, _ledger_path)
         return (f"Would make this roster move for {name} (live writes are "
@@ -1171,7 +1201,7 @@ def propose_lineup_change(team=None, _compute_fn=None, _submit_fn=None,
     why_lines = "\n".join(f"  {line}" for line in why)
     entry["why"] = why   # kept in the ledger too, not just the reply
 
-    if mode == "auto" and LIVE_WRITES:
+    if mode == "auto" and writes_enabled():
         submit = _submit_fn or _submit_lineup
         try:
             submit(out["team_key"], moves)

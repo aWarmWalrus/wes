@@ -1132,6 +1132,35 @@ def run_tool(name, tool_input):
 
 app = Flask(__name__)
 
+# Automated traffic (the nightly eval, perf_check, e2e) sends
+# `X-WES-No-Writes: 1`, which blocks fantasy writes FOR THAT REQUEST ONLY.
+#
+# The process-wide WES_YAHOO_LIVE_WRITES switch lives in THIS process, so
+# nothing a test harness sets in its own environment can stop a write it
+# provokes here — and the nightly eval was writing to the real Yahoo account at
+# 03:36 every eval night via the "check if my lineup needs changes" golden case
+# (found 2026-08-14). A test suite must not mutate a live account.
+#
+# Fail SAFE on a malformed header: anything present that isn't an explicit "0"
+# or "false" suppresses. The cost of over-suppressing is a dry run; the cost of
+# under-suppressing is an unintended write to a real account.
+_NO_WRITE_OFF = {"0", "false", "no", ""}
+
+
+@app.before_request
+def _apply_write_suppression():
+    raw = request.headers.get("X-WES-No-Writes")
+    wes_execute.set_writes_suppressed(
+        raw is not None and str(raw).strip().lower() not in _NO_WRITE_OFF)
+
+
+@app.teardown_request
+def _clear_write_suppression(_exc=None):
+    # Threads are pooled and reused, so this MUST be cleared or the next
+    # request on this thread inherits a suppression it never asked for.
+    wes_execute.set_writes_suppressed(False)
+
+
 # --- Lazy singletons --------------------------------------------------------
 
 _whisper = None

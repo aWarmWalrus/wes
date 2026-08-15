@@ -1657,3 +1657,45 @@ class TestFantasyRosterMovesTool:
         assert "only recommends" in desc
         # It must tell the model to name the players, not flip a switch.
         assert "approve" in desc and "never invent names" in desc
+
+
+class TestWriteSuppressionHeader:
+    """`X-WES-No-Writes` must reach wes_execute, and must not leak to the next
+    request on a recycled thread (2026-08-14).
+
+    Exercises the request hooks through test_request_context rather than
+    registering probe routes: Flask forbids adding routes once the app has
+    served its first request, so route-based probes pass alone and fail in a
+    full run."""
+
+    def teardown_method(self):
+        ws.wes_execute.set_writes_suppressed(False)
+
+    def _suppressed_for(self, headers):
+        with ws.app.test_request_context("/", headers=headers):
+            ws._apply_write_suppression()
+            return ws.wes_execute.writes_suppressed()
+
+    def test_header_suppresses_for_that_request(self):
+        assert self._suppressed_for({"X-WES-No-Writes": "1"}) is True
+
+    def test_absent_header_does_not_suppress(self):
+        assert self._suppressed_for({}) is False
+
+    def test_it_is_cleared_after_the_request(self):
+        """Threads are pooled; a suppression that outlived its request would
+        silently turn the NEXT caller's real write into a dry run."""
+        ws.app.config["TESTING"] = True
+        with ws.app.test_client() as c:
+            c.get("/health", headers={"X-WES-No-Writes": "1"})
+        assert ws.wes_execute.writes_suppressed() is False
+
+    @pytest.mark.parametrize("val,expected", [
+        ("1", True), ("true", True), ("yes", True), ("anything", True),
+        ("0", False), ("false", False), ("", False),
+    ])
+    def test_malformed_values_fail_SAFE(self, val, expected):
+        """Anything present that isn't an explicit off-value suppresses.
+        Over-suppressing costs a dry run; under-suppressing writes to a real
+        account."""
+        assert self._suppressed_for({"X-WES-No-Writes": val}) is expected

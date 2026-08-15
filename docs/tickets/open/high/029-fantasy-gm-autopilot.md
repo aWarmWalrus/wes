@@ -1170,3 +1170,53 @@ then didn't collect the benefit.
 Putting the irreversible step first costs nothing in robustness: each step has
 its own try/except, so a roster crash still leaves the lineup to be set. Both
 directions are now tested.
+
+## The nightly eval was writing to the real Yahoo account (fixed 2026-08-14)
+
+Found while mapping the daily workflow: executed writes were landing at hours
+that are not GM triggers (06:00 daily, Sun 09:15, Thu/Mon 16:30).
+
+```
+2026-08-09 03:37:14  set_lineup  Started Jake Ferguson at TE
+2026-08-12 03:36:21  set_lineup  Started Jalen Hurts at QB
+```
+
+03:30 is the **nightly eval**. Golden case `fantasy-propose` says "Check if my
+fantasy football team needs any lineup changes", the model calls
+`fantasy_propose_lineup_change`, and the team is `set_lineup: auto` with
+`WES_YAHOO_LIVE_WRITES=1` — so the test suite wrote to the live account, nightly.
+
+**The obvious fix does not work**, which is the interesting part.
+`WES_YAHOO_LIVE_WRITES` is read by the SERVER process at import; the eval is a
+separate process that just posts audio to `:8080`. Nothing the harness sets in
+its own environment can stop a write it provokes in the server.
+
+So suppression has to travel WITH the request: `X-WES-No-Writes: 1`, sent by
+`tests/stream_client.py` (shared by the eval, `perf_check`, and e2e — so all
+automated traffic is covered, not just the case that happened to trip it).
+Server-side it is a `before_request` hook setting thread-local state that
+`wes_execute.writes_enabled()` consults, cleared on `teardown_request` because
+threads are pooled and a leaked suppression would silently turn a REAL caller's
+write into a dry run.
+
+Two properties worth keeping:
+- **It only ever subtracts.** Suppression cannot enable a write when the
+  process-wide switch is off — same asymmetry as the judgment gate in #038.
+- **Malformed header values fail SAFE**: anything present that is not an
+  explicit off-value suppresses. Over-suppressing costs a dry run;
+  under-suppressing writes to a real account.
+
+**The grading rubric was also wrong, in a way that punished honesty.** The case
+asserted the tool "never writes to Yahoo" and marked the model INCORRECT if it
+claimed to have changed the lineup. True in shadow mode, false since live writes
+shipped — so the eval was scoring the model down for accurately reporting a
+write it had really made. Rewritten to guard OVERCLAIMING relative to what the
+tool reported, which is the property actually worth having.
+
+This also explains how two earlier bugs met: the 03:37 write triggered an
+announce at 03:38:55, which the eval's own `reset_conversation` wiped at
+03:39:11. "Jarvis has no recollection of the move" was the eval erasing the
+memory of a move the eval itself had caused.
+
+Verified by running `eval local --only fantasy-propose` against the live server:
+one ledger row added, executed-write count unchanged.

@@ -1318,3 +1318,54 @@ class TestRecentActions:
                      + json.dumps(self._row(200, why=["still here"])) + "\n",
                      encoding="utf-8")
         assert "still here" in ex.recent_actions(_path=str(p))
+
+
+class TestWriteSuppression:
+    """Per-request write suppression (2026-08-14). The nightly eval drives the
+    LIVE server, so its own environment cannot disable writes — the kill switch
+    lives in the server process. It was writing to the real Yahoo account at
+    03:36 every eval night. A test suite must not mutate a live account."""
+
+    def teardown_method(self):
+        ex.set_writes_suppressed(False)   # never leak into another test
+
+    def test_default_is_not_suppressed(self):
+        assert ex.writes_suppressed() is False
+
+    def test_suppression_disables_writes_even_with_the_kill_switch_on(
+            self, monkeypatch):
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        assert ex.writes_enabled() is True
+        ex.set_writes_suppressed(True)
+        assert ex.writes_enabled() is False
+
+    def test_suppression_cannot_ENABLE_writes(self, monkeypatch):
+        """It only ever subtracts. Clearing suppression must not turn writes on
+        when the process-wide switch is off."""
+        monkeypatch.setattr(ex, "LIVE_WRITES", False)
+        ex.set_writes_suppressed(False)
+        assert ex.writes_enabled() is False
+
+    def test_a_suppressed_lineup_run_reports_a_dry_run_and_submits_nothing(
+            self, monkeypatch):
+        monkeypatch.setattr(ex, "LIVE_WRITES", True)
+        ex.set_writes_suppressed(True)
+        monkeypatch.setattr(
+            ex.wes_yahoo, "_resolve_team",
+            lambda t=None: ({"team_key": "nfl.l.1.t.1", "name": "T",
+                             "sport": "nfl", "autonomy": "auto",
+                             "guardrails": {"actions_allowed": ["set_lineup"]}},
+                            None))
+        called = []
+        out = ex.propose_lineup_change(
+            "T",
+            _compute_fn=lambda t: {
+                "team_key": "nfl.l.1.t.1", "name": "T", "sport": "nfl",
+                "players": [{"name": "A", "slot": "BN", "player_key": "1",
+                             "value": 9.0, "playing": True}],
+                "result": {"starters": [{"slot": "QB", "name": "A",
+                                         "value": 9.0}], "bench": []}},
+            _submit_fn=lambda *a: called.append(1),
+            _ledger_path=None)
+        assert called == []
+        assert "live writes are off" in out
