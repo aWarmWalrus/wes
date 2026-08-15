@@ -691,3 +691,53 @@ That is **not on the critical path**: claiming is a one-time human action, and i
 the real league the owner already holds roster_id 3. It only blocks building a
 realistic mock. To rehearse the loop, a human claims a seat in a mock first —
 about twenty seconds — and then it can run against a human-paced clock.
+
+
+## IT DRAFTED (2026-08-15)
+
+Five picks, unattended, including the snake turn:
+
+```
+pick  2  DRAFTED Christian McCaffrey (model: highest VOR, high-priority RB need)
+pick 19  DRAFTED Justin Jefferson    (model: highest VOR, high need at WR)
+pick 22  DRAFTED Josh Jacobs
+pick 39  DRAFTED Davante Adams
+pick 42  DRAFTED D'Andre Swift
+```
+
+Two owner corrections unblocked it, and both were things no amount of DOM
+reading would have revealed:
+
+1. **The seat is claimed AUTOMATICALLY on start** — there is a seat named
+   `awarmwalrus`. Every previous run watched slot 1, which was somebody else's
+   CPU team, so there was never a turn to see. The slot comes from
+   `draft_order[user_id]` once the draft starts (we were slot 2).
+2. **Miss the 2-minute clock once and the team flips to autodraft**, after which
+   everything races. The first pick has to be fast, so the expensive work moved
+   to BEFORE the start: 12,218 players and 324 projections pre-warmed in 2.3s
+   while nothing was on the clock.
+
+So: claiming was never the blocker. The blocker was drafting for the wrong slot
+and then losing the only window we get.
+
+## Next: a local store instead of fetching at draft time
+
+Owner: *"why are we fetching anything expensive at draft time anyway instead of
+building a database locally, one that we can reuse across drafts?"*
+
+Right, and pre-warming is a workaround rather than a fix. Today the player index
+and projections live in PROCESS memory (6h and TTL caches), so every run
+re-fetches, and the network sits on the critical path of a 2-minute clock. If
+ESPN is slow or down at 6pm on draft day there is no board at all.
+
+What it should be: a PC-local store (like the ledger — never the repo), built
+and refreshed AHEAD of the draft, holding the player index, season projections,
+and bye weeks. That makes draft-time work a disk read, and buys three things
+beyond speed:
+
+- **It can be validated before draft day.** A board you can inspect on Tuesday is
+  worth more than one that first exists under a clock.
+- **It removes a live dependency from the moment that matters.** An ESPN outage
+  becomes a stale board rather than no board.
+- **It is reusable across drafts and leagues**, and is the same store #036 wants
+  for nflverse weekly stats — so this is one piece of infrastructure, not two.
