@@ -116,8 +116,37 @@ do not exist on the page to recon. Writing them from guesswork is precisely how
 the Yahoo swapper benched the wrong player (#029) — that recon waits for a real
 roster.
 
-**BLOCKED ON THE OWNER:** sign in once via `pc/sleeper_login.py`, or the session
-holds nothing and every write path stays untestable.
+### The session is SOLVED — via token, not login (2026-08-14)
+
+The interactive login is a dead end: sleeper.com's form sits behind **hCaptcha**,
+which is built to detect exactly the browser Playwright launches (ours fails its
+checks — `window.chrome` absent, `plugins: 0`, and a `HeadlessChrome` UA when
+headless). The owner could not clear it by hand, and one success would not have
+lasted anyway, since hCaptcha re-challenges.
+
+**But the captcha guards OBTAINING a session, not PRESENTING one.** Injecting an
+existing account token into localStorage walks straight past it, and the app then
+bootstraps its own session state as though a human had signed in.
+
+- Token lives in `WES_SLEEPER_TOKEN` (PC user environment, never the repo, same
+  convention as `WES_DISCORD_TOKEN`).
+- `TOKEN_KEY = "token"` — **pinned by testing candidates ONE AT A TIME against a
+  cleared store**. Of `token`, `user_token`, `auth_token`, `jwt`,
+  `access_token`, only `token` gets through. Injecting all five also worked, but
+  shipping that shotgun would have kept "working" if the real key changed, right
+  up until it didn't.
+- `authenticate(page)` loads the origin FIRST — localStorage is per-origin, so
+  writing it from `about:blank` lands nowhere, silently.
+- Verified live: `session : OK — signed in; team page loaded`.
+
+`pc/sleeper_login.py` is now a session *check* rather than a login flow.
+
+**And the lineup mechanism is now visible.** The authenticated team page says
+*"Click on position buttons to update your lineup"* — the same badge-click
+pattern as Yahoo, which means the known trap applies: two slots of the same type
+(RB/RB, WR/WR, and two FLEX here) cannot be told apart by slot type, so any
+write must target by PLAYER, never by slot. That is the mistake that benched the
+wrong player on Yahoo (#029).
 
 ## Draft: the read path needs no auth at all (2026-08-14)
 
@@ -179,7 +208,7 @@ draft-room DOM for auto-submit, without waiting for ~Sept 6.
       seam is small: `roster_players`, `free_agents`, league scoring/slots,
       `_resolve_team`. The WRITE seam is deeply Yahoo-shaped (`_Session`, URL
       building, DOM) and is what actually needs abstracting.
-- [ ] Decide the write path (above), or register Sleeper as advise-only.
+- [ ] Recon the lineup/add-drop gestures against a REAL roster (mock draft, or after ~Sept 6). The session is no longer the blocker; an empty roster is.
 - [ ] Register the league in `teams.yaml` — **deliberately not done yet**: the
       league is `pre_draft` and every roster has 0 players, so a GM cycle would
       have nothing to manage and would only add noise.

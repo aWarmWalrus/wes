@@ -292,9 +292,12 @@ class TestLoginWallDetection:
         assert not sl._is_login_wall("https://sleeper.com/leagues/1/team",
                                      "My Team QB Josh Allen BN")
 
-    def test_logged_in_degrades_rather_than_raising(self):
+    def test_logged_in_degrades_rather_than_raising(self, monkeypatch):
         """This is the check run to diagnose another failure, so it has to
-        survive the failure it is diagnosing."""
+        survive the failure it is diagnosing. A token is set here so the check
+        gets past the missing-token guard and actually reaches the browser."""
+        monkeypatch.setattr(sl, "TOKEN", "tok")
+
         class Boom:
             def __enter__(self):
                 raise RuntimeError("no browser")
@@ -303,3 +306,59 @@ class TestLoginWallDetection:
                 return False
         ok, detail = sl.logged_in("L", _session_cls=Boom)
         assert ok is False and "couldn't check" in detail
+
+
+class TestTokenAuthentication:
+    """Token injection instead of an interactive login (2026-08-14).
+
+    sleeper.com's login form sits behind hCaptcha, which is built to detect the
+    browser Playwright launches — the owner could not get through it by hand,
+    and one success would not last since hCaptcha re-challenges. But the captcha
+    guards OBTAINING a session, not PRESENTING one."""
+
+    class FakePage:
+        def __init__(self):
+            self.store = {}
+            self.goto_urls = []
+
+        def goto(self, url, **kw):
+            self.goto_urls.append(url)
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+        def evaluate(self, _js, arg=None):
+            if isinstance(arg, list) and len(arg) == 2:
+                self.store[arg[0]] = arg[1]
+
+    def test_writes_the_token_to_the_pinned_key(self, monkeypatch):
+        monkeypatch.setattr(sl, "TOKEN", "abc123")
+        page = self.FakePage()
+        assert sl.authenticate(page) is True
+        assert page.store == {"token": "abc123"}
+
+    def test_loads_the_origin_first(self, monkeypatch):
+        """localStorage is per-ORIGIN; writing it from about:blank lands
+        nowhere at all, silently."""
+        monkeypatch.setattr(sl, "TOKEN", "abc123")
+        page = self.FakePage()
+        sl.authenticate(page)
+        assert page.goto_urls and page.goto_urls[0].startswith(sl.WEB)
+
+    def test_no_token_configured_is_reported_not_silently_anonymous(
+            self, monkeypatch):
+        """Presenting an anonymous browser would scrape the marketing page and
+        report a mysteriously empty roster."""
+        monkeypatch.setattr(sl, "TOKEN", "")
+        assert sl.authenticate(self.FakePage()) is False
+
+    def test_logged_in_says_so_when_the_token_is_missing(self, monkeypatch):
+        monkeypatch.setattr(sl, "TOKEN", "")
+        ok, detail = sl.logged_in("L")
+        assert ok is False and "WES_SLEEPER_TOKEN" in detail
+
+    def test_the_pinned_key_is_the_one_that_was_verified(self):
+        """Pinned by testing candidates one at a time against a cleared store:
+        of token/user_token/auth_token/jwt/access_token, only this one got past
+        the login wall."""
+        assert sl.TOKEN_KEY == "token"

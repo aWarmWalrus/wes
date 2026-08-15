@@ -46,6 +46,25 @@ PROFILE_DIR = os.environ.get(
 HEADLESS = os.environ.get("WES_SLEEPER_HEADLESS", "0") == "1"
 BROWSER_CHANNEL = os.environ.get("WES_SLEEPER_BROWSER_CHANNEL", "chrome")
 
+# The account token, from the PC user environment (never the repo), same
+# convention as WES_DISCORD_TOKEN.
+#
+# WHY A TOKEN AND NOT AN INTERACTIVE LOGIN: sleeper.com's login form is behind
+# hCaptcha, which is built to detect exactly the browser Playwright launches —
+# the owner could not get through it by hand in the automation profile, and
+# even one success would not last, since hCaptcha re-challenges. But the captcha
+# guards OBTAINING a session, not PRESENTING one. Injecting an existing token
+# walks straight past it, and the app then bootstraps its own session state as
+# if a human had signed in (verified 2026-08-14).
+TOKEN = os.environ.get("WES_SLEEPER_TOKEN", "")
+
+# The single localStorage key Sleeper's web app reads the token from. Pinned by
+# testing candidates ONE AT A TIME against a cleared store: of `token`,
+# `user_token`, `auth_token`, `jwt` and `access_token`, only this one gets past
+# the login wall. Injecting all five worked too, but shipping the shotgun would
+# have kept "working" if the real key changed — right up until it didn't.
+TOKEN_KEY = "token"
+
 # League metadata changes rarely; the player dump changes ~daily and Sleeper's
 # docs ask callers not to pull it more than once a day (it is 14MB).
 LEAGUE_TTL = float(900)
@@ -423,13 +442,33 @@ def _is_login_wall(url, body):
         or "LOG IN" in (body or "")
 
 
+def authenticate(page):
+    """Put the account token where the web app looks for it.
+
+    Must run with the ORIGIN already loaded — localStorage is per-origin, so
+    writing it from about:blank silently lands nowhere. Returns False if no
+    token is configured, so callers can say something useful instead of
+    presenting an anonymous browser and reporting a mysteriously empty roster."""
+    if not TOKEN:
+        return False
+    page.goto(WEB, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(1500)
+    page.evaluate("([k, v]) => window.localStorage.setItem(k, v)",
+                  [TOKEN_KEY, TOKEN])
+    return True
+
+
 def logged_in(league_id, _session_cls=None):
     """Is the stored profile still signed in? (bool, detail).
 
     Never raises: this is the check the owner runs to find out WHY something
     else failed, so it has to survive the failure it is diagnosing."""
+    if not TOKEN:
+        return False, ("no WES_SLEEPER_TOKEN in the environment — set it and "
+                       "restart the process that needs it.")
     try:
         with (_session_cls or _Session)() as page:
+            authenticate(page)
             page.goto(f"{WEB}/leagues/{league_id}/team",
                       wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(4000)
