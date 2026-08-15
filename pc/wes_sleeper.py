@@ -1,0 +1,353 @@
+"""Sleeper platform adapter — READ ONLY (ticket #039).
+
+Sleeper is a second fantasy platform alongside Yahoo, and it is a much kinder
+one to integrate: a documented, unauthenticated JSON API instead of Playwright
+against a logged-in DOM. Concretely, compared with `wes_yahoo`:
+
+  - League scoring arrives as STRUCTURED JSON (43 numeric settings), so there is
+    no text parsing and no section-aware scraper to drift. `parse_scoring` is a
+    lookup table, not a parser.
+  - Rosters, free agents and slots are JSON. No browser, no session, no cookies.
+  - `/v1/players/nfl` carries `espn_id`, `gsis_id` and `yahoo_id`, so a Sleeper
+    player joins to our ESPN valuations (and to nflverse) BY ID rather than by
+    fuzzy name match — the identity problem that would otherwise dominate this
+    work is simply absent.
+
+WHAT THIS MODULE DOES NOT DO: **write.** Sleeper's public v1 API is read-only;
+there is no documented endpoint for setting a lineup or making a transaction.
+The write path is unresolved (see #039) and deliberately absent here rather than
+half-built, so nothing can call a write that does not exist.
+
+Layering (docs/data-architecture.md): raw + fantasy-data. Every fetch goes
+through `wes_http`; every parser below it is PURE and takes already-fetched
+payloads, so the translation is testable with no network at all.
+"""
+import time
+
+import wes_http
+import wes_nfl
+
+BASE = "https://api.sleeper.app/v1"
+
+# League metadata changes rarely; the player dump changes ~daily and Sleeper's
+# docs ask callers not to pull it more than once a day (it is 14MB).
+LEAGUE_TTL = float(900)
+PLAYERS_TTL = float(6 * 3600)
+
+
+def _get(path, ttl=LEAGUE_TTL, _get_fn=None):
+    return (_get_fn or wes_http.get_json)(BASE + path, ttl=ttl)
+
+
+# --- scoring ----------------------------------------------------------------
+# Sleeper's keys -> the canonical stat keys `wes_nfl.fantasy_points` scores.
+# Written out rather than derived: the two vocabularies genuinely differ, and a
+# silent mismatch here would misprice every player in the league.
+_SCORING_MAP = {
+    "pass_yd": "PassYds", "pass_td": "PassTD", "pass_int": "Int",
+    "rush_yd": "RushYds", "rush_td": "RushTD",
+    "rec": "Rec", "rec_yd": "RecYds", "rec_td": "RecTD",
+    "fum_lost": "FumLost",
+    "xpm": "XP", "xpmiss": "XPMiss", "fgmiss": "FGMiss",
+    "fgm_0_19": "FG0_19", "fgm_20_29": "FG20_29", "fgm_30_39": "FG30_39",
+    "fgm_40_49": "FG40_49", "fgm_50_59": "FG50", "fgm_50p": "FG50",
+    # A 60+ yarder is still a made 50+ FG in every stat feed we have, so it
+    # folds into the same bucket. Leaving it unmapped (as it was on first run
+    # against the real league) would undervalue a big-leg kicker by the whole
+    # difference between the 50-59 and 60+ rates.
+    "fgm_60p": "FG50",
+    # Team defence / special teams.
+    "sack": "Sack", "int": "DefInt", "fum_rec": "FumRec",
+    "def_td": "DefTD", "safe": "Safety", "blk_kick": "BlkKick",
+    "st_td": "DefRetTD", "def_st_td": "DefRetTD", "pr_td": "DefRetTD",
+    "kr_td": "DefRetTD",
+}
+# All three two-point flavours collapse to one canonical key. They are
+# separately configurable in Sleeper but always equal in practice; if a league
+# ever splits them, the LARGEST wins, so a projection can't be understated.
+_TWO_PT_KEYS = ("pass_2pt", "rush_2pt", "rec_2pt")
+
+# Sleeper expresses points-allowed as one flat setting per band. Ours is an
+# ordered (max_allowed, points) ladder, so the bands have to be re-expressed —
+# the upper bound of each band, in ascending order.
+_PTS_ALLOW_BANDS = [
+    ("pts_allow_0", 0), ("pts_allow_1_6", 6), ("pts_allow_7_13", 13),
+    ("pts_allow_14_20", 20), ("pts_allow_21_27", 27), ("pts_allow_28_34", 34),
+    ("pts_allow_35p", 10 ** 6),
+]
+
+# Settings we knowingly ignore, so they don't show up as "unknown" noise: IDP,
+# kick/punt yardage, bonuses and per-game rate stats we do not model.
+_IGNORED_PREFIXES = ("idp_", "bonus_", "pass_cmp", "pass_att", "rush_att",
+                     "rec_tgt", "pass_inc", "pass_sack", "fga", "fgm_yds",
+                     "punt", "kick", "pass_fd", "rush_fd", "rec_fd", "fum",
+                     "def_", "st_", "tkl", "sack_yd", "qb_hit", "int_ret",
+                     "anytime")
+
+
+def parse_scoring(scoring_settings):
+    """Sleeper `scoring_settings` -> our {weights, tiers, unknown} contract.
+
+    PURE. Mirrors `wes_fantasy.nfl_league_scoring`'s output shape exactly so the
+    valuer, optimizer and executor cannot tell which platform a league came
+    from — that indifference is the whole point of an adapter.
+
+    `unknown` lists settings we saw but do not model, kept for the same reason
+    the Yahoo parser keeps it: a scoring rule we silently drop is a systematic
+    mispricing, and it should be visible rather than inferred from bad advice."""
+    src = scoring_settings if isinstance(scoring_settings, dict) else {}
+    weights = dict(wes_nfl.DEFAULT_SCORING)
+    seen, unknown = set(), []
+
+    for key, val in src.items():
+        try:
+            num = float(val)
+        except (TypeError, ValueError):
+            continue
+        if key in _SCORING_MAP:
+            weights[_SCORING_MAP[key]] = num
+            seen.add(key)
+        elif key in _TWO_PT_KEYS:
+            weights["2PT"] = max(num, weights.get("2PT", 0.0)) \
+                if any(k in seen for k in _TWO_PT_KEYS) else num
+            seen.add(key)
+        elif any(key == b[0] for b in _PTS_ALLOW_BANDS):
+            seen.add(key)          # handled as tiers below
+        elif key.startswith(_IGNORED_PREFIXES):
+            seen.add(key)
+        else:
+            unknown.append(key)
+
+    # Points-allowed ladder. Only build one if the league actually configures
+    # it; otherwise keep our default rather than inventing a flat zero ladder
+    # that would value every defence identically.
+    bands = [(cap, float(src[k])) for k, cap in _PTS_ALLOW_BANDS if k in src]
+    tiers = bands if bands else list(wes_nfl.POINTS_ALLOWED_TIERS)
+
+    return {"weights": weights, "tiers": tiers, "unknown": sorted(unknown)}
+
+
+# --- roster slots -----------------------------------------------------------
+# Sleeper's slot vocabulary -> the one the optimizer speaks (Yahoo-shaped,
+# because that is what everything upstream already uses).
+_SLOT_MAP = {
+    "QB": "QB", "RB": "RB", "WR": "WR", "TE": "TE", "K": "K",
+    "DEF": "DEF", "DST": "DEF",
+    "FLEX": "W/R/T", "REC_FLEX": "W/R", "SUPER_FLEX": "Q/W/R/T",
+    "WRRB_FLEX": "W/R", "IDP_FLEX": "IDP",
+    "BN": "BN", "IR": "IR", "TAXI": "TAXI",
+}
+
+
+def parse_roster_slots(roster_positions):
+    """Sleeper `roster_positions` -> our slot names, order preserved. PURE.
+
+    An unrecognised slot passes through unchanged rather than being dropped: a
+    slot we cannot name is still a slot that must be filled, and silently
+    losing one would let the optimizer field an illegal lineup."""
+    return [_SLOT_MAP.get(str(p).upper(), str(p).upper())
+            for p in (roster_positions or [])]
+
+
+# --- player identity --------------------------------------------------------
+_players_cache = {"at": 0.0, "index": None}
+
+
+def parse_players(payload):
+    """The 14MB `/players/nfl` dump -> a slim id index. PURE.
+
+    Keeps only what a join needs. The dump is ~12k players including practice
+    squads and retirees; holding all of it to answer "who is player 4034" would
+    cost 14MB of resident memory for a few hundred bytes of signal."""
+    out = {}
+    for pid, p in (payload or {}).items():
+        if not isinstance(p, dict):
+            continue
+        pos = p.get("position")
+        name = p.get("full_name") or p.get("last_name") or ""
+        # Team defences have no person-name; Sleeper keys them by team abbr.
+        if pos == "DEF" and not name:
+            name = p.get("team") or str(pid)
+        if not name:
+            continue
+        out[str(pid)] = {
+            "name": name,
+            "positions": [pos] if pos else [],
+            "team": p.get("team"),
+            "espn_id": str(p["espn_id"]) if p.get("espn_id") else None,
+            "gsis_id": p.get("gsis_id"),
+            "yahoo_id": str(p["yahoo_id"]) if p.get("yahoo_id") else None,
+            "status": p.get("injury_status") or "",
+        }
+    return out
+
+
+def players_index(_get_fn=None, _now=None):
+    """The slim player index, cached in-process.
+
+    Fetched with ttl=0 so the 14MB raw body is never held in the shared HTTP
+    cache — only the parsed index below is kept. Sleeper's docs ask callers not
+    to pull this more than once a day; PLAYERS_TTL keeps us well inside that."""
+    now = _now if _now is not None else time.time()
+    if _players_cache["index"] is not None and \
+            now - _players_cache["at"] < PLAYERS_TTL:
+        return _players_cache["index"]
+    payload = (_get_fn or wes_http.get_json)(f"{BASE}/players/nfl", ttl=0,
+                                             timeout=90)
+    index = parse_players(payload)
+    _players_cache.update(at=now, index=index)
+    return index
+
+
+# --- rosters ----------------------------------------------------------------
+def parse_roster(roster, index, slots):
+    """One Sleeper roster + the player index + the league's slots -> our
+    canonical player dicts. PURE.
+
+    Sleeper models a roster as `starters` (an ORDERED list positionally aligned
+    to `roster_positions`) plus `players` (everyone). So a player's slot is
+    implied by their INDEX in `starters`, not stored on them — and an empty slot
+    is the literal string "0". Anyone in `players` but not in `starters` is on
+    the bench."""
+    starters = roster.get("starters") or []
+    everyone = roster.get("players") or []
+    out, seen = [], set()
+
+    for i, pid in enumerate(starters):
+        pid = str(pid)
+        if pid in ("0", "", "None"):
+            continue                      # an unfilled starting slot
+        info = index.get(pid) or {}
+        out.append({
+            "name": info.get("name", f"player {pid}"),
+            "positions": info.get("positions") or [],
+            "team": info.get("team"),
+            "slot": slots[i] if i < len(slots) else "?",
+            "status": info.get("status", ""),
+            "player_key": pid,
+            "espn_id": info.get("espn_id"),
+            "gsis_id": info.get("gsis_id"),
+        })
+        seen.add(pid)
+
+    for pid in everyone:
+        pid = str(pid)
+        if pid in seen:
+            continue
+        info = index.get(pid) or {}
+        out.append({
+            "name": info.get("name", f"player {pid}"),
+            "positions": info.get("positions") or [],
+            "team": info.get("team"),
+            "slot": "BN",
+            "status": info.get("status", ""),
+            "player_key": pid,
+            "espn_id": info.get("espn_id"),
+            "gsis_id": info.get("gsis_id"),
+        })
+    return out
+
+
+def league(league_id, _get_fn=None):
+    return _get(f"/league/{league_id}", _get_fn=_get_fn)
+
+
+def league_scoring(league_id, _get_fn=None):
+    """This league's scoring in our canonical shape."""
+    return parse_scoring((league(league_id, _get_fn) or {}).get(
+        "scoring_settings"))
+
+
+def league_slots(league_id, _get_fn=None):
+    return parse_roster_slots((league(league_id, _get_fn) or {}).get(
+        "roster_positions"))
+
+
+def rosters(league_id, _get_fn=None):
+    return _get(f"/league/{league_id}/rosters", _get_fn=_get_fn)
+
+
+def roster_players(league_id, roster_id, _get_fn=None, _index_fn=None):
+    """The named roster, as canonical player dicts.
+
+    Degrades to a STRING on any problem, matching `wes_yahoo.roster_players` —
+    callers upstream relay a degradation verbatim rather than raising into a
+    turn, and an adapter that raised where the other returned would break them."""
+    try:
+        all_rosters = rosters(league_id, _get_fn)
+    except Exception as e:  # noqa: BLE001
+        return f"I couldn't reach Sleeper to read that roster ({e})."
+    if not isinstance(all_rosters, list):
+        return "Sleeper returned no rosters for that league."
+    want = str(roster_id)
+    row = next((r for r in all_rosters if str(r.get("roster_id")) == want), None)
+    if row is None:
+        return f"No roster {roster_id} in that Sleeper league."
+    index = (_index_fn or players_index)()
+    return parse_roster(row, index, league_slots(league_id, _get_fn))
+
+
+def rostered_ids(league_id, _get_fn=None):
+    """Every player id owned by ANY team — the complement of the free agents."""
+    all_rosters = rosters(league_id, _get_fn)
+    if not isinstance(all_rosters, list):
+        return set()
+    owned = set()
+    for r in all_rosters:
+        for pid in (r.get("players") or []):
+            owned.add(str(pid))
+    return owned
+
+
+def free_agents(league_id, positions=("QB", "RB", "WR", "TE", "K", "DEF"),
+                _get_fn=None, _index_fn=None):
+    """Everyone in the league's player universe that nobody rosters.
+
+    Sleeper has no "free agents" endpoint — availability is the COMPLEMENT of
+    every roster, which is only knowable by reading all of them. That is one
+    request, so it is cheaper than Yahoo's paginated scrape, but it does mean
+    availability is derived rather than reported."""
+    try:
+        owned = rostered_ids(league_id, _get_fn)
+    except Exception as e:  # noqa: BLE001
+        return f"I couldn't reach Sleeper to list free agents ({e})."
+    index = (_index_fn or players_index)()
+    want = {p.upper() for p in positions}
+    out = []
+    for pid, info in index.items():
+        if pid in owned:
+            continue
+        if not (set(info.get("positions") or []) & want):
+            continue
+        out.append({
+            "name": info["name"],
+            "positions": info.get("positions") or [],
+            "team": info.get("team"),
+            "status": info.get("status", ""),
+            "player_key": pid,
+            "espn_id": info.get("espn_id"),
+            "gsis_id": info.get("gsis_id"),
+            "is_free_agent": True,     # Sleeper waivers are a separate concept
+        })
+    return out
+
+
+def find_roster_id(league_id, username, _get_fn=None):
+    """Which roster_id belongs to `username`. Returns None if not found.
+
+    Two hops: display_name -> user_id (from /users), then user_id -> roster_id
+    (from /rosters). Worth doing once and recording in teams.yaml rather than
+    per run — but it is here so registering a league is not a manual id hunt."""
+    users = _get(f"/league/{league_id}/users", _get_fn=_get_fn)
+    if not isinstance(users, list):
+        return None
+    want = str(username).strip().lower()
+    uid = next((u.get("user_id") for u in users
+                if str(u.get("display_name", "")).lower() == want), None)
+    if uid is None:
+        return None
+    all_rosters = rosters(league_id, _get_fn)
+    if not isinstance(all_rosters, list):
+        return None
+    return next((r.get("roster_id") for r in all_rosters
+                 if str(r.get("owner_id")) == str(uid)), None)
