@@ -440,3 +440,130 @@ def logged_in(league_id, _session_cls=None):
             return True, f"signed in; team page loaded ({len(body)} chars)"
     except Exception as e:  # noqa: BLE001
         return False, f"couldn't check the Sleeper session: {e}"
+
+
+# --- draft (#039) -----------------------------------------------------------
+# The draft READ path needs no auth at all: picks, order and settings are all
+# public. That matters for sequencing — "who is gone, whose turn is it, who
+# should I take" is fully solvable today, and only SUBMITTING a pick needs the
+# session that hCaptcha is currently blocking.
+def draft(draft_id, _get_fn=None):
+    return _get(f"/draft/{draft_id}", ttl=60.0, _get_fn=_get_fn)
+
+
+def draft_picks(draft_id, _get_fn=None):
+    """Every pick made so far, oldest first. Short TTL: during a live draft this
+    is the fast-moving fact everything else depends on."""
+    return _get(f"/draft/{draft_id}/picks", ttl=15.0, _get_fn=_get_fn)
+
+
+def drafted_player_ids(draft_id, _get_fn=None):
+    """Ids already taken by ANYONE.
+
+    Matched by player_id, never by name: Sleeper hands us the exact id on every
+    pick, and name matching is how a draft bot recommends someone who is already
+    gone (two players share a name, or a suffix differs)."""
+    picks = draft_picks(draft_id, _get_fn)
+    if not isinstance(picks, list):
+        return set()
+    return {str(p.get("player_id")) for p in picks if p.get("player_id")}
+
+
+def draft_board(league_id, draft_id, roster_id, limit=8, _get_fn=None,
+                _index_fn=None, _pool_fn=None):
+    """Live draft advice: who is gone, when I pick next, and who to take.
+
+    Everything here is READ-ONLY and needs no login — the whole recommendation
+    path works today even with the write session blocked by hCaptcha. With a
+    10-minute pick timer, a recommendation relayed to a human is most of the
+    value of an autodrafter, and `cpu_autopick` is the safety net if nobody is
+    watching.
+
+    Degrades to a string on any problem; never raises into a turn."""
+    import wes_draft
+    try:
+        d = draft(draft_id, _get_fn)
+        picks = draft_picks(draft_id, _get_fn)
+    except Exception as e:  # noqa: BLE001
+        return f"I couldn't reach Sleeper's draft API ({e})."
+    if not isinstance(d, dict):
+        return "Sleeper returned no draft for that id."
+    picks = picks if isinstance(picks, list) else []
+
+    settings = d.get("settings") or {}
+    teams = int(settings.get("teams") or 0)
+    rounds = int(settings.get("rounds") or 0)
+    reversal = int(settings.get("reversal_round") or 0)
+    # slot_to_roster_id maps DRAFT SLOT -> roster; we need the inverse, because
+    # the caller knows their roster, not which seat it sits in.
+    slot_of = {str(v): int(k)
+               for k, v in (d.get("slot_to_roster_id") or {}).items()}
+    my_slot = slot_of.get(str(roster_id))
+    if not (teams and rounds and my_slot):
+        return ("That Sleeper draft hasn't published its order yet — no slot "
+                "assignment to reason from.")
+
+    made = len(picks)
+    wait = wes_draft.picks_until_turn(my_slot, teams, made, rounds, reversal)
+    if wait is None:
+        return f"That draft is over — all {made} picks are in."
+
+    taken = {str(p.get("player_id")) for p in picks if p.get("player_id")}
+    mine = [str(p.get("player_id")) for p in picks
+            if str(p.get("roster_id")) == str(roster_id) and p.get("player_id")]
+
+    index = (_index_fn or players_index)()
+    scoring = league_scoring(league_id, _get_fn)
+    slots = league_slots(league_id, _get_fn)
+    targets, flex, flex_pos = wes_draft.targets_from_slots(slots)
+
+    have = {}
+    for pid in mine:
+        for pos in (index.get(pid) or {}).get("positions") or []:
+            have[pos] = have.get(pos, 0) + 1
+
+    # Value the AVAILABLE players by joining Sleeper ids to the ESPN pool on
+    # espn_id — an exact join, not a name match.
+    pool, _failed = (_pool_fn or wes_nfl.pool_by_position)()
+    by_espn = {str(p["espn_id"]): p for p in pool if p.get("espn_id")}
+    board = []
+    for pid, info in index.items():
+        if pid in taken:
+            continue
+        espn = info.get("espn_id")
+        stat = by_espn.get(espn) if espn else None
+        if stat is None:
+            continue                      # unvalued: never recommend a guess
+        pos = (info.get("positions") or [None])[0]
+        val = wes_nfl.fantasy_points(wes_nfl.per_game(stat).get("cats"),
+                                     scoring["weights"], scoring["tiers"])
+        board.append({"name": info["name"], "positions": info.get("positions"),
+                      "team": info.get("team"), "player_key": pid,
+                      "value": round(val, 2)})
+    if not board:
+        return "I couldn't value any available player for that draft."
+
+    # Rank by VALUE OVER REPLACEMENT, not raw points. Raw points put six QBs in
+    # the top eight of this very board, because a quarterback out-scores a back
+    # while being far easier to replace. Then add the roster-need bump on top.
+    repl = wes_draft.replacement_levels(board, targets, flex, flex_pos, teams)
+    for p in board:
+        pos = (p["positions"] or [None])[0]
+        p["vor"] = round(p["value"] - repl.get(pos, 0.0), 2)
+        gap = max(0, targets.get(pos, 0) - have.get(pos, 0))
+        p["need_bump"] = 2.0 * gap if gap else (
+            0.5 if (pos in flex_pos and flex) else 0.0)
+        p["adj_value"] = round(p["vor"] + p["need_bump"], 2)
+    board.sort(key=lambda x: x["adj_value"], reverse=True)
+
+    when = "you're ON THE CLOCK" if wait == 0 else f"{wait} picks until your turn"
+    head = (f"Round {made // teams + 1}, {made} picks in — {when} "
+            f"(slot {my_slot} of {teams}).")
+    lines = [head, "Best available:"]
+    for i, p in enumerate(board[:limit], 1):
+        pos = "/".join(p["positions"] or []) or "?"
+        need = f" +{p['need_bump']:g} need" if p["need_bump"] else ""
+        lines.append(f"  {i}. {p['name']} ({pos}, {p['team']}) — "
+                     f"{p['vor']:g} over replacement "
+                     f"({p['value']:g} pts/g){need}")
+    return "\n".join(lines)

@@ -119,6 +119,59 @@ roster.
 **BLOCKED ON THE OWNER:** sign in once via `pc/sleeper_login.py`, or the session
 holds nothing and every write path stays untestable.
 
+## Draft: the read path needs no auth at all (2026-08-14)
+
+The captcha blocks *getting a session*, not *reading*. Sleeper's draft
+endpoints are public, so **who is gone, whose turn it is, and who to take are
+all solvable today** — only SUBMITTING a pick needs the session.
+
+Built and verified live against the real draft:
+
+- `draft`, `draft_picks`, `drafted_player_ids` — picks matched by `player_id`,
+  never by name. Sleeper hands us the exact id, and name matching is how a draft
+  bot recommends someone already taken.
+- `wes_draft.slot_for_pick` / `next_pick_for_slot` / `picks_until_turn` — snake
+  arithmetic, including Sleeper's `reversal_round` option. "20 picks to wait"
+  and "1 pick to wait" are different strategies, so this is load-bearing.
+- `wes_draft.targets_from_slots` — derived from the league's own slots, so an
+  unusual league works without editing a table.
+- `wes_sleeper.draft_board` — the live recommendation.
+
+Real output, 2 picks before the owner's turn at slot 3 of 12:
+
+```
+Round 1, 0 picks in — 2 picks until your turn (slot 3 of 12).
+  1. Christian McCaffrey (RB, SF) — 18.62 over replacement (24.51 pts/g) +4 need
+  2. Jonathan Taylor (RB, IND) — 15.43 over replacement (21.32 pts/g) +4 need
+  3. Davante Adams (WR, LAR) — 11.3 over replacement (15.92 pts/g) +4 need
+```
+
+**Two modelling bugs were caught by looking at real output, not by tests.**
+
+*Flex folded into every position.* Adding both FLEX slots to each eligible
+position produced `TE: 3`. Nobody starts three tight ends, and a need bump built
+on that keeps recommending one. Flex is capacity for ONE of several positions,
+not for each, so it is now tracked separately and applied as a weaker shared
+bump.
+
+*Raw points instead of value over replacement.* The first working board put
+**six quarterbacks in the top eight**. A QB out-scores a back in most systems
+but a 12-team league starts 12 QBs and ~36 RB/WR, so the 12th-best QB is nearly
+as good as the best while the 36th receiver is far worse than the 5th. What a
+pick is worth is the gap to the player you could have had anyway.
+`replacement_levels` fixed it; the board is now RB/WR-led, as a round-1 PPR
+board should be, and Josh Allen (22.04 raw) correctly falls out of the top 8.
+
+**Implication for sequencing:** with a 10-minute pick timer, a recommendation
+relayed to a human is most of the value of an autodrafter, and `cpu_autopick` is
+the safety net if nobody is watching. So the draft is *useful before the write
+problem is solved*, and auto-submit is an increment rather than a prerequisite.
+
+**A mock draft is the obvious rehearsal.** Sleeper offers them, they create a
+real draft with real picks, and that is the only way to (a) see a live pick
+record shape — `/picks` has returned `[]` every time so far — and (b) recon the
+draft-room DOM for auto-submit, without waiting for ~Sept 6.
+
 ## Remaining work
 
 - [ ] **Platform dispatch.** `teams.yaml` gains `platform: yahoo|sleeper`, and

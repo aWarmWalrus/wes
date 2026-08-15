@@ -158,3 +158,131 @@ class TestLiveDraftPool:
         assert any("PTS" in p["cats"] for p in pool)  # our cats map through
         ranked = fan.rank_by_zscore(pool, fan.DEFAULT_CATEGORIES)
         assert ranked[0]["value"] > ranked[-1]["value"]
+
+
+class TestSnakeMath:
+    """Snake position arithmetic (#039). A draft assistant that can't answer
+    'whose pick is this' and 'when do I pick next' is useless — with 20 picks to
+    wait you can let a run happen, with 1 you cannot."""
+
+    def test_odd_rounds_run_forward_and_even_rounds_reverse(self):
+        assert [draft.slot_for_pick(i, 12) for i in range(1, 13)] == list(range(1, 13))
+        assert [draft.slot_for_pick(i, 12) for i in range(13, 25)] == \
+            list(range(12, 0, -1))
+
+    def test_round_three_starts_forward_again(self):
+        assert draft.slot_for_pick(25, 12) == 1
+
+    def test_third_round_reversal_flips_the_expected_parity(self):
+        """Sleeper's `reversal_round` option (0 = off in this league). Round 3
+        would normally run forward; with reversal from round 3 it runs back."""
+        assert draft.slot_for_pick(25, 12, reversal_round=3) == 12
+        assert draft.slot_for_pick(25, 12, reversal_round=0) == 1
+
+    def test_next_pick_skips_the_current_round_once_it_has_passed(self):
+        # 5 picks made, so slot 3's round-1 pick (no. 3) is gone; next is R2.
+        assert draft.next_pick_for_slot(3, 12, 5, 15) == 22
+
+    def test_picks_until_turn_is_zero_when_on_the_clock(self):
+        # 2 picks made means pick 3 is next, which belongs to slot 3.
+        assert draft.picks_until_turn(3, 12, 2, 15) == 0
+
+    def test_returns_none_once_the_draft_is_over(self):
+        assert draft.next_pick_for_slot(3, 12, 12 * 15, 15) is None
+        assert draft.picks_until_turn(3, 12, 12 * 15, 15) is None
+
+    def test_degenerate_inputs_do_not_crash(self):
+        assert draft.slot_for_pick(0, 12) is None
+        assert draft.slot_for_pick(1, 0) is None
+
+
+class TestTargetsFromSlots:
+    REAL = ["QB", "RB", "RB", "WR", "WR", "TE", "W/R/T", "W/R/T", "K", "DEF",
+            "BN", "BN", "BN", "BN", "BN"]
+
+    def test_dedicated_slots_become_targets(self):
+        targets, _, _ = draft.targets_from_slots(self.REAL)
+        assert targets == {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "K": 1, "DEF": 1}
+
+    def test_flex_is_NOT_folded_into_each_position(self):
+        """The bug this exists to prevent: folding both FLEX slots into every
+        eligible position yields TE:3, and a need bump built on that keeps
+        recommending a third tight end."""
+        targets, flex, flex_pos = draft.targets_from_slots(self.REAL)
+        assert targets["TE"] == 1
+        assert flex == 2
+        assert flex_pos == {"RB", "WR", "TE"}
+
+    def test_bench_slots_are_not_targets(self):
+        targets, _, _ = draft.targets_from_slots(["QB", "BN", "IR", "TAXI"])
+        assert targets == {"QB": 1}
+
+    def test_superflex_is_recognised_as_flex_not_a_position(self):
+        targets, flex, flex_pos = draft.targets_from_slots(["QB", "Q/W/R/T"])
+        assert targets == {"QB": 1} and flex == 1
+        assert "QB" in flex_pos
+
+    def test_derived_from_config_so_an_unusual_league_still_works(self):
+        """A 3-WR league should want 3 WRs without anyone editing a table."""
+        targets, _, _ = draft.targets_from_slots(["WR", "WR", "WR", "QB"])
+        assert targets["WR"] == 3
+
+
+class TestReplacementLevels:
+    """Value over replacement (#039). Ranking by raw points put SIX
+    quarterbacks in the top eight of the real 2026-08-14 board — a QB
+    out-scores a back while being far easier to replace, so raw totals are the
+    wrong currency for a draft pick."""
+
+    def _pool(self):
+        # 30 QBs and 60 RBs, values descending, so replacement ranks differ.
+        qbs = [{"positions": ["QB"], "value": 30.0 - i * 0.2} for i in range(30)]
+        rbs = [{"positions": ["RB"], "value": 25.0 - i * 0.5} for i in range(60)]
+        return qbs + rbs
+
+    def test_replacement_is_the_last_startable_player_at_the_position(self):
+        # 12 teams x 1 QB slot -> the 12th best QB is replacement level.
+        repl = draft.replacement_levels(
+            self._pool(), {"QB": 1, "RB": 2}, 0, set(), teams=12)
+        assert repl["QB"] == 30.0 - 11 * 0.2
+        assert repl["RB"] == 25.0 - 23 * 0.5     # 12 x 2 = 24th best RB
+
+    def test_a_scarce_position_yields_more_surplus_than_a_deep_one(self):
+        """The whole point: the BEST QB is barely better than a startable QB,
+        while the best RB is far better than the last startable RB."""
+        pool = self._pool()
+        repl = draft.replacement_levels(
+            pool, {"QB": 1, "RB": 2}, 0, set(), teams=12)
+        best_qb = max(p["value"] for p in pool if p["positions"] == ["QB"])
+        best_rb = max(p["value"] for p in pool if p["positions"] == ["RB"])
+        assert (best_rb - repl["RB"]) > (best_qb - repl["QB"])
+
+    def test_flex_capacity_raises_the_bar_for_eligible_positions(self):
+        """Flex slots mean more RBs start league-wide, so replacement moves
+        deeper into the pool and every RB is worth less over it."""
+        no_flex = draft.replacement_levels(
+            self._pool(), {"RB": 2}, 0, set(), teams=12)
+        with_flex = draft.replacement_levels(
+            self._pool(), {"RB": 2}, 2, {"RB"}, teams=12)
+        assert with_flex["RB"] < no_flex["RB"]
+
+    def test_a_position_nobody_starts_is_all_surplus(self):
+        repl = draft.replacement_levels(
+            [{"positions": ["P"], "value": 5.0}], {}, 0, set(), teams=12)
+        assert repl["P"] == 0.0
+
+    def test_a_pool_shallower_than_the_slots_uses_the_worst_player(self):
+        """Fewer kickers listed than the league starts: replacement is the worst
+        one available, not a crash and not an invented value."""
+        repl = draft.replacement_levels(
+            [{"positions": ["K"], "value": 9.0},
+             {"positions": ["K"], "value": 7.0}], {"K": 1}, 0, set(), teams=12)
+        assert repl["K"] == 7.0
+
+    def test_players_without_a_value_are_ignored_not_counted_as_zero(self):
+        """value=None means UNKNOWN (the #029 rule). Counting it as 0 would drag
+        replacement down and inflate everyone's surplus."""
+        pool = [{"positions": ["QB"], "value": 20.0},
+                {"positions": ["QB"], "value": None}]
+        repl = draft.replacement_levels(pool, {"QB": 1}, 0, set(), teams=1)
+        assert repl["QB"] == 20.0

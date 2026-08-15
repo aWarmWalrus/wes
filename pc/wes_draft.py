@@ -183,3 +183,117 @@ def recommend_pick(categories=None, drafted=(), my_roster=(), limit=10,
     recs = best_available(ranked, drafted=drafted, my_roster=my_roster,
                           limit=limit)
     return format_board(recs, n=limit)
+
+
+# --- snake draft position math (#039, Sleeper) -------------------------------
+# PURE. No network, no clock — the arithmetic that answers "whose pick is this"
+# and "when do I pick next", which a draft assistant is useless without.
+def slot_for_pick(pick_no, teams, reversal_round=0):
+    """Which draft SLOT (1..teams) owns overall pick `pick_no` (1-indexed).
+
+    Snake: odd rounds run 1->N, even rounds run N->1. `reversal_round` is
+    Sleeper's third-round-reversal option (0 = off); when set, the snake flips
+    an extra time from that round on, so rounds >= it invert the usual parity.
+    """
+    if teams <= 0 or pick_no <= 0:
+        return None
+    rnd = (pick_no - 1) // teams + 1
+    idx = (pick_no - 1) % teams
+    forward = (rnd % 2 == 1)
+    if reversal_round and rnd >= reversal_round:
+        forward = not forward
+    return idx + 1 if forward else teams - idx
+
+
+def next_pick_for_slot(slot, teams, picks_made, rounds, reversal_round=0):
+    """The next overall pick number belonging to `slot`, or None if their draft
+    is done. `picks_made` is how many picks have already happened."""
+    for pick_no in range(picks_made + 1, teams * rounds + 1):
+        if slot_for_pick(pick_no, teams, reversal_round) == slot:
+            return pick_no
+    return None
+
+
+def picks_until_turn(slot, teams, picks_made, rounds, reversal_round=0):
+    """How many picks until `slot` is on the clock (0 = on the clock now).
+
+    This is the number that decides strategy: with 20 picks to wait you can let
+    a run happen, with 1 you cannot."""
+    nxt = next_pick_for_slot(slot, teams, picks_made, rounds, reversal_round)
+    return None if nxt is None else nxt - picks_made - 1
+
+
+_FLEX_MEMBERS = {
+    "W/R/T": ("RB", "WR", "TE"), "W/R": ("RB", "WR"),
+    "Q/W/R/T": ("QB", "RB", "WR", "TE"),
+}
+
+
+def targets_from_slots(slots):
+    """League roster slots -> (dedicated targets, flex count, flex positions).
+
+    PURE, and DERIVED from the league's own configuration rather than
+    hardcoded: a superflex or 3-WR league wants a different shape, and a fixed
+    table would quietly give bad advice in one.
+
+    **Flex slots are deliberately NOT folded into the per-position targets.**
+    Adding each FLEX to every position it accepts looked reasonable and produced
+    `TE: 3` for a standard 2-flex league — nobody starts three tight ends, and a
+    need bump built on that would keep recommending one. Flex is real capacity
+    but it is capacity for ONE of several positions, not for each of them, so it
+    is returned separately and applied as a weaker, shared bump."""
+    targets, flex, flex_pos = {}, 0, set()
+    for slot in slots or ():
+        s = str(slot).upper()
+        if s in ("BN", "IR", "TAXI"):
+            continue
+        if s in _FLEX_MEMBERS:
+            flex += 1
+            flex_pos |= set(_FLEX_MEMBERS[s])
+        else:
+            targets[s] = targets.get(s, 0) + 1
+    return targets, flex, flex_pos
+
+
+def replacement_levels(players, targets, flex, flex_pos, teams):
+    """Per-position replacement value: what the LAST startable player at that
+    position is worth, league-wide. PURE.
+
+    Why this exists, concretely: ranking a draft board by raw fantasy points put
+    six quarterbacks in the top eight (2026-08-14, real board). QBs out-score
+    running backs in most systems — but a 12-team league starts 12 QBs and ~36
+    RB/WR, so the 12th-best QB is nearly as good as the best, while the 36th
+    receiver is far worse than the 5th. What a pick is WORTH is the gap to the
+    player you could have had anyway, not the raw total.
+
+      players: [{positions, value}] — the whole available pool
+      targets: dedicated starting slots per position (targets_from_slots)
+      flex/flex_pos: shared flex capacity, spread across eligible positions
+
+    Returns {position: replacement_value}. A position nobody starts gets 0.0,
+    which correctly makes every player at it pure surplus rather than crashing.
+    """
+    by_pos = {}
+    for p in players:
+        pos = (p.get("positions") or [None])[0]
+        if pos and p.get("value") is not None:
+            by_pos.setdefault(pos, []).append(float(p["value"]))
+    for vals in by_pos.values():
+        vals.sort(reverse=True)
+
+    # Flex capacity is shared, so split it evenly across the positions that can
+    # fill it. Crude, but it moves replacement in the right direction and does
+    # not pretend to know this league's flex habits.
+    share = (flex / len(flex_pos)) if flex and flex_pos else 0.0
+
+    out = {}
+    for pos, vals in by_pos.items():
+        starters = targets.get(pos, 0) + (share if pos in flex_pos else 0.0)
+        rank = int(round(teams * starters))
+        if rank <= 0:
+            out[pos] = 0.0                 # nobody starts one: all surplus
+        elif rank <= len(vals):
+            out[pos] = vals[rank - 1]
+        else:
+            out[pos] = vals[-1]            # shallower pool than slots
+    return out
