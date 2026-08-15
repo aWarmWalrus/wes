@@ -56,7 +56,28 @@ BROWSER_CHANNEL = os.environ.get("WES_SLEEPER_BROWSER_CHANNEL", "chrome")
 # guards OBTAINING a session, not PRESENTING one. Injecting an existing token
 # walks straight past it, and the app then bootstraps its own session state as
 # if a human had signed in (verified 2026-08-14).
-TOKEN = os.environ.get("WES_SLEEPER_TOKEN", "")
+def _read_token():
+    """The token, with a fallback to the PERSISTED user-scope value on Windows.
+
+    A shell opened before the variable was set does not inherit it, and the
+    failure mode is quiet and expensive: a mock draft ran for seven minutes,
+    stood down on every turn with "no WES_SLEEPER_TOKEN", let cpu_autopick take
+    all fifteen picks, and printed a perfectly plausible roster that proved
+    nothing (2026-08-15). The value is already on the machine; there is no
+    reason for a stale shell to be the thing that decides whether we can draft.
+    """
+    tok = os.environ.get("WES_SLEEPER_TOKEN", "")
+    if tok or os.name != "nt":
+        return tok
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            return str(winreg.QueryValueEx(key, "WES_SLEEPER_TOKEN")[0] or "")
+    except OSError:
+        return ""
+
+
+TOKEN = _read_token()
 
 # The single localStorage key Sleeper's web app reads the token from. Pinned by
 # testing candidates ONE AT A TIME against a cleared store: of `token`,
@@ -201,9 +222,18 @@ def parse_players(payload):
             continue
         pos = p.get("position")
         name = p.get("full_name") or p.get("last_name") or ""
-        # Team defences have no person-name; Sleeper keys them by team abbr.
-        if pos == "DEF" and not name:
-            name = p.get("team") or str(pid)
+        # Team defences have no `full_name`; they carry the club split across
+        # first/last ("Houston" / "Texans"). Use BOTH. Taking last_name alone
+        # gave "Texans", which is not what the draft room renders — the row
+        # reads "Houston Texans", the exact-name match missed, and eight
+        # attempts to draft a defence were reported as "he is gone". We
+        # finished that mock with four tight ends and no defence at all
+        # (2026-08-15).
+        if pos == "DEF":
+            name = (f"{p.get('first_name') or ''} "
+                    f"{p.get('last_name') or ''}").strip()
+            if not name:
+                name = p.get("team") or str(pid)
         if not name:
             continue
         out[str(pid)] = {
@@ -697,6 +727,13 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
         if stat is None:
             stat = by_name.get((_norm_name(info.get("name")),
                                 (info.get("positions") or [None])[0]))
+        if stat is None and (info.get("positions") or [None])[0] == "DEF":
+            # The two feeds name defences differently and neither is wrong:
+            # ESPN uses the NICKNAME ("Texans"), Sleeper's UI the full club
+            # ("Houston Texans"). The UI spelling is the one we must click, so
+            # it wins for `name` and the join adapts here instead.
+            nick = (info.get("name") or "").split()[-1:] or [""]
+            stat = by_name.get((_norm_name(nick[0]), "DEF"))
         if stat is None:
             continue                      # unvalued: never recommend a guess
         pos = (info.get("positions") or [None])[0]
@@ -845,7 +882,17 @@ def submit_pick(draft_id, player_key, player_name, _session_cls=None,
             raise RuntimeError("no WES_SLEEPER_TOKEN — cannot reach the draft")
         page.goto(f"{WEB}/draft/nfl/{draft_id}",
                   wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(6000)
+        # WAIT FOR THE LIST TO EXIST, don't assume a fixed 6s is enough. An
+        # unrendered list and an absent player look identical to a query
+        # selector, and reading the first as the second cost a pick: Amon-Ra St.
+        # Brown was declared gone on the run's first (slowest) page load and
+        # taken by us one pick later, so he had plainly been there all along
+        # (2026-08-15).
+        try:
+            page.wait_for_selector(".player-rank-item2", timeout=25000)
+        except Exception:  # noqa: BLE001 — turned into a clearer error below
+            pass
+        page.wait_for_timeout(1500)   # let the rest of the window paint
 
         def _find_row():
             for r in page.query_selector_all(".player-rank-item2"):
@@ -870,6 +917,14 @@ def submit_pick(draft_id, player_key, player_name, _session_cls=None,
                 page.wait_for_timeout(2500)
                 row = _find_row()
         if row is None:
+            # TWO CAUSES, and only one of them means "pick someone else". If the
+            # list is empty the draft room never rendered and we know NOTHING
+            # about this player — saying "he is gone" there is a guess, and the
+            # caller substitutes on it.
+            if not page.query_selector_all(".player-rank-item2"):
+                raise RuntimeError(
+                    "the draft room's player list never rendered — cannot tell "
+                    "whether anyone is available; refusing to pick blind")
             raise RuntimeError(
                 f"{player_name!r} is not available in the draft room even "
                 f"after searching — he has most likely just been taken. "

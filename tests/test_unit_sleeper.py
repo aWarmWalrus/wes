@@ -767,7 +767,11 @@ class TestWindowedList:
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
         monkeypatch.setattr(sl, "authenticate", lambda p: True)
         box = self.Box()
-        page = self.Page(box, lambda: [])     # search finds nothing either
+        # The list RENDERS -- it just does not contain him. That is the case
+        # that genuinely means "pick someone else"; an empty list is a
+        # different error entirely.
+        page = self.Page(
+            box, lambda: [TestSubmitPick.FakeRow("Someone Else", None)])
 
         class S:
             def __enter__(_s):
@@ -780,3 +784,116 @@ class TestWindowedList:
             assert False, "should have refused"
         except RuntimeError as e:
             assert "even after searching" in str(e)
+
+
+class TestTokenFallback:
+    """A shell opened before WES_SLEEPER_TOKEN was set does not inherit it, and
+    the failure is quiet: a mock draft stood down on every turn, let
+    cpu_autopick take all fifteen picks, and printed a plausible roster that
+    proved nothing (2026-08-15)."""
+
+    def test_the_environment_wins_when_it_has_the_value(self, monkeypatch):
+        monkeypatch.setenv("WES_SLEEPER_TOKEN", "from-env")
+        assert sl._read_token() == "from-env"
+
+    def test_it_falls_back_to_the_persisted_value_on_windows(self, monkeypatch):
+        monkeypatch.delenv("WES_SLEEPER_TOKEN", raising=False)
+        monkeypatch.setattr(sl.os, "name", "nt")
+        import types
+        fake = types.SimpleNamespace(
+            HKEY_CURRENT_USER=0,
+            OpenKey=lambda *a: __import__("contextlib").nullcontext(object()),
+            QueryValueEx=lambda *a: ("from-registry", 1))
+        monkeypatch.setitem(__import__("sys").modules, "winreg", fake)
+        assert sl._read_token() == "from-registry"
+
+    def test_a_missing_value_is_empty_not_an_exception(self, monkeypatch):
+        """Callers already report 'no token' helpfully; this must not raise
+        past them."""
+        monkeypatch.delenv("WES_SLEEPER_TOKEN", raising=False)
+        monkeypatch.setattr(sl.os, "name", "nt")
+        import types
+
+        def boom(*a):
+            raise OSError("no such value")
+        fake = types.SimpleNamespace(HKEY_CURRENT_USER=0, OpenKey=boom,
+                                     QueryValueEx=boom)
+        monkeypatch.setitem(__import__("sys").modules, "winreg", fake)
+        assert sl._read_token() == ""
+
+
+class TestUnrenderedIsNotAbsent:
+    """An unrendered list and an absent player look identical to a query
+    selector. Reading the first as the second cost a pick: Amon-Ra St. Brown was
+    declared gone on the run's first page load and drafted by us one pick later
+    (2026-08-15)."""
+
+    class Page(TestWindowedList.Page):
+        def wait_for_selector(self, _sel, timeout=None):
+            raise TimeoutError("never appeared")
+
+    def test_an_empty_list_says_so_instead_of_blaming_the_player(self,
+                                                                monkeypatch):
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        page = self.Page(TestWindowedList.Box(), lambda: [])
+
+        class S:
+            def __enter__(_s):
+                return page
+
+            def __exit__(_s, *a):
+                return False
+        try:
+            sl.submit_pick("D", "42", "Amon-Ra St. Brown", _session_cls=S)
+            assert False, "should have refused"
+        except RuntimeError as e:
+            assert "never rendered" in str(e)
+            # AND crucially not the phrase the loop substitutes on.
+            assert "not available in the draft room" not in str(e)
+
+
+class TestDefenceNaming:
+    """Sleeper's UI renders "Houston Texans"; ESPN's stat feed says "Texans".
+    Taking last_name alone made the two agree with each other and disagree with
+    the draft room, so eight attempts to draft a defence were reported as "he is
+    gone" and the mock finished with four tight ends (2026-08-15)."""
+
+    RAW = {"HOU": {"position": "DEF", "first_name": "Houston",
+                   "last_name": "Texans", "full_name": None, "team": "HOU"}}
+
+    def test_the_index_uses_the_name_the_draft_room_shows(self):
+        idx = sl.parse_players(self.RAW)
+        assert idx["HOU"]["name"] == "Houston Texans"
+
+    def test_a_defence_with_no_club_name_still_gets_one(self):
+        idx = sl.parse_players({"NYJ": {"position": "DEF", "team": "NYJ"}})
+        assert idx["NYJ"]["name"] == "NYJ"
+
+    def test_valuation_still_joins_against_espns_nickname(self, monkeypatch):
+        """The fix must not trade a click bug for a silently unvalued position:
+        an unvalued player is dropped from the board entirely."""
+        pool = [{"name": "Texans", "positions": ["DEF"], "team": "Texans",
+                 "gp": 17.0, "cats": {"Sack": 30.0}}]
+        out = sl.draft_candidates(
+            "L", "D", 1, limit=5,
+            _index_fn=lambda: sl.parse_players(self.RAW),
+            _pool_fn=lambda: pool,
+            _picks=[],
+            _get_fn=lambda path, **k: TestDefenceNaming._league(path))
+        assert not isinstance(out, str), out
+        names = [c["name"] for c in out["candidates"]]
+        assert "Houston Texans" in names
+
+    @staticmethod
+    def _league(path):
+        # `_get` hands the FULL url to the injected fetcher, not the path.
+        if "/league/" in path:
+            return {"scoring_settings": {"pts_allow_0": 10},
+                    "roster_positions": ["DEF", "BN"]}
+        if "/picks" in path:
+            return []
+        if "/draft/" in path:
+            return {"status": "drafting", "settings": {"teams": 2, "rounds": 2},
+                    "slot_to_roster_id": {"1": 1, "2": 2}, "type": "snake"}
+        return {}
