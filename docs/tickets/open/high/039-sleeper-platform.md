@@ -741,3 +741,53 @@ beyond speed:
   becomes a stale board rather than no board.
 - **It is reusable across drafts and leagues**, and is the same store #036 wants
   for nflverse weekly stats — so this is one piece of infrastructure, not two.
+
+
+## The snapshot (2026-08-15)
+
+`pc/wes_snapshot.py` — a point-in-time store of everything a board needs: the
+player index, season projections and bye weeks. **1.7 MB, loads in 0.18s**,
+PC-local like the ledger.
+
+```
+& ...python.exe pc\wes_snapshot.py build     # 3.2s
+& ...python.exe pc\wes_snapshot.py status
+
+snapshot 2026-08-15 11:59 (0.0h old)
+  season      2026
+  players     12218
+  projections 324
+  byes        32 teams
+```
+
+**Point-in-time rather than a live mirror** (owner decision). A snapshot is
+REPRODUCIBLE: "the board I inspected on Tuesday" and "the board that drafted on
+Saturday" are provably the same artifact, which is what makes checking it
+before trusting it possible — and checking is the only reason the stale
+2025-actuals valuation was ever caught. A mirror is always current and never
+quite examinable.
+
+The trade is accepted rather than hidden: a snapshot can go stale, so staleness
+is **reported loudly and never auto-repaired**. A surprise refresh would give
+back exactly the reproducibility the snapshot exists to provide.
+
+Properties worth keeping, each with a test:
+
+- **Atomic write.** A half-written snapshot found at draft time is worse than
+  none, because the failure arrives as garbled data rather than honest absence.
+  A build that dies mid-fetch leaves the previous good snapshot untouched.
+- **Missing is `None`, not `{}`.** Absent and empty are different facts; empty
+  would make the board silently value nobody instead of falling back.
+- **An empty SECTION also falls back.** A snapshot built during an ESPN outage
+  could hold zero projections; serving that would value nobody.
+- **Rebuilds are picked up without a restart** — the in-process cache keys on
+  file mtime, because the draft loop runs for hours.
+
+Draft-time work is now a disk read. The network is off the critical path of a
+2-minute clock, and the board can be inspected days ahead.
+
+**Next improvements to the snapshot** (owner: "we'll work on improving the
+snapshot over time"): nflverse weekly stats and depth charts for #036, Sleeper's
+`search_rank` as a market sanity-check, and a staleness check in the startup
+checklist so a forgotten rebuild is visible before draft day rather than during
+it.

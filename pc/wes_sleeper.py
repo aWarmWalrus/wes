@@ -530,7 +530,8 @@ def _draft_pool():
     questions — "what will this player do this year" vs "what has this player
     been doing" — and quietly swapping one for the other is how a draft board
     ends up confidently out of date."""
-    proj = wes_nfl.season_projections()
+    import wes_snapshot
+    proj = wes_snapshot.projections()      # snapshot first, live fetch if none
     if proj:
         return proj
     pool, _failed = wes_nfl.pool_by_position()
@@ -603,7 +604,8 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
                  or (p.get("roster_id") is not None
                      and str(p.get("roster_id")) == str(roster_id)))]
 
-    index = (_index_fn or players_index)()
+    import wes_snapshot
+    index = (_index_fn or wes_snapshot.players)()
     scoring = league_scoring(league_id, _get_fn)
     slots = league_slots(league_id, _get_fn)
     targets, flex, flex_pos = wes_draft.targets_from_slots(slots)
@@ -619,10 +621,7 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
 
     # Bye weeks come from the SCHEDULE — no fantasy platform we read supplies
     # one. Degrades to {} (unknown), never to "no bye".
-    import wes_schedule
-    byes = wes_schedule.bye_weeks((d.get("season")
-                                   or (league(league_id, _get_fn) or {})
-                                   .get("season") or ""))
+    byes = wes_snapshot.byes()
 
     # Value the AVAILABLE players by joining Sleeper ids to the ESPN pool on
     # espn_id — an exact join, not a name match.
