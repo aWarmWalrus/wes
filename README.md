@@ -68,6 +68,7 @@ The launchers set environment (voice, model, feature flags) and then exec Python
 | `run_exporters.ps1` | `WES Exporters` | Prometheus exporters |
 | `run_fantasy_gm.ps1` | `WES Fantasy GM` | the fantasy GM cycle (4 triggers/week) |
 | `run_nightly_eval.ps1` | `WES Nightly Eval` | nightly quality eval |
+| `run_sleeper_draft.ps1` | — (run by hand) | Sleeper draft day — pre-flight, wait, draft |
 | `wes-dev.ps1` | — | the dev helper above |
 | `wes-models.ps1` | — | VRAM/model manager (via `wes-dev models`) |
 | `deploy.ps1` | — | copies all of the above from the repo to local disk |
@@ -81,6 +82,27 @@ The launchers set environment (voice, model, feature flags) and then exec Python
 > execution policy refuses to run an unsigned script off a network share at all.
 > No secrets are in them — `ANTHROPIC_API_KEY`, `WES_DISCORD_TOKEN` and friends
 > come from the user environment at launch.
+
+### Draft day
+
+The Sleeper draft is one event on one afternoon, so it is **not** a scheduled
+task — a timer would either idle for weeks or start unattended. Run it by hand:
+
+```powershell
+& C:\Users\awarm\wes-pc\run_sleeper_draft.ps1 -Check   # pre-flight only
+& C:\Users\awarm\wes-pc\run_sleeper_draft.ps1          # wait for the room, then draft
+```
+
+Start it any time before the scheduled draft time and leave it. It resolves the
+draft and roster ids from the league (nothing is hard-coded), runs the
+pre-flight, waits for Sleeper to open the room, and hands off to the pick loop.
+It does **not** start the draft — that is Sleeper's on the commissioner's
+schedule. Output is tee'd to `logs\sleeper_draft.log`.
+
+Run `-Check` a day ahead too. Every item in it is a failure that has already
+happened once: a missing token stood down on all 15 picks while `cpu_autopick`
+took them and printed a plausible roster; a dead Ollama silently turns every
+pick into the engine's sort; disabled writes log `WOULD take` and never click.
 
 Raw equivalents, only when `wes-dev.ps1` lacks a flag you need:
 

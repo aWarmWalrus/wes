@@ -964,3 +964,90 @@ class TestByeAndPhaseContext:
         sent = json.loads(seen["messages"][1]["content"])
         assert sent["shortlist"][0]["bye_week"] == 10
         assert sent["context"]["phase"] == "depth"
+
+
+class TestDraftDayPreflight:
+    """Every check corresponds to a failure that has already happened once. The
+    point is to fail them all at 12:30 rather than one of them at 13:00."""
+
+    def _clean(self, monkeypatch):
+        import sleeper_draft_day as day
+        import wes_draft_agent
+        monkeypatch.setattr(sl, "TOKEN", "tok" * 40)
+        monkeypatch.setattr(day.wes_execute, "writes_enabled", lambda: True)
+        monkeypatch.setattr(day.wes_sleeper, "league", lambda i: {
+            "name": "L", "status": "pre_draft", "draft_id": "D"})
+        monkeypatch.setattr(day.wes_sleeper, "find_roster_id", lambda i, u: 3)
+        monkeypatch.setattr(day.wes_sleeper, "draft", lambda d: {
+            "status": "pre_draft", "start_time": 1788552000000,
+            "settings": {"teams": 12, "rounds": 15, "pick_timer": 600,
+                         "cpu_autopick": 1},
+            "slot_to_roster_id": {"1": 1, "3": 3}})
+        monkeypatch.setattr(day.wes_snapshot, "age_seconds", lambda: 3600.0)
+        monkeypatch.setattr(day.wes_snapshot, "describe",
+                            lambda: "snapshot\n  players 1")
+        monkeypatch.setattr(wes_draft_agent, "_ask_model",
+                            lambda payload, **k: {"player_key": "1"})
+        return day
+
+    def test_a_clean_machine_passes(self, monkeypatch):
+        day = self._clean(monkeypatch)
+        ok, lines = day.preflight(_probe_browser=False)
+        assert ok, "\n".join(lines)
+        assert any("roster_id 3" in ln for ln in lines)
+
+    def test_a_missing_token_fails_it(self, monkeypatch):
+        day = self._clean(monkeypatch)
+        monkeypatch.setattr(sl, "TOKEN", "")
+        ok, lines = day.preflight(_probe_browser=False)
+        assert not ok
+        assert any("FAIL" in ln and "token" in ln for ln in lines)
+
+    def test_disabled_writes_fail_it(self, monkeypatch):
+        """Otherwise the loop logs WOULD-take all afternoon and clicks
+        nothing."""
+        day = self._clean(monkeypatch)
+        monkeypatch.setattr(day.wes_execute, "writes_enabled", lambda: False)
+        ok, _lines = day.preflight(_probe_browser=False)
+        assert not ok
+
+    def test_a_stale_snapshot_fails_it(self, monkeypatch):
+        day = self._clean(monkeypatch)
+        monkeypatch.setattr(day.wes_snapshot, "age_seconds",
+                            lambda: 40 * 3600.0)
+        ok, _lines = day.preflight(_probe_browser=False)
+        assert not ok
+
+    def test_a_dead_model_fails_it_rather_than_degrading_quietly(self,
+                                                                monkeypatch):
+        """A dead Ollama crashes nothing -- every pick just becomes the
+        engine's sort and the draft looks entirely normal."""
+        day = self._clean(monkeypatch)
+        import wes_draft_agent
+        monkeypatch.setattr(wes_draft_agent, "_ask_model",
+                            lambda payload, **k: None)
+        ok, lines = day.preflight(_probe_browser=False)
+        assert not ok
+        assert any("fall back to the engine" in ln for ln in lines)
+
+    def test_an_unassigned_slot_is_not_a_failure(self, monkeypatch):
+        """Sleeper publishes the order when the draft STARTS, so pre-draft that
+        field is legitimately empty and must not read as broken."""
+        day = self._clean(monkeypatch)
+        monkeypatch.setattr(day.wes_sleeper, "draft", lambda d: {
+            "status": "pre_draft", "start_time": 0, "settings": {},
+            "slot_to_roster_id": None})
+        ok, lines = day.preflight(_probe_browser=False)
+        assert ok, "\n".join(lines)
+        assert any("not yet assigned" in ln for ln in lines)
+
+    def test_one_broken_check_does_not_hide_the_others(self, monkeypatch):
+        """A pre-flight that dies on its first problem tells you about one
+        thing when you wanted the list."""
+        day = self._clean(monkeypatch)
+        monkeypatch.setattr(sl, "TOKEN", "")
+        monkeypatch.setattr(day.wes_snapshot, "age_seconds",
+                            lambda: 40 * 3600.0)
+        ok, lines = day.preflight(_probe_browser=False)
+        assert not ok
+        assert sum(1 for ln in lines if "FAIL" in ln) == 2
