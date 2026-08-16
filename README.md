@@ -135,7 +135,7 @@ assume a quiet system is a working one.
 
 ```
 pi/      Pi client: wake word, VAD, audio, Hailo vision (faces, objects)
-pc/      PC services: Flask server, Discord bot, fantasy engine
+pc/      PC services: Flask server, Discord bot, fantasy engine + drafting agent
 tests/   pytest suite + eval harness + perf checks
 docs/    subsystem docs and the ticket tracker
 observability/  Prometheus + Grafana provisioning
@@ -192,7 +192,42 @@ tests free of hardware and network so they stay fast and CI-safe.
 | `docs/tickets/INDEX.md` | the current work queue |
 | `docs/data-architecture.md` | layer boundaries — read before touching data code |
 | `docs/fantasy-gm-design.md` | the autonomous fantasy manager |
+| `docs/tickets/open/high/039-sleeper-platform.md` | Sleeper + the drafting agent, with every wrong turn |
 | `docs/observability.md` | metrics, dashboards, alerts |
+
+## The drafting agent
+
+WES drafts a real Sleeper team autonomously — no human on the clock (#039). It
+is **agentic**, not a ranked list:
+
+| Module | Does |
+|---|---|
+| `pc/wes_sleeper.py` | Sleeper adapter: reads via the JSON API, writes via Playwright |
+| `pc/wes_draft.py` | pure draft maths — snake slots, value over replacement, roster fit |
+| `pc/wes_draft_agent.py` | builds the shortlist, asks a local model to choose |
+| `pc/sleeper_draft_run.py` | the loop: poll the clock, decide, submit, verify |
+| `pc/sleeper_draft_day.py` | pre-flight, wait for the room, hand off |
+| `pc/wes_snapshot.py` | the local board (players, projections, byes, crosswalk) |
+| `tests/draft_replay.py` | replay a finished draft, compare pick-makers offline |
+
+**The safety property is that the engine constrains the choice set and the model
+chooses within it.** Every candidate is verified available by id, legal under
+the same-team cap, and actually valued — so a hallucinated name cannot become a
+pick, and anything off the shortlist falls back to the engine's own top choice.
+This differs from the judgment gate in #038, which may only *subtract*: a draft
+pick is **mandatory**, so "do nothing" isn't available and a veto-only model
+cannot draft at all.
+
+Two things worth knowing before changing any of it:
+
+- **A cache is not a verification.** Availability is re-checked with `ttl=0`
+  immediately before a pick, and `submit_pick` polls uncached to confirm its own
+  click. Re-checking through the same 15s cache the board was built from cost a
+  pick and looked exactly like a race.
+- **An empty list is not an absent player.** Sleeper renders ~59 rows, ordered
+  by its own ranking, so "not in the list" can mean windowed, unpainted, or
+  genuinely taken. These now raise *different* errors, because only one of them
+  means pick someone else.
 
 ## A note on the fantasy manager
 
@@ -202,3 +237,8 @@ league whose outcome doesn't matter. Before touching `pc/wes_execute.py`, read
 `docs/fantasy-gm-design.md` and ticket #029 — including the part where a write
 targeted the wrong player, which is why every swap now targets by player name
 and re-verifies against the live roster afterward.
+
+The same applies to Sleeper: the draft loop makes **real, irreversible picks in
+a real league** with nobody watching. `cpu_autopick` is the fallback and it is a
+good one, so every failure path stands down rather than retrying into the clock
+— a missed pick costs a little value, a double pick costs a roster spot.

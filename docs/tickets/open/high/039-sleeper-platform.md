@@ -967,3 +967,126 @@ they were measuring how often a model agrees with a list of one thing.
 **The lesson:** a shortlist is not a neutral input. Constraining the choice set
 IS deciding, and a model handed one option per turn is not exercising judgment
 no matter how good it is.
+
+## A clean full draft, and the three lookups that were costing picks (2026-08-15)
+
+After the shortlist fixes the loop completed **15 of 15 picks** — and every one
+of the **nine substitutions** in that draft was wrong. The roster ended with
+four tight ends and no defence. The loud substitution logging, added an hour
+earlier, is the only reason this read as a bug rather than as a strange draft.
+
+All three causes were the same shape: **a lookup failing, reported as a
+decision.**
+
+| Symptom in the log | Actually |
+|---|---|
+| "Ka'imi Fairbairn is gone" (x7) | never taken — the list renders ~59 rows and a kicker sits outside the window |
+| "Amon-Ra St. Brown is gone" | the page had not painted yet on the run's first load; we drafted him one pick later |
+| "Texans is gone" (x8) | the name never matched a row |
+| "no WES_SLEEPER_TOKEN" (x15) | the value was on the machine; the shell predated it |
+
+**The windowed list.** Sleeper renders roughly 59 player rows, ordered by ITS
+ranking, so a player we rate highly can be perfectly available and simply not
+drawn. `submit_pick` now fills the "Find player" search box before concluding
+anything.
+
+**Unrendered is not absent.** `submit_pick` waited a fixed 6s then queried. An
+empty list and an absent player are indistinguishable to a query selector. It
+now waits for `.player-rank-item2` to exist, and an empty list raises "never
+rendered — refusing to pick blind", deliberately NOT the phrase the loop
+substitutes on. Standing down for `cpu_autopick` is right there; substituting on
+a guess is not.
+
+**Defences were unclickable by name.** Sleeper splits a club across
+`first_name`/`last_name` ("Houston"/"Texans") with no `full_name`, so
+`parse_players` took the last name alone. That happened to agree with ESPN's
+stat feed — which also says "Texans" — and disagree with the draft room, which
+renders **"Houston Texans"**. The UI spelling now wins, with a nickname fallback
+added to the valuation join: without that, the fix would have traded a click bug
+for a silently UNVALUED position, and an unvalued player is dropped from the
+board entirely. Worse, not better.
+
+**A stale shell decided whether we could draft.** One run inherited no
+`WES_SLEEPER_TOKEN`, stood down on all fifteen picks, let `cpu_autopick` take
+them, and printed a completely plausible roster that proved nothing.
+`_read_token` now falls back to the persisted `HKCU\Environment` value on
+Windows.
+
+The next draft went **15 of 15 with zero substitutions**, every starting slot
+filled by pick 73, K and DEF landing for the first time.
+
+**Owner decision:** keep the substitution fallback despite it having been wrong
+in 100% of observed firings — entering auto-draft mode is the worse failure.
+
+## Byes and phase: what the model was asked to weigh and never given (2026-08-15)
+
+Two weaknesses in the first clean draft, neither a crash.
+
+**Bye weeks were asked for and not supplied.** The prompt said "consider
+bye-week spread" while the shortlist carried no bye weeks at all. Roster entries
+had one; candidates did not. The model could see which weeks it was exposed on
+but not which pick would make that worse — half a comparison is not one.
+Candidates now carry `bye`, the state carries `bye_counts`, and the prompt
+explains what sharing a bye costs. An unknown bye stays `None` rather than
+defaulting, or we would spread a roster off a bye nobody has.
+
+**Need-based reasoning runs out.** Once every starting slot is full the need
+bump is zero for everyone and VOR is all that remains — the last seven picks
+were all RBs justified in the same sentence five times. The state now names a
+`phase` (`starters` / `depth`), and in depth the prompt asks for what a bench
+pick is actually for: a backup to one of YOUR starters, upside over a known low
+ceiling, coverage on a thin bye week.
+
+Result: max 3 players on any bye week across nine different weeks, and reasons
+that cite specific weeks. **But one reason was false** — pick 150 took Jayden
+Reed "without any bye week conflicts" when we had taken Matthew Golden (same
+team, same week) nineteen picks earlier. The data is reaching the model and
+sometimes genuinely driving the choice, and sometimes it is decoration on a VOR
+pick. `roster_fit`'s penalty remains the real guardrail.
+
+Still no handcuff logic: the shortlist has no depth-chart data, so "back up your
+own starter" is aspirational until the snapshot carries one.
+
+## The replay harness was measuring the wrong agent (2026-08-15)
+
+`draft_replay` called `agent.choose` with **no context** — the same omission
+that caused nine consecutive running backs live. Every comparison it had ever
+printed was of an agent choosing with no roster, no unfilled slots, no byes and
+no phase in view. Fixed to pass the identical context dict the loop builds.
+
+First honest head-to-head (draft `1394507838788743168`, 15 picks):
+
+| contender | agreed with the engine's top pick |
+|---|---|
+| local (gemma4:12b) | 6/15 (40%) |
+| Claude (haiku-4.5) | 3/15 (20%) |
+
+The two models agreed with **each other on 11/15**. Both refused the engine's
+top pick in rounds 5-6 (Bhayshul Tuten, with QB and TE slots empty) and in
+rounds 13-15 (Travis Kelce, three picks running). **The judgment layer is doing
+real work rather than rubber-stamping a sort** — which was the open question
+when it was built. Claude's five disagreements were all bye-driven.
+
+Agreement is not accuracy; there is no ground truth for a draft pick.
+
+## Draft day (2026-08-15)
+
+Every mock was launched from a throwaway script with a hard-coded draft id,
+because a mock CREATES the draft it joins. The real one does not work that way:
+the id already exists and Sleeper opens the room on the commissioner's schedule.
+Nothing about the day is ours to trigger — being connected and correct when it
+opens is the whole job.
+
+`pc/sleeper_draft_day.py` + `pc/scripts/run_sleeper_draft.ps1` resolve the draft
+and roster ids from the league, pre-flight, wait for status `drafting`, and hand
+off to the loop. **Not a scheduled task**, deliberately: one event on one
+afternoon, and a timer would either idle for weeks or start unattended.
+
+The pre-flight checks only things that have already failed once — token, live
+writes, league, roster, snapshot age, model reachable, browser session — and
+reports the whole list rather than dying on the first. An unassigned draft slot
+is explicitly NOT a failure; Sleeper publishes the order when the draft starts.
+
+Verified green against the real league: **2026-09-04 13:00 PDT**, 12 teams x 15
+rounds, **600s pick clock** (twenty times the margin the ~20s-per-pick mocks
+ran on), `cpu_autopick` on, roster_id 3.
