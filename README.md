@@ -41,7 +41,7 @@ is allowlisted, so it runs without a permission prompt, and it waits for
 | Command | Does |
 |---|---|
 | `reload [server\|discord\|exporters]` | restart the scheduled task, wait for `/health` |
-| `test` | the pytest suite (skips Pi hardware tests) |
+| `test [file]` | the pytest suite, or just one file (skips Pi hardware tests) |
 | `eval [local\|haiku]` | reply-quality eval vs the golden set |
 | `perf` | latency check against the recorded baseline |
 | `health` | `GET /health` as JSON |
@@ -174,8 +174,19 @@ A Windows venv can't live on `Z:` either, so PC Python environments go on `C:`.
 ## Testing
 
 ```powershell
-& C:\Users\awarm\wes-pc\wes-dev.ps1 test
+& C:\Users\awarm\wes-pc\wes-dev.ps1 test                          # all 943, ~13s
+& C:\Users\awarm\wes-pc\wes-dev.ps1 test test_unit_sleeper.py     # one file, ~2s
+& C:\Users\awarm\wes-pc\wes-dev.ps1 test -k draft                 # by name
 ```
+
+**One test file per module, and none of them touch the network** — so a targeted
+run is cheap and there is rarely a reason to sit through the whole suite while
+iterating. A leading path runs only that file; a bare filename resolves against
+`tests\`. Plain flags still apply to everything.
+
+Nearly all of a targeted run is pytest starting up (~2s fixed); the slowest
+single test is 2s and the rest average 14ms, so splitting the suite up further
+would buy almost nothing. Run the whole thing before committing.
 
 CI (`.github/workflows/ci.yml`) runs the hardware- and API-free suite on every
 push and PR. **Add a test in the same change as the feature** — and keep unit

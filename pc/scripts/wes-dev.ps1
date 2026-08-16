@@ -5,7 +5,8 @@
 #   & C:\Users\awarm\wes-pc\wes-dev.ps1 <command> [args]
 #
 # commands:
-#   test [pytest args]      run the unit suite (ignores test_faces.py)
+#   test [file|node] [args] run the unit suite; a leading path runs ONLY that
+#                           (test_unit_sleeper.py resolves against tests\)
 #   eval [local|haiku]      run the golden eval (judge defaults to local)
 #   perf                    run perf_check.py
 #   reload [server|discord|exporters]   restart the task (default server) + wait health
@@ -53,7 +54,31 @@ function Wait-Health {
 }
 
 switch ($cmd) {
-    "test"   { & $py -m pytest "$repo\tests" -q --ignore="$repo\tests\test_faces.py" @rest }
+    "test"   {
+        # TARGETING ACTUALLY TARGETS. This used to pass the whole tests
+        # directory AND then append whatever you asked for, so
+        # "wes-dev test test_unit_sleeper.py" ran all 943 tests plus that file
+        # again - 15s instead of 2.5s, and it looked like the suite was simply
+        # slow. It is not: one file is 2.5s and nearly all of that is pytest
+        # starting up.
+        #
+        # A leading PATH (or a node id containing ::) means "run only this".
+        # Anything else - -k, -x, --durations - still applies to the whole
+        # suite, so plain flags behave exactly as before.
+        $first = if ($rest.Count -ge 1) { [string]$rest[0] } else { "" }
+        $target = ""
+        if ($first -and -not $first.StartsWith("-")) {
+            foreach ($cand in @($first, "$repo\tests\$first")) {
+                if ((Test-Path $cand) -or $cand.Contains("::")) { $target = $cand; break }
+            }
+        }
+        if ($target) {
+            $extra = if ($rest.Count -ge 2) { @($rest | Select-Object -Skip 1) } else { @() }
+            & $py -m pytest $target -q @extra
+        } else {
+            & $py -m pytest "$repo\tests" -q --ignore="$repo\tests\test_faces.py" @rest
+        }
+    }
     "eval"   {
         # First arg is the judge IF it names one; anything else forwards to
         # eval_turns.py. So all of these route through this ONE allowlisted verb:
