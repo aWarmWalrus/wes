@@ -77,13 +77,28 @@ def replay(draft_id, slot, league_id, limit=8, contenders=("engine", "local")):
                or actual.get("player_id"),
                "shortlist": [c["name"] for c in cands]}
 
+        # THE SAME CONTEXT THE LIVE LOOP PASSES. Replaying with none measures a
+        # different agent from the one that drafts — choosing with no roster in
+        # view is exactly what produced nine consecutive running backs, and a
+        # harness reproducing the bug-era inputs would report on a system nobody
+        # runs (2026-08-15).
+        ctx = {"round": state.get("round"),
+               "pick_number": actual.get("pick_no"),
+               "picks_until_next_turn": state.get("picks_until_turn"),
+               "starting_slots": state.get("starting_slots"),
+               "roster_so_far": state.get("roster"),
+               "still_unfilled": state.get("still_unfilled"),
+               "bye_counts": state.get("bye_counts"),
+               "phase": state.get("phase")}
+
         for who in contenders:
             if who == "engine":
                 row["engine"] = (cands[0]["name"], "top of the board")
                 continue
             post = ollama_post if who == "local" else claude_post
             try:
-                pick, reason, source = agent.choose(cands, _post_fn=post)
+                pick, reason, source = agent.choose(cands, context=ctx,
+                                                    _post_fn=post)
                 row[who] = (pick["name"],
                             reason if source == "model" else f"FELL BACK: {reason}")
             except Exception as e:  # noqa: BLE001 — one model failing must not
