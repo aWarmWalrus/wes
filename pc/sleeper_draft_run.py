@@ -112,7 +112,14 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
                "picks_until_next_turn": board.get("picks_until_turn"),
                "starting_slots": board.get("starting_slots"),
                "roster_so_far": board.get("roster"),
-               "still_unfilled": board.get("still_unfilled")}
+               "still_unfilled": board.get("still_unfilled"),
+               # Bye exposure and which draft we are in. Without these the
+               # model was told to weigh bye spread with no byes in hand, and
+               # had nothing to reason with once the starters were full — the
+               # last seven picks of a clean mock were all RBs, justified in
+               # the same sentence five times (2026-08-15).
+               "bye_counts": board.get("bye_counts"),
+               "phase": board.get("phase")}
         # Re-verify availability against FRESH picks — cache BYPASSED. The
         # board was true a moment ago, and a moment is enough for someone to
         # take him; reading a 15s-old pick list here is not a re-check at all.

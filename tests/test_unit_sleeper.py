@@ -10,7 +10,10 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
+import json  # noqa: E402
+import wes_draft_agent as agent  # noqa: E402
 import wes_nfl  # noqa: E402
+import wes_snapshot as snapshot  # noqa: E402
 import wes_sleeper as sl  # noqa: E402
 
 
@@ -897,3 +900,67 @@ class TestDefenceNaming:
             return {"status": "drafting", "settings": {"teams": 2, "rounds": 2},
                     "slot_to_roster_id": {"1": 1, "2": 2}, "type": "snake"}
         return {}
+
+
+class TestByeAndPhaseContext:
+    """The prompt asked the model to "consider bye-week spread" while the
+    shortlist carried no bye weeks, and gave it nothing to reason with once
+    every starting slot was full — the last seven picks of a clean mock were all
+    RBs, justified in the same sentence five times (2026-08-15)."""
+
+    @staticmethod
+    def _get(path):
+        if "/league/" in path:
+            return {"scoring_settings": {"rec": 1},
+                    "roster_positions": ["RB", "BN"]}
+        if "/picks" in path:
+            return []
+        if "/draft/" in path:
+            return {"status": "drafting", "settings": {"teams": 2, "rounds": 2},
+                    "slot_to_roster_id": {"1": 1, "2": 2}, "type": "snake"}
+        return {}
+
+    def _board(self, monkeypatch, roster_players=(), byes=None):
+        monkeypatch.setattr(
+            snapshot, "byes",
+            lambda: {"KC": 10, "SF": 10, "BUF": 7} if byes is None else byes)
+        idx = {"1": {"name": "A Back", "positions": ["RB"], "team": "KC"},
+               "2": {"name": "B Back", "positions": ["RB"], "team": "BUF"}}
+        idx.update({str(p): {"name": f"Have{p}", "positions": ["RB"],
+                             "team": "SF"} for p in roster_players})
+        pool = [{"name": n["name"], "positions": ["RB"], "team": n["team"],
+                 "gp": 17.0, "cats": {"Rec": 50.0}} for n in idx.values()]
+        return sl.draft_candidates(
+            "L", "D", 1, limit=6, _index_fn=lambda: idx,
+            _pool_fn=lambda: pool, _picks=[], _get_fn=lambda p, **k: self._get(p))
+
+    def test_every_candidate_carries_its_own_bye(self, monkeypatch):
+        out = self._board(monkeypatch)
+        assert not isinstance(out, str), out
+        byes = {c["name"]: c["bye"] for c in out["candidates"]}
+        assert byes["A Back"] == 10 and byes["B Back"] == 7
+
+    def test_an_unknown_bye_is_none_not_a_guessed_week(self, monkeypatch):
+        """Defaulting to a week would spread a roster off a bye nobody has."""
+        out = self._board(monkeypatch, byes={})
+        assert all(c["bye"] is None for c in out["candidates"])
+
+    def test_phase_is_starters_while_a_slot_is_empty(self, monkeypatch):
+        out = self._board(monkeypatch)
+        assert out["phase"] == "starters"
+        assert out["still_unfilled"]
+
+    def test_the_shortlist_shows_the_bye_to_the_model(self):
+        seen = {}
+
+        def fake_post(body):
+            seen.update(json.loads(body))
+            return '{"player_key": "1", "reason": "ok"}'
+        cands = [{"player_key": "1", "name": "A", "positions": ["RB"],
+                  "team": "KC", "vor": 1.0, "bye": 10}]
+        pick, _reason, source = agent.choose(cands, context={"phase": "depth"},
+                                             _post_fn=fake_post)
+        assert source == "model"
+        sent = json.loads(seen["messages"][1]["content"])
+        assert sent["shortlist"][0]["bye_week"] == 10
+        assert sent["context"]["phase"] == "depth"

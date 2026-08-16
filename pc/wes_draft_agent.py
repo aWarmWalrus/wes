@@ -67,6 +67,18 @@ SYSTEM = (
     "worth more than another backup at a position you have already stacked: "
     "you can only start so many of one position, and an empty slot scores "
     "zero all season.\n"
+    "The context also gives a PHASE. When it is 'starters', filling empty "
+    "slots dominates everything else. When it is 'depth', every starting slot "
+    "is already filled and value-over-replacement stops being the point — you "
+    "are buying insurance and upside, so prefer: a backup to one of YOUR "
+    "starters (he inherits the touches if your man is hurt); a young or "
+    "newly-promoted player with room to grow over a known low ceiling; and a "
+    "player whose bye week you are thin on.\n"
+    "BYE WEEKS: `bye_counts` in the context is how many players you already "
+    "have on each bye week, and each shortlist entry has its own `bye_week`. "
+    "Players sharing a bye all sit out the same week together, so adding to a "
+    "week you are already stacked on can cost you that week outright. Spread "
+    "them where the choice is otherwise close.\n"
     'Reply as JSON: {"player_key": "<key>", "reason": "<one short sentence>"}'
 )
 
@@ -141,6 +153,10 @@ def choose(candidates, context=None, _post_fn=None):
          "position": "/".join(c.get("positions") or []),
          "team": c.get("team"), "value_over_replacement": c.get("vor"),
          "positional_need": c.get("need_bump"),
+         # The bye is the one roster-construction fact the model was asked to
+         # weigh and never given: the prompt said "consider bye-week spread"
+         # while the shortlist carried no bye weeks at all.
+         "bye_week": c.get("bye"),
          "fit_concerns": c.get("fit_reasons") or []}
         for c in candidates]}
 

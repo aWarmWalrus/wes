@@ -741,6 +741,11 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
                                      scoring["weights"], scoring["tiers"])
         board.append({"name": info["name"], "positions": info.get("positions"),
                       "team": info.get("team"), "player_key": pid,
+                      # The candidate's own bye. The ROSTER already carried one
+                      # and the candidates did not, so the model could see the
+                      # weeks it was already exposed on but not which pick would
+                      # make that worse — half a comparison is not one.
+                      "bye": byes.get((info.get("team") or "").strip()),
                       "value": round(val, 2)})
     if not board:
         return "I couldn't value any available player for that draft."
@@ -808,6 +813,15 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     board = sorted(best_overall + per_pos,
                    key=lambda x: x["adj_value"], reverse=True)
 
+    unfilled = {pos: max(0, n - have.get(pos, 0))
+                for pos, n in targets.items()
+                if max(0, n - have.get(pos, 0)) > 0}
+    bye_counts = {}
+    for p in mine:
+        wk = byes.get(((index.get(p) or {}).get("team") or "").strip())
+        if wk is not None:
+            bye_counts[str(wk)] = bye_counts.get(str(wk), 0) + 1
+
     return {
         "round": made // teams + 1, "picks_made": made,
         "picks_until_turn": wait, "on_the_clock": wait == 0,
@@ -822,9 +836,19 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
                     "bye": byes.get((index.get(p) or {}).get("team"))}
                    for p in mine],
         "starting_slots": list(slots),
-        "still_unfilled": {pos: max(0, n - have.get(pos, 0))
-                           for pos, n in targets.items()
-                           if max(0, n - have.get(pos, 0)) > 0},
+        "still_unfilled": unfilled,
+        # BYE EXPOSURE, counted rather than described. roster_fit already
+        # penalises clustering, but that penalty is a number folded into
+        # adj_value and the model never saw the weeks themselves — it was asked
+        # to "consider bye-week spread" with no bye weeks in front of it.
+        "bye_counts": bye_counts,
+        # WHICH DRAFT WE ARE IN. Filling starters and building a bench are
+        # different problems, and need-based reasoning has nothing left to say
+        # once every slot is full: the last seven picks of a clean mock were all
+        # RBs justified as "highest VOR to bolster RB depth", five times in the
+        # same words (2026-08-15). Naming the phase gives the model something to
+        # reason WITH after need runs out.
+        "phase": "starters" if unfilled else "depth",
         "candidates": board,
     }
 
