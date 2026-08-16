@@ -122,13 +122,13 @@ def _strip_fence(raw):
     return body.strip()
 
 
-def _ask_model(payload, _post_fn=None):
+def _ask_model(payload, _post_fn=None, system=None):
     """One structured call. Returns the parsed dict, or None on any failure —
     the caller falls back to the engine, so this must never raise."""
     body = json.dumps({
         "model": PICK_MODEL, "stream": False, "format": "json",
         "think": False, "options": {"temperature": 0},
-        "messages": [{"role": "system", "content": SYSTEM},
+        "messages": [{"role": "system", "content": system or SYSTEM},
                      {"role": "user", "content": json.dumps(payload)}],
     }).encode()
     try:
@@ -145,39 +145,157 @@ def _ask_model(payload, _post_fn=None):
         return None
 
 
+# THE PICK PROMPT AND PAYLOAD ARE FROZEN, AND THAT IS AN EMPIRICAL RESULT.
+#
+# Adding depth-chart data and a richer reply schema, then measuring on the
+# replay harness against one fixed board, gave this — agreement with the
+# engine's top pick, and whether the three scarce slots got filled:
+#
+#   committed baseline ...................  5/15   QB y  K y  DEF y
+#   + fields, simple reply ...............  9/15   QB y  K n  DEF n
+#   + fields, pruned payload .............  8/15   QB n  K n  DEF y
+#   + fields + rich reply ................ 10/15   QB n  K n  DEF n
+#   + fields + rich reply, no handcuff
+#     paragraph in the prompt ............ 10/15   QB n  K n  DEF n
+#
+# NOTHING BEAT THE BASELINE, and the damage is not monotonic in prompt size —
+# REMOVING text made it worse too. gemma4:12b is at capacity for this task, so
+# each perturbation is effectively a coin flip. Rising agreement with the
+# engine is the tell: it means the model stopped exercising judgment and went
+# back to rubber-stamping the sort, which is the one thing this layer exists
+# to avoid.
+#
+# So the pick call keeps exactly the inputs measured good, and anything we want
+# to ADD goes somewhere it cannot move the pick. See `explain`.
+def _entry(c):
+    """One shortlist row for the PICK call. Frozen — see the note above."""
+    return {
+        "player_key": c.get("player_key"), "name": c.get("name"),
+        "position": "/".join(c.get("positions") or []),
+        "team": c.get("team"), "value_over_replacement": c.get("vor"),
+        "positional_need": c.get("need_bump"),
+        "bye_week": c.get("bye"),
+        "market_rank": c.get("market_rank"),
+        "injury": c.get("injury"),
+        "fit_concerns": c.get("fit_reasons") or [],
+    }
+
+
+EXPLAIN_SYSTEM = (
+    "You are reviewing a fantasy football draft pick that has ALREADY BEEN "
+    "MADE. It is not yours to change and you must not argue for a different "
+    "player — your job is to record accurately what supports it.\n"
+    "You get the roster context, the shortlist that was available, and which "
+    "player was taken. Some entries carry `handcuff_for`, naming a starter on "
+    "this roster that the player backs up: he inherits the touches if that "
+    "starter is hurt, which makes him worth more to this team than to any "
+    "other.\n"
+    "Cite only what the data supports. If a bye week is not crowded, do not "
+    "say it was — an invented reason is worse than a short one.\n"
+    "Reply as JSON:\n"
+    '  "considered": the factors supporting this pick, each a short phrase\n'
+    '                with its number, e.g. "value over replacement 7.55, best\n'
+    '                available", "fills the empty TE slot", "bye week 6\n'
+    '                already has 3 players"\n'
+    '  "runner_up":  the player_key of the next-best choice, or null\n'
+    '  "why_not":    one sentence on what the runner-up lacks'
+)
+
+
+def explain(candidates, chosen, context=None, _post_fn=None):
+    """Describe an ALREADY-MADE pick. Returns (considered, runner_up, why_not).
+
+    A SEPARATE CALL, deliberately. Asking for the rationale in the same breath
+    as the decision measurably degraded the decision — five variants, none
+    better than the baseline, one that lost the quarterback, the kicker AND the
+    defence. Explaining afterwards cannot do that: the pick is fixed before
+    this runs, so a verbose or confused answer costs nothing but a dull log
+    line.
+
+    It also buys honesty. This model has been caught claiming a bye-week check
+    it never performed; a reviewer told the pick is already settled has no
+    choice left to justify.
+
+    Best-effort throughout — the caller must treat empty as normal."""
+    if not chosen:
+        return [], None, ""
+    payload = {"context": context or {},
+               "shortlist": [dict(_entry(c),
+                                  handcuff_for=c.get("handcuff_for"))
+                             for c in candidates],
+               "player_taken": chosen.get("player_key"),
+               "name_taken": chosen.get("name")}
+    got = _ask_model(payload, _post_fn=_post_fn, system=EXPLAIN_SYSTEM)
+    if not isinstance(got, dict):
+        return [], None, ""
+    raw = got.get("considered")
+    considered = ([str(x).strip() for x in raw if str(x).strip()]
+                  if isinstance(raw, list) else [])
+    runner = next((c for c in candidates
+                   if str(c.get("player_key")) == str(got.get("runner_up"))
+                   and c.get("player_key") != chosen.get("player_key")), None)
+    return (considered, runner.get("name") if runner else None,
+            str(got.get("why_not") or "").strip())
+
+
 def choose(candidates, context=None, _post_fn=None):
     """Pick ONE candidate. Returns (candidate, reason, source).
+
+    The compact form, kept because most callers want exactly this. Use
+    `decide_one` when you want the factors the model weighed and its runner-up.
+    """
+    # No explanation call: this form discards it, and a second model round
+    # trip nobody reads is pure latency on a clock.
+    d = decide_one(candidates, context=context, _post_fn=_post_fn,
+                   with_explanation=False)
+    return d["candidate"], d["reason"], d["source"]
+
+
+def decide_one(candidates, context=None, _post_fn=None,
+               with_explanation=True, _explain_post_fn=None):
+    """Pick ONE candidate, WITH the reasoning behind it.
+
+    Returns a dict: candidate, reason, source, considered, runner_up, why_not.
 
     `source` is "model" or "engine", and it is recorded rather than hidden: an
     agent whose judgment silently degrades to a sort is one you cannot evaluate
     later. The ledger should be able to answer "was the model right the twelve
-    times it disagreed with the board?"."""
+    times it disagreed with the board?".
+
+    `considered` and `runner_up` come from a SECOND call, made after the pick
+    is already fixed (see `explain`). A one-line reason tells you what the
+    model SAID; the factors and the near-miss tell you whether that reason was
+    load-bearing — and this agent has been caught narrating a bye-week check it
+    never performed (2026-08-15). Asking for both in one call measurably
+    damaged the picks, so they are separated.
+
+    Pass `explain=False` on a tight clock: the detail is for the log, and a
+    pick is worth more than a paragraph about it."""
+    blank = {"candidate": None, "reason": "no candidates", "source": "engine",
+             "considered": [], "runner_up": None, "why_not": ""}
     if not candidates:
-        return None, "no candidates", "engine"
+        return blank
     top = candidates[0]
 
-    payload = {"context": context or {}, "shortlist": [
-        {"player_key": c.get("player_key"), "name": c.get("name"),
-         "position": "/".join(c.get("positions") or []),
-         "team": c.get("team"), "value_over_replacement": c.get("vor"),
-         "positional_need": c.get("need_bump"),
-         # The bye is the one roster-construction fact the model was asked to
-         # weigh and never given: the prompt said "consider bye-week spread"
-         # while the shortlist carried no bye weeks at all.
-         "bye_week": c.get("bye"),
-         # Market price: what the room thinks he is worth. None = unranked,
-         # which is not the same as ranked last.
-         "market_rank": c.get("market_rank"),
-         "injury": c.get("injury"),
-         "fit_concerns": c.get("fit_reasons") or []}
-        for c in candidates]}
+    def out(cand, reason, source, detail=False):
+        rec = {"candidate": cand, "reason": reason, "source": source,
+               "considered": [], "runner_up": None, "why_not": ""}
+        if detail and with_explanation:
+            got = explain(candidates, cand, context=context,
+                          _post_fn=_explain_post_fn)
+            rec["considered"], rec["runner_up"], rec["why_not"] = got
+        return rec
+
+    payload = {"context": context or {},
+               "shortlist": [_entry(c) for c in candidates]}
 
     got = _ask_model(payload, _post_fn=_post_fn)
     if not isinstance(got, dict):
         # Deliberately says "no usable reply", not "unavailable": the first
         # version claimed unavailability for what was really an unparseable
         # (fenced) answer, which sent the diagnosis in the wrong direction.
-        return top, "no usable reply from the model; took the board's top pick", "engine"
+        return out(top, "no usable reply from the model; took the board's "
+                   "top pick", "engine", detail=True)
 
     key = str(got.get("player_key") or "")
     match = next((c for c in candidates
@@ -186,10 +304,25 @@ def choose(candidates, context=None, _post_fn=None):
         # THE load-bearing check. A key that is not on the shortlist is a
         # hallucination, a stale board, or a player someone just took — all of
         # which must resolve to the engine's pick, never to a guess.
-        return (top, "model chose a player not on the shortlist; took the "
-                "board's top pick", "engine")
+        return out(top, "model chose a player not on the shortlist; took the "
+                   "board's top pick", "engine", detail=True)
     reason = str(got.get("reason") or "").strip() or "no reason given"
-    return match, reason, "model"
+    return out(match, reason, "model", detail=True)
+
+
+def format_decision(d):
+    """The decision as log lines. Multi-line on purpose: a draft is reviewed
+    afterwards, and a rationale squeezed onto one line is a rationale nobody
+    reads."""
+    if not d.get("candidate"):
+        return d.get("reason", "no decision")
+    lines = [f"{d['candidate']['name']} ({d['source']}: {d['reason']})"]
+    for f in d.get("considered") or []:
+        lines.append(f"    weighed: {f}")
+    if d.get("runner_up"):
+        why = d.get("why_not") or "no reason given"
+        lines.append(f"    over: {d['runner_up']} — {why}")
+    return "\n".join(lines)
 
 
 def decide(league_id, draft_id, roster_id, limit=8, _board_fn=None,

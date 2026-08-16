@@ -264,6 +264,13 @@ def parse_players(payload):
             # Sleeper's own ranking — the order the draft room renders in, and
             # the closest thing to a market price we get for free.
             "search_rank": _market_rank(p.get("search_rank")),
+            # Where he sits on his own team's depth chart (1 = starter). 75%
+            # coverage on rostered skill players. This is what makes a HANDCUFF
+            # nameable rather than guessed at: the RB2 behind a back we already
+            # own inherits the touches if that back goes down.
+            "depth_chart_order": (p.get("depth_chart_order")
+                                  if isinstance(p.get("depth_chart_order"), int)
+                                  else None),
         }
     return out
 
@@ -301,6 +308,32 @@ def _can_play(info):
     if (info.get("injury_status") or "") in UNDRAFTABLE_INJURY:
         return False
     return (info.get("roster_status") or "") not in UNDRAFTABLE_ROSTER
+
+
+def _handcuff_for(info, my_players):
+    """Which player of OURS this candidate backs up, if any.
+
+    A handcuff is the reserve behind a starter we already own: if our man goes
+    down, this is who inherits the touches, so he is worth more to US than his
+    raw projection says. Returns the starter's name, or None.
+
+    Deliberately computed here rather than described to the model. The join is
+    team + position + a strictly lower depth-chart order across two lists, and
+    a small model asked to do that in its head produces a confident wrong
+    answer — which is exactly what the false bye-week claims looked like."""
+    order = info.get("depth_chart_order")
+    team = (info.get("team") or "").strip()
+    pos = (info.get("positions") or [None])[0]
+    if not order or not team or not pos:
+        return None
+    ahead = [p for p in my_players
+             if (p.get("team") or "").strip() == team
+             and pos in (p.get("positions") or [])
+             and isinstance(p.get("depth_chart_order"), int)
+             and p["depth_chart_order"] < order]
+    if not ahead:
+        return None
+    return min(ahead, key=lambda p: p["depth_chart_order"]).get("name")
 
 
 def _market_rank(raw):
@@ -742,7 +775,9 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     for pid in mine:
         info = index.get(pid) or {}
         my_players.append({"team": info.get("team"),
-                           "positions": info.get("positions") or []})
+                           "positions": info.get("positions") or [],
+                           "name": info.get("name"),
+                           "depth_chart_order": info.get("depth_chart_order")})
         for pos in info.get("positions") or []:
             have[pos] = have.get(pos, 0) + 1
 
@@ -812,6 +847,12 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
                       # unranked, which is NOT the same as ranked last.
                       "market_rank": info.get("search_rank"),
                       "injury": info.get("injury_status") or None,
+                      "depth_chart_order": info.get("depth_chart_order"),
+                      # COMPUTED, not left for the model to infer. "You hold
+                      # Barkley and this is the PHI RB2" is a checkable fact;
+                      # asking a 12b to join team+position+depth across two
+                      # lists is how you get a confident wrong answer.
+                      "handcuff_for": _handcuff_for(info, my_players),
                       # The candidate's own bye. The ROSTER already carried one
                       # and the candidates did not, so the model could see the
                       # weeks it was already exposed on but not which pick would

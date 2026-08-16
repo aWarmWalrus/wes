@@ -16,6 +16,17 @@ CAND = {"player_key": "77", "name": "Target Guy", "positions": ["RB"],
         "team": "SF", "vor": 12.0}
 
 
+def _decision(cand, reason="why", source="model", considered=None,
+              runner_up=None, why_not=""):
+    """A decision dict shaped like wes_draft_agent.decide_one returns.
+
+    Defined once so adding a field to a decision does not mean editing a dozen
+    stub lambdas."""
+    return {"candidate": cand, "reason": reason, "source": source,
+            "considered": considered or [], "runner_up": runner_up,
+            "why_not": why_not}
+
+
 def _state(wait, made=0, cands=(CAND,)):
     """Turn state, as the CHEAP poll returns it. Candidates now come from the
     separate board call — split because polling with the expensive board meant
@@ -48,7 +59,7 @@ class TestRails:
                             lambda d: set())
         calls = []
         loop.run("D", "L", 1, _state_fn=_states([_state(3), _state(1)]),
-                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
                  _submit_fn=lambda *a: calls.append(a),
                  _sleep_fn=lambda _s: None)
         assert calls == []
@@ -60,7 +71,7 @@ class TestRails:
         calls = []
         out = loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
                        _board_fn=_board(),
-                       _decide_fn=lambda c, **kw: (CAND, "why", "model"),
+                       _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
                        _submit_fn=lambda *a: calls.append(a),
                        _sleep_fn=lambda _s: None)
         assert calls == [("D", "77", "Target Guy")]
@@ -77,7 +88,7 @@ class TestRails:
         loop.run("D", "L", 1,
                  # Same pick number three times, as a lagging API would report.
                  _state_fn=_states([_state(0), _state(0), _state(0)]),
-                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
                  _submit_fn=lambda *a: calls.append(a),
                  _sleep_fn=lambda _s: None)
         assert len(calls) == 1
@@ -95,7 +106,7 @@ class TestRails:
             calls.append(a)
             raise RuntimeError("click failed")
         loop.run("D", "L", 1, _state_fn=_states([_state(0), _state(0)]),
-                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
                  _submit_fn=boom, _sleep_fn=lambda _s: None)
         assert len(calls) == 1
 
@@ -112,7 +123,7 @@ class TestRails:
                             lambda d: {"77"})       # taken while we thought
         calls = []
         loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
-                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
                  _submit_fn=lambda *a: calls.append(a),
                  _sleep_fn=lambda _s: None)
         assert calls == []
@@ -123,7 +134,7 @@ class TestRails:
                             lambda d: set())
         calls = []
         loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
-                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
                  _submit_fn=lambda *a: calls.append(a),
                  _sleep_fn=lambda _s: None)
         assert calls == []
@@ -135,7 +146,7 @@ class TestRails:
         out = loop.run("D", "L", 1,
                        _state_fn=_states([_state(0), _state(0)]),
                        _board_fn=_board(cands=()),
-                       _decide_fn=lambda c, **kw: (CAND, "w", "model"),
+                       _decide_fn=lambda c, **kw: _decision(CAND, "w", "model"),
                        _submit_fn=lambda *a: None, _sleep_fn=lambda _s: None)
         assert "0 pick" in out
 
@@ -153,7 +164,7 @@ class TestRails:
         calls = []
         loop.run("D", "L", 1,
                  _state_fn=_states(["I couldn't reach Sleeper", _state(0)]),
-                 _board_fn=_board(), _decide_fn=lambda c, **kw: (CAND, "why", "model"),
+                 _board_fn=_board(), _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
                  _submit_fn=lambda *a: calls.append(a),
                  _sleep_fn=lambda _s: None)
         assert len(calls) == 1
@@ -200,7 +211,7 @@ class TestFailureKinds:
             return True
         loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
                  _board_fn=_board(cands=self.CANDS),
-                 _decide_fn=lambda c, **kw: (self.CANDS[0], "why", "model"),
+                 _decide_fn=lambda c, **kw: _decision(self.CANDS[0], "why"),
                  _submit_fn=submit, _sleep_fn=lambda _s: None)
         assert calls == ["Target Guy", "Backup Guy"]     # tried the next one
 
@@ -216,7 +227,7 @@ class TestFailureKinds:
             raise RuntimeError("clicked but the pick never appeared")
         loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
                  _board_fn=_board(cands=self.CANDS),
-                 _decide_fn=lambda c, **kw: (self.CANDS[0], "why", "model"),
+                 _decide_fn=lambda c, **kw: _decision(self.CANDS[0], "why"),
                  _submit_fn=submit, _sleep_fn=lambda _s: None)
         assert calls == ["Target Guy"]                   # no second attempt
 
@@ -229,7 +240,7 @@ class TestFailureKinds:
 
         def decide(cands, **kw):
             seen["keys"] = [c["player_key"] for c in cands]
-            return cands[0], "why", "model"
+            return _decision(cands[0], "why")
         loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
                  _board_fn=_board(cands=self.CANDS), _decide_fn=decide,
                  _submit_fn=lambda *a: True, _sleep_fn=lambda _s: None)

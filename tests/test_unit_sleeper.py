@@ -1225,3 +1225,54 @@ class TestInjuryPenalty:
 
     def test_a_healthy_player_pays_nothing(self):
         assert self._board("")["Healthy"]["fit_penalty"] == 0.0
+
+
+class TestHandcuff:
+    """A handcuff is the reserve behind a starter WE own -- he inherits the
+    touches if our man goes down. The join is team + position + a strictly
+    lower depth-chart order, and it is computed here rather than described to
+    the model: a small model asked to do that in its head produces a confident
+    wrong answer, which is what the false bye-week claims looked like."""
+
+    MINE = [{"name": "Saquon Barkley", "team": "PHI", "positions": ["RB"],
+             "depth_chart_order": 1}]
+
+    def test_it_names_the_starter_we_hold(self):
+        got = sl._handcuff_for(
+            {"team": "PHI", "positions": ["RB"], "depth_chart_order": 2},
+            self.MINE)
+        assert got == "Saquon Barkley"
+
+    def test_a_different_team_is_not_a_handcuff(self):
+        assert sl._handcuff_for(
+            {"team": "DAL", "positions": ["RB"], "depth_chart_order": 2},
+            self.MINE) is None
+
+    def test_a_different_position_is_not_a_handcuff(self):
+        """A PHI receiver does not inherit a running back's carries."""
+        assert sl._handcuff_for(
+            {"team": "PHI", "positions": ["WR"], "depth_chart_order": 2},
+            self.MINE) is None
+
+    def test_a_player_AHEAD_of_ours_is_not_a_handcuff(self):
+        """Direction matters: he would take OUR man's touches, not inherit
+        them."""
+        assert sl._handcuff_for(
+            {"team": "PHI", "positions": ["RB"], "depth_chart_order": 1},
+            [{"name": "Ours", "team": "PHI", "positions": ["RB"],
+              "depth_chart_order": 2}]) is None
+
+    def test_an_unknown_depth_order_yields_none_not_a_guess(self):
+        """25% of rostered skill players have no depth chart order."""
+        assert sl._handcuff_for(
+            {"team": "PHI", "positions": ["RB"], "depth_chart_order": None},
+            self.MINE) is None
+
+    def test_it_names_the_highest_starter_when_several_are_ahead(self):
+        mine = [{"name": "RB1", "team": "PHI", "positions": ["RB"],
+                 "depth_chart_order": 1},
+                {"name": "RB2", "team": "PHI", "positions": ["RB"],
+                 "depth_chart_order": 2}]
+        assert sl._handcuff_for(
+            {"team": "PHI", "positions": ["RB"], "depth_chart_order": 3},
+            mine) == "RB1"

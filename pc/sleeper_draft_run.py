@@ -136,8 +136,10 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             acted_on.add(pick_no)
             continue
 
-        pick, reason, source = (_decide_fn or wes_draft_agent.choose)(
+        decision = (_decide_fn or wes_draft_agent.decide_one)(
             cands, context=ctx)
+        pick = decision["candidate"]
+        reason, source = decision["reason"], decision["source"]
         if pick is None:
             _log(f"pick {pick_no}: no decision — standing down")
             acted_on.add(pick_no)
@@ -153,7 +155,12 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         try:
             submit(draft_id, pick["player_key"], pick["name"])
             made.append(pick["name"])
-            _log(f"pick {pick_no}: DRAFTED {pick['name']} ({source}: {reason})")
+            # The full rationale, not just the sentence: the factors weighed
+            # and the player nearly taken are what make a draft reviewable
+            # afterwards, and this agent has already been caught narrating a
+            # check it did not perform.
+            _log(f"pick {pick_no}: DRAFTED "
+                 f"{wes_draft_agent.format_decision(decision)}")
         except Exception as e:  # noqa: BLE001 — one failure must not end the run
             # TWO KINDS OF FAILURE, and only one is dangerous.
             #
