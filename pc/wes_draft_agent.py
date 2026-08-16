@@ -74,6 +74,14 @@ SYSTEM = (
     "starters (he inherits the touches if your man is hurt); a young or "
     "newly-promoted player with room to grow over a known low ceiling; and a "
     "player whose bye week you are thin on.\n"
+    "MARKET RANK is where the wider market has each player; a low number is a "
+    "player others rate highly. Compare it to the pick number: taking someone "
+    "far below his rank is a reach, and a player whose rank is far above the "
+    "current pick is a bargain that will not last. `picks_until_next_turn` "
+    "plus `recent_picks_by_position` tell you what will still be there when "
+    "you pick again — if the room has taken four running backs in the last "
+    "twelve picks, the running backs you are looking at will not survive. A "
+    "market_rank of null means unranked, NOT ranked last.\n"
     "BYE WEEKS: `bye_counts` in the context is how many players you already "
     "have on each bye week, and each shortlist entry has its own `bye_week`. "
     "Players sharing a bye all sit out the same week together, so adding to a "
@@ -157,6 +165,10 @@ def choose(candidates, context=None, _post_fn=None):
          # weigh and never given: the prompt said "consider bye-week spread"
          # while the shortlist carried no bye weeks at all.
          "bye_week": c.get("bye"),
+         # Market price: what the room thinks he is worth. None = unranked,
+         # which is not the same as ranked last.
+         "market_rank": c.get("market_rank"),
+         "injury": c.get("injury"),
          "fit_concerns": c.get("fit_reasons") or []}
         for c in candidates]}
 

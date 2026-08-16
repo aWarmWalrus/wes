@@ -89,7 +89,9 @@ def replay(draft_id, slot, league_id, limit=8, contenders=("engine", "local")):
                "roster_so_far": state.get("roster"),
                "still_unfilled": state.get("still_unfilled"),
                "bye_counts": state.get("bye_counts"),
-               "phase": state.get("phase")}
+               "phase": state.get("phase"),
+               "recent_picks_by_position":
+                   state.get("recent_picks_by_position")}
 
         for who in contenders:
             if who == "engine":

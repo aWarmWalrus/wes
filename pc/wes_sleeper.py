@@ -91,6 +91,11 @@ TOKEN_KEY = "token"
 LEAGUE_TTL = float(900)
 PLAYERS_TTL = float(6 * 3600)
 
+# How far back to look for a positional run. Roughly one trip round a 12-team
+# board, which is the horizon that matters: what happens inside it decides
+# whether a tier survives until your next turn.
+RUN_WINDOW = 12
+
 
 def _get(path, ttl=LEAGUE_TTL, _get_fn=None):
     return (_get_fn or wes_http.get_json)(BASE + path, ttl=ttl)
@@ -247,9 +252,62 @@ def parse_players(payload):
             # strongest disambiguator when two players share a name and
             # position, and dropping it left 31 such pairs unresolvable (#039).
             "birth_date": p.get("birth_date") or "",
+            # `status` has meant INJURY status since the roster reader was
+            # written (it is what a roster row displays), and parse_roster
+            # depends on that. The two explicit names below are the ones new
+            # code should use, because Sleeper's own `status` field means
+            # something else entirely and reading one for the other is a bug
+            # waiting to happen.
             "status": p.get("injury_status") or "",
+            "injury_status": p.get("injury_status") or "",
+            "roster_status": p.get("status") or "",
+            # Sleeper's own ranking — the order the draft room renders in, and
+            # the closest thing to a market price we get for free.
+            "search_rank": _market_rank(p.get("search_rank")),
         }
     return out
+
+
+# Ranks run 1..997 (719 distinct). 999 and 9999999 are SENTINELS for "not
+# ranked", carried by 359 and 9468 players. Treating them as ranks would file a
+# fifth of the pool at "rank 999" and make it look merely unpopular rather than
+# unranked — the same distinction as an unknown bye, and the same rule: unknown
+# is None, never a number that happens to sort last.
+_RANK_SENTINEL = 999
+
+
+# Cannot take the field, or is not on an NFL roster at all. Kept deliberately
+# SHORT, because a hard exclusion is the model never seeing the player: these
+# are not judgment calls, and everything that IS one belongs in front of it.
+UNDRAFTABLE_INJURY = {"IR", "Out", "Suspended", "NA", "DNR"}
+UNDRAFTABLE_ROSTER = {"Inactive", "Practice Squad", "Non Football Injury"}
+
+# PUP is NOT in the list above, and that is a deliberate reversal. My first
+# version excluded it and silently deleted George Kittle (TE, 10.38 — a top-12
+# tight end) along with Alec Pierce and Zach Charbonnet. Preseason PUP with an
+# ACTIVE roster status is frequently just a camp designation, and the feed
+# carries no return date to tell the two apart. Excluding on ambiguity is the
+# same error as reporting an unrendered list as an absent player: we do not
+# know, so say so rather than decide. It costs value instead, and the model is
+# told why.
+RISKY_INJURY = {"PUP", "Doubtful", "Questionable"}
+INJURY_PENALTY = {"PUP": 4.0, "Doubtful": 3.0, "Questionable": 0.75}
+
+
+def _can_play(info):
+    """Is this player available to actually play for us this season?
+
+    A DEF has neither field and must never be filtered by their absence."""
+    if (info.get("injury_status") or "") in UNDRAFTABLE_INJURY:
+        return False
+    return (info.get("roster_status") or "") not in UNDRAFTABLE_ROSTER
+
+
+def _market_rank(raw):
+    """Sleeper's search_rank as a real rank, or None if it is a sentinel."""
+    if not isinstance(raw, int) or raw <= 0 or raw >= _RANK_SENTINEL:
+        return None
+    return raw
 
 
 def players_index(_get_fn=None, _now=None):
@@ -739,8 +797,21 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
         pos = (info.get("positions") or [None])[0]
         val = wes_nfl.fantasy_points(wes_nfl.per_game(stat).get("cats"),
                                      scoring["weights"], scoring["tiers"])
+        if not _can_play(info):
+            # HARD EXCLUSION, alongside the same-team cap — not a penalty the
+            # model may weigh. This league has 15 roster spots and NO IR slot,
+            # so a player who cannot take the field occupies a bench seat all
+            # season for nothing. 23 players sit on IR and 40 are Inactive, and
+            # until now every one of them was on the board at full projected
+            # value with nothing marking them (2026-08-15).
+            continue
         board.append({"name": info["name"], "positions": info.get("positions"),
                       "team": info.get("team"), "player_key": pid,
+                      # Market price. Lets the model reason about reaching and
+                      # about who survives to the next turn; None means
+                      # unranked, which is NOT the same as ranked last.
+                      "market_rank": info.get("search_rank"),
+                      "injury": info.get("injury_status") or None,
                       # The candidate's own bye. The ROSTER already carried one
                       # and the candidates did not, so the model could see the
                       # weeks it was already exposed on but not which pick would
@@ -786,6 +857,13 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
                           (0.5 if (pos in flex_pos and flex) else 0.0))
         if surplus > 0:
             p["need_bump"] -= 2.5 * surplus
+        # Injury risk costs VALUE and is NAMED, rather than removing the player.
+        # A hard exclusion here would have deleted a top-12 tight end over a
+        # camp designation (see RISKY_INJURY).
+        hurt = p.get("injury")
+        if hurt in RISKY_INJURY:
+            penalty += INJURY_PENALTY.get(hurt, 1.0)
+            why = list(why) + [f"listed {hurt}"]
         p["fit_penalty"] = penalty
         p["fit_reasons"] = why
         p["adj_value"] = round(p["vor"] + p["need_bump"] - penalty, 2)
@@ -816,6 +894,20 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     unfilled = {pos: max(0, n - have.get(pos, 0))
                 for pos, n in targets.items()
                 if max(0, n - have.get(pos, 0)) > 0}
+    # POSITIONAL RUNS, from picks we already hold. The prompt has told the model
+    # to "consider positional runs" since the first version while handing it no
+    # picks to see one in — the identical omission as the bye weeks, still live
+    # in a second place until now (2026-08-15). A run is the whole reason to
+    # take a position early: if six of the last ten picks were RBs, the tier
+    # you are looking at will not survive your next turn.
+    recent = {}
+    for p in picks[-RUN_WINDOW:]:
+        rp = ((p.get("metadata") or {}).get("position")
+              or (index.get(str(p.get("player_id"))) or {}).get("positions")
+              or [None])
+        rp = rp if isinstance(rp, str) else (rp[0] if rp else None)
+        if rp:
+            recent[rp] = recent.get(rp, 0) + 1
     bye_counts = {}
     for p in mine:
         wk = byes.get(((index.get(p) or {}).get("team") or "").strip())
@@ -842,6 +934,8 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
         # adj_value and the model never saw the weeks themselves — it was asked
         # to "consider bye-week spread" with no bye weeks in front of it.
         "bye_counts": bye_counts,
+        # What the room has been taking lately, so a run is visible as a run.
+        "recent_picks_by_position": recent,
         # WHICH DRAFT WE ARE IN. Filling starters and building a bench are
         # different problems, and need-based reasoning has nothing left to say
         # once every slot is full: the last seven picks of a clean mock were all

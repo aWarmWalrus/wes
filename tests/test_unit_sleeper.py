@@ -1051,3 +1051,177 @@ class TestDraftDayPreflight:
         ok, lines = day.preflight(_probe_browser=False)
         assert not ok
         assert sum(1 for ln in lines if "FAIL" in ln) == 2
+
+
+class TestUndraftable:
+    """23 players sit on IR and 40 are Inactive, and every one of them was on
+    the board at full projected value with nothing marking them. This league
+    has no IR slot, so a player who cannot take the field burns a bench seat
+    all season (2026-08-15)."""
+
+    def test_ir_is_excluded_not_merely_penalised(self):
+        assert sl._can_play({"injury_status": "IR"}) is False
+
+    def test_out_and_suspended_too(self):
+        for st in ("Out", "Suspended", "NA", "DNR"):
+            assert sl._can_play({"injury_status": st}) is False, st
+
+    def test_pup_is_NOT_excluded(self):
+        """A deliberate reversal: excluding PUP silently deleted George Kittle,
+        a top-12 TE, over what is frequently just a camp designation. The feed
+        carries no return date to tell the two apart, so we cost him value and
+        say why rather than decide on ambiguity."""
+        assert sl._can_play({"injury_status": "PUP",
+                             "roster_status": "Active"}) is True
+
+    def test_inactive_and_practice_squad_are_excluded(self):
+        assert sl._can_play({"roster_status": "Inactive"}) is False
+        assert sl._can_play({"roster_status": "Practice Squad"}) is False
+
+    def test_questionable_is_a_judgment_call_and_stays_on_the_board(self):
+        """Deliberately NOT excluded -- 82 players carry it, and dropping them
+        would gut the board over what is only a probability."""
+        assert sl._can_play({"injury_status": "Questionable",
+                             "roster_status": "Active"}) is True
+
+    def test_a_defence_has_neither_field_and_is_still_draftable(self):
+        """A DEF carries no injury or roster status; filtering on their absence
+        would delete every defence from the board."""
+        assert sl._can_play({"name": "Houston Texans"}) is True
+
+    def test_an_injured_player_never_reaches_the_board(self, monkeypatch):
+        idx = {"1": {"name": "Hurt Guy", "positions": ["RB"], "team": "KC",
+                     "injury_status": "IR", "roster_status": "Active"},
+               "2": {"name": "Fit Guy", "positions": ["RB"], "team": "SF",
+                     "injury_status": "", "roster_status": "Active"}}
+        pool = [{"name": n["name"], "positions": ["RB"], "team": n["team"],
+                 "gp": 17.0, "cats": {"Rec": 50.0}} for n in idx.values()]
+        out = sl.draft_candidates(
+            "L", "D", 1, limit=6, _index_fn=lambda: idx,
+            _pool_fn=lambda: pool, _picks=[],
+            _get_fn=lambda path, **k: TestByeAndPhaseContext._get(path))
+        assert not isinstance(out, str), out
+        names = [c["name"] for c in out["candidates"]]
+        assert names == ["Fit Guy"]
+
+
+class TestMarketRank:
+    """Sleeper's search_rank is the closest thing to a market price we get for
+    free, and its sentinels are a trap: 359 players carry 999 and 9468 carry
+    9999999, so reading them as ranks files a fifth of the pool at "rank 999"
+    -- unpopular rather than unranked."""
+
+    def test_a_real_rank_survives(self):
+        assert sl._market_rank(1) == 1
+        assert sl._market_rank(997) == 997
+
+    def test_both_sentinels_become_unknown(self):
+        assert sl._market_rank(999) is None
+        assert sl._market_rank(9999999) is None
+
+    def test_junk_is_unknown_rather_than_an_exception(self):
+        for bad in (None, "12", 0, -3, 3.5):
+            assert sl._market_rank(bad) is None, bad
+
+    def test_the_index_carries_it(self):
+        idx = sl.parse_players({"7": {"position": "RB", "full_name": "A B",
+                                      "team": "KC", "search_rank": 42}})
+        assert idx["7"]["search_rank"] == 42
+
+    def test_the_shortlist_shows_market_rank_to_the_model(self):
+        seen = {}
+
+        def fake_post(body):
+            seen.update(json.loads(body))
+            return '{"player_key": "1", "reason": "ok"}'
+        cands = [{"player_key": "1", "name": "A", "positions": ["RB"],
+                  "team": "KC", "vor": 1.0, "market_rank": 12,
+                  "injury": "Questionable"}]
+        _pick, _why, source = agent.choose(cands, context={},
+                                           _post_fn=fake_post)
+        assert source == "model"
+        sent = json.loads(seen["messages"][1]["content"])
+        assert sent["shortlist"][0]["market_rank"] == 12
+        assert sent["shortlist"][0]["injury"] == "Questionable"
+
+
+class TestPositionalRuns:
+    """The prompt has told the model to consider positional runs since the
+    first version while handing it no picks to see one in -- the identical
+    omission as the bye weeks, still live in a second place (2026-08-15)."""
+
+    @staticmethod
+    def _get(path):
+        """A 12x15 draft, so a 39-pick history does not simply end it."""
+        if "/league/" in path:
+            return {"scoring_settings": {"rec": 1},
+                    "roster_positions": ["RB", "BN"]}
+        if "/picks" in path:
+            return []
+        if "/draft/" in path:
+            return {"status": "drafting",
+                    "settings": {"teams": 12, "rounds": 15},
+                    "slot_to_roster_id": {str(i): i for i in range(1, 13)},
+                    "type": "snake"}
+        return {}
+
+    def _board(self, picks):
+        idx = {str(i): {"name": f"P{i}", "positions": ["RB"], "team": "KC"}
+               for i in range(1, 4)}
+        pool = [{"name": v["name"], "positions": ["RB"], "team": "KC",
+                 "gp": 17.0, "cats": {"Rec": 50.0}} for v in idx.values()]
+        return sl.draft_candidates(
+            "L", "D", 1, limit=6, _index_fn=lambda: idx, _pool_fn=lambda: pool,
+            _picks=picks,
+            _get_fn=lambda path, **k: TestPositionalRuns._get(path))
+
+    def test_it_counts_what_the_room_just_took(self):
+        picks = [{"pick_no": i, "draft_slot": 2, "player_id": "99",
+                  "metadata": {"position": "RB" if i % 2 else "WR"}}
+                 for i in range(1, 9)]
+        out = self._board(picks)
+        assert not isinstance(out, str), out
+        assert out["recent_picks_by_position"] == {"RB": 4, "WR": 4}
+
+    def test_it_looks_back_only_one_trip_round_the_board(self):
+        """A run is about what happens before your NEXT turn, so ancient picks
+        must not dilute it."""
+        old = [{"pick_no": i, "draft_slot": 2, "player_id": "99",
+                "metadata": {"position": "QB"}} for i in range(1, 40)]
+        new = [{"pick_no": 40 + i, "draft_slot": 2, "player_id": "99",
+                "metadata": {"position": "RB"}} for i in range(sl.RUN_WINDOW)]
+        out = self._board(old + new)
+        assert out["recent_picks_by_position"] == {"RB": sl.RUN_WINDOW}
+
+
+class TestInjuryPenalty:
+    """PUP costs value and is NAMED. A hard exclusion would have deleted a
+    top-12 tight end over a camp designation (2026-08-15)."""
+
+    def _board(self, injury):
+        idx = {"1": {"name": "Risky", "positions": ["RB"], "team": "KC",
+                     "injury_status": injury, "roster_status": "Active"},
+               "2": {"name": "Healthy", "positions": ["RB"], "team": "SF",
+                     "injury_status": "", "roster_status": "Active"}}
+        pool = [{"name": v["name"], "positions": ["RB"], "team": v["team"],
+                 "gp": 17.0, "cats": {"Rec": 50.0}} for v in idx.values()]
+        out = sl.draft_candidates(
+            "L", "D", 1, limit=6, _index_fn=lambda: idx, _pool_fn=lambda: pool,
+            _picks=[], _get_fn=lambda p, **k: TestPositionalRuns._get(p))
+        return {c["name"]: c for c in out["candidates"]}
+
+    def test_pup_stays_on_the_board_but_ranks_below_an_equal_healthy_player(self):
+        got = self._board("PUP")
+        assert "Risky" in got, "must not be excluded"
+        assert got["Risky"]["adj_value"] < got["Healthy"]["adj_value"]
+
+    def test_the_reason_says_which_designation(self):
+        assert "listed PUP" in self._board("PUP")["Risky"]["fit_reasons"]
+
+    def test_questionable_costs_far_less_than_pup(self):
+        q = self._board("Questionable")["Risky"]["fit_penalty"]
+        pup = self._board("PUP")["Risky"]["fit_penalty"]
+        assert 0 < q < pup
+
+    def test_a_healthy_player_pays_nothing(self):
+        assert self._board("")["Healthy"]["fit_penalty"] == 0.0

@@ -119,7 +119,12 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
                # last seven picks of a clean mock were all RBs, justified in
                # the same sentence five times (2026-08-15).
                "bye_counts": board.get("bye_counts"),
-               "phase": board.get("phase")}
+               "phase": board.get("phase"),
+               # What the room has been taking. The prompt has asked the model
+               # to weigh positional runs since the first version while showing
+               # it none — the same omission as the byes, in a second place.
+               "recent_picks_by_position":
+                   board.get("recent_picks_by_position")}
         # Re-verify availability against FRESH picks — cache BYPASSED. The
         # board was true a moment ago, and a moment is enough for someone to
         # take him; reading a 15s-old pick list here is not a re-check at all.
