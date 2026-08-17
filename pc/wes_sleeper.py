@@ -40,10 +40,21 @@ WEB = "https://sleeper.com"
 PROFILE_DIR = os.environ.get(
     "WES_SLEEPER_PROFILE_DIR",
     os.path.join(os.path.expanduser("~"), "wes-pc", "sleeper_profile"))
-# Visible by default, like the Yahoo session: the one-time login is interactive,
-# and a headless window the owner cannot see is a bad place to discover that a
-# session expired.
-HEADLESS = os.environ.get("WES_SLEEPER_HEADLESS", "0") == "1"
+# HEADLESS BY DEFAULT, unlike the Yahoo session. The original reasoning —
+# "the one-time login is interactive, and a headless window the owner cannot see
+# is a bad place to discover that a session expired" — was written before token
+# injection. Login is not interactive here, `authenticate` returns a boolean,
+# and the draft-day pre-flight checks the session explicitly, so a visible
+# window buys nothing and costs the owner a Chrome popup stealing focus every
+# pick, fifteen times an afternoon, on the machine they are working on.
+#
+# Verified identical, not assumed: a full headless mock drafted 15 of 15 with
+# zero substitutions in 620s, against 622s headed (2026-08-16). Same machine,
+# same browser, same profile — only the window is gone.
+#
+# Set WES_SLEEPER_HEADLESS=0 to watch it work, which is worth doing when the
+# draft room's DOM changes under us.
+HEADLESS = os.environ.get("WES_SLEEPER_HEADLESS", "1") == "1"
 BROWSER_CHANNEL = os.environ.get("WES_SLEEPER_BROWSER_CHANNEL", "chrome")
 
 # The account token, from the PC user environment (never the repo), same

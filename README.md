@@ -99,6 +99,10 @@ pre-flight, waits for Sleeper to open the room, and hands off to the pick loop.
 It does **not** start the draft — that is Sleeper's on the commissioner's
 schedule. Output is tee'd to `logs\sleeper_draft.log`.
 
+It runs **headless** — no browser window steals focus while you work. Set
+`WES_SLEEPER_HEADLESS=0` to watch it, which is worth doing if the draft room's
+DOM has changed under us.
+
 Run `-Check` a day ahead too. Every item in it is a failure that has already
 happened once: a missing token stood down on all 15 picks while `cpu_autopick`
 took them and printed a plausible roster; a dead Ollama silently turns every

@@ -1276,3 +1276,28 @@ class TestHandcuff:
         assert sl._handcuff_for(
             {"team": "PHI", "positions": ["RB"], "depth_chart_order": 3},
             mine) == "RB1"
+
+
+class TestHeadlessDefault:
+    """The browser must not steal focus on the owner's desktop. A Chrome popup
+    per pick, fifteen times an afternoon, on the machine they are working on
+    (2026-08-16)."""
+
+    def test_headless_is_the_default(self):
+        assert sl.HEADLESS is True
+
+    def test_it_can_still_be_watched(self, monkeypatch):
+        """Worth doing when the draft room's DOM changes under us."""
+        monkeypatch.setenv("WES_SLEEPER_HEADLESS", "0")
+        import importlib
+        importlib.reload(sl)
+        try:
+            assert sl.HEADLESS is False
+        finally:
+            monkeypatch.delenv("WES_SLEEPER_HEADLESS")
+            importlib.reload(sl)
+
+    def test_a_session_honours_an_explicit_override(self):
+        """Reads can run visible while a draft runs hidden, and vice versa."""
+        assert sl._Session(headless=False).headless is False
+        assert sl._Session(headless=True).headless is True
