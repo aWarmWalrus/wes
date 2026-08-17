@@ -79,9 +79,13 @@ import wes_yahoo  # noqa: E402
 
 # PC-local, like teams.yaml — never the repo (an action ledger for a real
 # account is not something to publish, even though it holds no secrets itself).
-LEDGER_FILE = os.environ.get(
+# The configured default, kept separate because the test suite monkeypatches
+# LEDGER_FILE to a tmp path (conftest, autouse) and there would otherwise be no
+# way left to assert what the real default IS.
+DEFAULT_LEDGER_FILE = os.environ.get(
     "WES_FANTASY_LEDGER",
     os.path.join(os.path.expanduser("~"), "wes-pc", "fantasy_ledger.jsonl"))
+LEDGER_FILE = DEFAULT_LEDGER_FILE
 
 # The kill switch for live writes. Absent/unset = OFF. Even once a real
 # _submit_lineup lands, this must be set explicitly — mirrors WES_YAHOO_LIVE for
@@ -499,6 +503,22 @@ def _append_ledger(entry, _path=None):
             f.write(json.dumps(entry, default=str) + "\n")
     except OSError as e:
         print(f"[execute] ledger write failed: {e!r}", flush=True)
+
+
+def record_action(entry, _path=None):
+    """Append one action to the shared ledger — the public door to
+    `_append_ledger`, for callers outside this module.
+
+    ONE ledger for every action WES takes on a fantasy team, whatever the
+    platform. A Sleeper draft pick and a Yahoo add/drop answer the same
+    question later — "what did it do, and why did it think that was right?" —
+    and splitting them per platform would mean two things to search and two
+    things to keep in step.
+
+    Rows carry `action_type`, and `count_recent_moves` counts only add_drop and
+    waiver_claim, so a new action type cannot silently eat the weekly move
+    budget."""
+    _append_ledger(entry, _path)
 
 
 def _read_ledger(_path=None):

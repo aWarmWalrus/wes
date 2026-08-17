@@ -51,15 +51,72 @@ def _log(msg):
     print(f"[draft] {time.strftime('%H:%M:%S')} {msg}", flush=True)
 
 
+def _record(league_id, roster_id, draft_id, pick_no, board, decision,
+            outcome, drafted=None, note="", _ledger_path=None, _now=None):
+    """Write one draft decision to the shared fantasy ledger.
+
+    WHY THE LEDGER AND NOT JUST THE LOG. A draft is reviewed afterwards, and a
+    log file is a thin place to keep the only record of fifteen irreversible
+    decisions — grep-able at best, gone at worst. The ledger is structured,
+    already holds every Yahoo action, and already backs `fantasy_recent_moves`,
+    so "why did it take Zay Flowers over Cam Skattebo?" becomes answerable
+    months later instead of being reconstructed from memory.
+
+    EVERY decision is recorded, not just the successful ones. A stand-down and
+    a substitution are exactly the rows worth having later — the nine silent
+    substitutions that produced four tight ends and no defence were invisible
+    precisely because nothing durable said what had been wanted (2026-08-15).
+
+    `action_type` is "draft_pick", which `count_recent_moves` ignores, so these
+    rows cannot eat the weekly add/drop budget."""
+    cand = decision.get("candidate") or {}
+    entry = {
+        "ts": _now if _now is not None else time.time(),
+        # Platform-qualified so a Sleeper roster can never collide with a
+        # Yahoo team key in the same file.
+        "team_key": f"sleeper.l.{league_id}.r.{roster_id}",
+        "name": f"Sleeper roster {roster_id}",
+        "sport": "nfl", "action_type": "draft_pick", "autonomy": "auto",
+        "draft_id": draft_id, "pick_no": pick_no,
+        "round": (board or {}).get("round"),
+        "phase": (board or {}).get("phase"),
+        # What it WANTED, which is not always what it got.
+        "moves": [{"add": cand.get("name"), "player_key": cand.get("player_key"),
+                   "position": (cand.get("positions") or [None])[0],
+                   "nfl_team": cand.get("team"), "bye": cand.get("bye"),
+                   "vor": cand.get("vor"),
+                   "market_rank": cand.get("market_rank")}] if cand else [],
+        "why": decision.get("reason"),
+        "source": decision.get("source"),
+        "considered": decision.get("considered") or [],
+        "runner_up": decision.get("runner_up"),
+        "why_not": decision.get("why_not"),
+        # The choice set, so a later review can ask what it passed over -- the
+        # shortlist IS half the decision, and without it "took the best
+        # available" is unfalsifiable.
+        "shortlist": [c.get("name") for c in ((board or {}).get("candidates")
+                                              or [])],
+        "outcome": outcome,
+        "executed": outcome in ("drafted", "substituted"),
+        "dry_run": outcome == "would_draft",
+    }
+    if drafted and drafted != cand.get("name"):
+        entry["actually_drafted"] = drafted
+    if note:
+        entry["note"] = note
+    wes_execute.record_action(entry, _ledger_path)
+
+
 def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         _state_fn=None, _decide_fn=None, _submit_fn=None, _sleep_fn=None,
-        _now_fn=None, _board_fn=None):
+        _now_fn=None, _board_fn=None, _ledger_path=None, _record_fn=None):
     """Watch and draft until the draft ends. Returns a short summary string."""
     turn_fn = _state_fn or wes_sleeper.draft_turn
     board_fn = _board_fn or wes_sleeper.draft_candidates
     submit = _submit_fn or wes_sleeper.submit_pick
     sleep = _sleep_fn or time.sleep
     now = _now_fn or time.time
+    record = _record_fn or _record
 
     started = now()
     acted_on = set()
@@ -142,12 +199,17 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         reason, source = decision["reason"], decision["source"]
         if pick is None:
             _log(f"pick {pick_no}: no decision — standing down")
+            record(league_id, roster_id, draft_id, pick_no, board, decision,
+                   "stood_down", note="no decision", _ledger_path=_ledger_path)
             acted_on.add(pick_no)
             continue
 
         if not wes_execute.writes_enabled():
             _log(f"pick {pick_no}: WOULD take {pick['name']} ({source}: "
                  f"{reason}) — writes are off")
+            record(league_id, roster_id, draft_id, pick_no, board, decision,
+                   "would_draft", note="writes are off",
+                   _ledger_path=_ledger_path)
             acted_on.add(pick_no)
             continue
 
@@ -161,6 +223,8 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             # check it did not perform.
             _log(f"pick {pick_no}: DRAFTED "
                  f"{wes_draft_agent.format_decision(decision)}")
+            record(league_id, roster_id, draft_id, pick_no, board, decision,
+                   "drafted", drafted=pick["name"], _ledger_path=_ledger_path)
         except Exception as e:  # noqa: BLE001 — one failure must not end the run
             # TWO KINDS OF FAILURE, and only one is dangerous.
             #
@@ -189,9 +253,15 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
                         submit(draft_id, alt["player_key"], alt["name"])
                         made.append(alt["name"])
                         _log(f"pick {pick_no}: DRAFTED {alt['name']} (fallback)")
+                        record(league_id, roster_id, draft_id, pick_no, board,
+                               decision, "substituted", drafted=alt["name"],
+                               note=f"{pick['name']} was gone",
+                               _ledger_path=_ledger_path)
                         continue
                     except Exception as e2:  # noqa: BLE001
                         e = e2
+            record(league_id, roster_id, draft_id, pick_no, board, decision,
+                   "failed", note=str(e), _ledger_path=_ledger_path)
             _log(f"pick {pick_no}: FAILED ({e}) — standing down, cpu_autopick "
                  f"will take it")
 

@@ -6,6 +6,8 @@ tested is the RAILS — which is the part that can lose you a roster spot.
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
 import sleeper_draft_run as loop  # noqa: E402
@@ -245,3 +247,140 @@ class TestFailureKinds:
                  _board_fn=_board(cands=self.CANDS), _decide_fn=decide,
                  _submit_fn=lambda *a: True, _sleep_fn=lambda _s: None)
         assert seen["keys"] == ["88"]
+
+
+class TestLedger:
+    """Fifteen irreversible decisions deserve a durable, structured record. A
+    log file is grep-able at best and gone at worst, and the nine silent
+    substitutions that produced four tight ends and no defence were invisible
+    precisely because nothing durable said what had been WANTED (2026-08-15)."""
+
+    CAND = {"player_key": "88", "name": "Wanted Guy", "positions": ["RB"],
+            "team": "KC", "bye": 10, "vor": 7.5, "market_rank": 12}
+    ALT = {"player_key": "99", "name": "Second Choice", "positions": ["WR"],
+           "team": "SF", "bye": 6, "vor": 6.0}
+
+    def _rows(self, tmp_path):
+        import json
+        f = tmp_path / "ledger.jsonl"
+        if not f.exists():
+            return []
+        return [json.loads(x) for x in f.read_text(encoding="utf-8").splitlines()
+                if x.strip()]
+
+    def _decision(self, cand=None):
+        return {"candidate": cand or self.CAND, "reason": "best back",
+                "source": "model", "considered": ["value over replacement 7.5",
+                                                  "fills the empty RB slot"],
+                "runner_up": "Second Choice", "why_not": "lower value"}
+
+    @pytest.fixture(autouse=True)
+    def _no_network(self, monkeypatch):
+        """The loop re-checks availability against the live API before every
+        pick, deliberately cache-bypassed -- so an unstubbed test goes to the
+        network. Via monkeypatch, not assignment: a stub left behind leaks into
+        every later test in the session."""
+        monkeypatch.setattr(loop.wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
+
+    def _run(self, tmp_path, submit, cands=None):
+        loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
+                 _board_fn=_board(cands=cands or [self.CAND, self.ALT]),
+                 _decide_fn=lambda c, **kw: self._decision(),
+                 _submit_fn=submit, _sleep_fn=lambda _s: None,
+                 _ledger_path=str(tmp_path / "ledger.jsonl"))
+        return self._rows(tmp_path)
+
+    def test_a_successful_pick_is_recorded_with_its_reasoning(self, tmp_path,
+                                                              monkeypatch):
+        monkeypatch.setattr(loop.wes_execute, "writes_enabled", lambda: True)
+        rows = self._run(tmp_path, lambda *a: True)
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["action_type"] == "draft_pick"
+        assert r["outcome"] == "drafted" and r["executed"] is True
+        assert r["moves"][0]["add"] == "Wanted Guy"
+        assert r["why"] == "best back" and r["source"] == "model"
+        assert "fills the empty RB slot" in r["considered"]
+        assert r["runner_up"] == "Second Choice"
+
+    def test_the_shortlist_is_kept_so_the_pick_is_falsifiable(self, tmp_path,
+                                                              monkeypatch):
+        """Without the choice set, "took the best available" cannot be
+        checked."""
+        monkeypatch.setattr(loop.wes_execute, "writes_enabled", lambda: True)
+        rows = self._run(tmp_path, lambda *a: True)
+        assert rows[0]["shortlist"] == ["Wanted Guy", "Second Choice"]
+
+    def test_a_substitution_records_BOTH_names(self, tmp_path, monkeypatch):
+        """The row that was missing. What it wanted and what it got are
+        different facts and both matter."""
+        monkeypatch.setattr(loop.wes_execute, "writes_enabled", lambda: True)
+        calls = []
+
+        def submit(_d, key, name):
+            calls.append(name)
+            if len(calls) == 1:
+                raise RuntimeError("not available in the draft room")
+            return True
+        rows = self._run(tmp_path, submit)
+        r = rows[0]
+        assert r["outcome"] == "substituted"
+        assert r["moves"][0]["add"] == "Wanted Guy"      # wanted
+        assert r["actually_drafted"] == "Second Choice"  # got
+        assert "Wanted Guy was gone" in r["note"]
+
+    def test_a_failure_is_recorded_as_not_executed(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(loop.wes_execute, "writes_enabled", lambda: True)
+
+        def submit(*_a):
+            raise RuntimeError("something uncertain happened")
+        rows = self._run(tmp_path, submit, cands=[self.CAND])
+        assert rows[0]["outcome"] == "failed"
+        assert rows[0]["executed"] is False
+        assert "something uncertain" in rows[0]["note"]
+
+    def test_writes_off_still_records_the_decision_as_a_dry_run(self, tmp_path,
+                                                               monkeypatch):
+        """What it WOULD have done is the whole point of a dry run."""
+        monkeypatch.setattr(loop.wes_execute, "writes_enabled", lambda: False)
+        rows = self._run(tmp_path, lambda *a: True)
+        assert rows[0]["outcome"] == "would_draft"
+        assert rows[0]["dry_run"] is True and rows[0]["executed"] is False
+
+    def test_draft_rows_do_not_eat_the_weekly_move_budget(self, tmp_path,
+                                                          monkeypatch):
+        """A draft is not a waiver move. If these counted, the first roster
+        week would open with the cap already blown."""
+        monkeypatch.setattr(loop.wes_execute, "writes_enabled", lambda: True)
+        self._run(tmp_path, lambda *a: True)
+        n = loop.wes_execute.count_recent_moves(
+            "sleeper.l.L.r.1", 0, str(tmp_path / "ledger.jsonl"))
+        assert n == 0
+
+    def test_the_team_key_is_platform_qualified(self, tmp_path, monkeypatch):
+        """One ledger holds both platforms, so a Sleeper roster must never
+        collide with a Yahoo team key."""
+        monkeypatch.setattr(loop.wes_execute, "writes_enabled", lambda: True)
+        rows = self._run(tmp_path, lambda *a: True)
+        assert rows[0]["team_key"].startswith("sleeper.")
+
+
+class TestLedgerIsSandboxedInTests:
+    """The first test run after the loop learned to record decisions wrote
+    eight fake draft_pick rows into the owner's REAL ledger -- the same shape
+    of mistake as the nightly eval writing to the live Yahoo account
+    (2026-08-17). conftest sandboxes it autouse; this proves it."""
+
+    def test_the_ledger_path_is_not_the_real_one(self):
+        import os
+        real = os.path.join(os.path.expanduser("~"), "wes-pc",
+                            "fantasy_ledger.jsonl")
+        assert os.path.abspath(loop.wes_execute.LEDGER_FILE) != \
+            os.path.abspath(real)
+
+    def test_an_unsandboxed_write_lands_in_tmp(self, tmp_path):
+        """Belt and braces: a call with no explicit path must still not reach
+        the real file."""
+        loop.wes_execute.record_action({"ts": 1, "action_type": "probe"})
+        assert os.path.exists(loop.wes_execute.LEDGER_FILE)

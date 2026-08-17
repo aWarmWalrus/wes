@@ -469,7 +469,9 @@ class TestLedger:
         ex._append_ledger({"a": 1}, "/should/not/matter")   # must not raise
 
     def test_default_ledger_path_is_pc_local_not_the_repo(self):
-        assert "wes-pc" in ex.LEDGER_FILE
+        # DEFAULT_LEDGER_FILE, not LEDGER_FILE: conftest redirects the latter
+        # to tmp for every test so a run cannot touch the owner's real record.
+        assert "wes-pc" in ex.DEFAULT_LEDGER_FILE
         assert "wes-pc" not in os.path.dirname(os.path.abspath(__file__))
 
 

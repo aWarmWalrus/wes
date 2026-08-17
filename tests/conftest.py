@@ -37,9 +37,18 @@ def pytest_collection_modifyitems(config, items):
 @pytest.fixture(autouse=True)
 def _sandbox_ledgers(tmp_path, monkeypatch):
     """Unit tests exercise routes that write the usage ledger and turn log —
-    point both at tmp so test runs never pollute the real files."""
+    point them all at tmp so test runs never pollute the real files.
+
+    THE FANTASY LEDGER IS IN HERE FOR A REASON. It was not, and the first test
+    run after the draft loop learned to record decisions wrote eight fake
+    draft_pick rows into the owner's real ledger — the same shape of mistake as
+    the nightly eval writing to the live Yahoo account. A test must not be able
+    to reach a real record no matter what it calls, so the sandbox is
+    autouse and by path, not by asking each test to remember."""
+    import wes_execute as we
     import wes_server as ws
 
+    monkeypatch.setattr(we, "LEDGER_FILE", str(tmp_path / "fantasy_ledger.jsonl"))
     monkeypatch.setattr(ws, "USAGE_LOG", str(tmp_path / "usage.csv"))
     monkeypatch.setattr(ws, "TURNS_LOG", str(tmp_path / "turns.jsonl"))
     monkeypatch.setattr(ws, "CONV_DIR", str(tmp_path / "conversations"))
