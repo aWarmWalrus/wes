@@ -20,9 +20,12 @@ WHITE_BALANCE = None   # Kelvin (2000–6500), or None for auto
 BRIGHTNESS = 180       # v4l2 brightness (0–255, default 128); higher = brighter
 WARMUP_FRAMES = 20     # frames to discard so auto-exposure can settle
 
-EMAIL_TO = "awarmwalrus@gmail.com"
-EMAIL_FROM = "awarmwalrus@gmail.com"
-EMAIL_APP_PASSWORD = "tybtmxccghruquwh"
+# Read from the environment — NEVER hardcode credentials in source.
+# The previously committed app password was leaked when this repo went public
+# and MUST be revoked at https://myaccount.google.com/apppasswords
+EMAIL_TO = os.environ.get("WES_CAM_EMAIL_TO", "")
+EMAIL_FROM = os.environ.get("WES_CAM_EMAIL_FROM", "")
+EMAIL_APP_PASSWORD = os.environ.get("WES_CAM_EMAIL_APP_PASSWORD", "")
 
 SILENCE_SECONDS = 1.5
 SILENCE_ENERGY = 300
