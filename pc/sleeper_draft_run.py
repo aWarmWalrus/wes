@@ -35,6 +35,7 @@ import argparse
 import sys
 import time
 
+import wes_banter
 import wes_draft
 import wes_draft_agent
 import wes_execute
@@ -109,7 +110,8 @@ def _record(league_id, roster_id, draft_id, pick_no, board, decision,
 
 def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         _state_fn=None, _decide_fn=None, _submit_fn=None, _sleep_fn=None,
-        _now_fn=None, _board_fn=None, _ledger_path=None, _record_fn=None):
+        _now_fn=None, _board_fn=None, _ledger_path=None, _record_fn=None,
+        banter_mode="off", _banter=None):
     """Watch and draft until the draft ends. Returns a short summary string."""
     turn_fn = _state_fn or wes_sleeper.draft_turn
     board_fn = _board_fn or wes_sleeper.draft_candidates
@@ -117,6 +119,11 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     sleep = _sleep_fn or time.sleep
     now = _now_fn or time.time
     record = _record_fn or _record
+    # Banter shares this process ON PURPOSE. The Chrome profile is a persistent
+    # singleton, so a second process reading the chat would collide with the
+    # one submitting picks. Only touched when we are NOT on the clock.
+    chat = _banter if _banter is not None else wes_banter.Banter(
+        draft_id, mode=banter_mode)
 
     started = now()
     acted_on = set()
@@ -139,6 +146,15 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         if wait is None:
             return f"our draft is done; made {len(made)} pick(s)"
         if wait > 0:
+            # Far from the clock is the only safe time to open the chat: a
+            # read takes ~12s of browser, and a pick must never wait behind it.
+            if wait > NEAR_PICKS:
+                act, detail = chat.tick(context={
+                    "round": state.get("round"),
+                    "picks_made": state.get("picks_made"),
+                    "picks_until_our_turn": wait})
+                if act not in ("quiet", "rate_limited"):
+                    _log(f"chat [{act}] {detail}")
             sleep(POLL_NEAR_S if wait <= NEAR_PICKS else POLL_FAR_S)
             continue
 
@@ -274,11 +290,17 @@ def main():
     ap.add_argument("roster_id", type=int)
     ap.add_argument("--league", default="1393935116232818688")
     ap.add_argument("--max-seconds", type=int, default=6 * 3600)
+    ap.add_argument("--banter", choices=("off", "propose", "auto"),
+                    default="off",
+                    help="chat in the draft room. 'propose' composes and logs "
+                         "without posting; 'auto' posts. Off by default -- "
+                         "messages go to real people under the owner's name.")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     _log(f"watching draft {a.draft_id} for roster {a.roster_id} "
          f"(writes {'ON' if wes_execute.writes_enabled() else 'OFF'})")
-    print(run(a.draft_id, a.league, a.roster_id, max_seconds=a.max_seconds))
+    print(run(a.draft_id, a.league, a.roster_id, max_seconds=a.max_seconds,
+              banter_mode=a.banter))
 
 
 if __name__ == "__main__":

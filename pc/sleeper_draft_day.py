@@ -176,6 +176,8 @@ def main():
     ap.add_argument("--wait-hours", type=float, default=8.0,
                     help="how long to wait for the room to open")
     ap.add_argument("--no-browser-probe", action="store_true")
+    ap.add_argument("--banter", choices=("off", "propose", "auto"),
+                    default="off")
     ap.add_argument("--rebuild-snapshot", action="store_true",
                     help="rebuild the local board first (~5s). The staleness "
                          "check is the one that fails routinely, and the fix "
@@ -235,7 +237,8 @@ def main():
     print(f"\ndraft {draft_id} is OPEN — handing off to the loop "
           f"(roster {roster_id})\n")
     print(sleeper_draft_run.run(draft_id, a.league, roster_id,
-                                max_seconds=6 * 3600))
+                                max_seconds=6 * 3600,
+                                banter_mode=a.banter))
     return 0
 
 

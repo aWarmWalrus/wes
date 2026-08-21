@@ -18,7 +18,8 @@
 # Scoring still comes from -League, since a mock has no scoring of its own.
 [CmdletBinding()]
 param([switch]$Check, [double]$WaitHours = 8.0, [string]$DraftId,
-      [string]$League, [switch]$RebuildSnapshot)
+      [string]$League, [switch]$RebuildSnapshot,
+      [ValidateSet('off','propose','auto')][string]$Banter = 'off')
 
 $base = "C:\Users\awarm\wes-pc"
 $repo = if ($env:WES_REPO) { $env:WES_REPO } else { "C:\Users\awarm\wes" }
@@ -39,6 +40,7 @@ if ($Check) { $args += "--check" }
 if ($DraftId) { $args += @("--draft", $DraftId) }
 if ($League) { $args += @("--league", $League) }
 if ($RebuildSnapshot) { $args += "--rebuild-snapshot" }
+if ($Banter -ne "off") { $args += @("--banter", $Banter) }
 
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm"
 $log = "$logdir\sleeper_draft.log"
