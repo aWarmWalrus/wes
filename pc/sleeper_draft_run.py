@@ -154,7 +154,12 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
                     "round": state.get("round"),
                     "picks_made": state.get("picks_made"),
                     "picks_until_our_turn": wait})
-                if act not in ("quiet", "rate_limited"):
+                # Log the QUIET decisions too when there was actually
+                # something to answer. "nothing worth saying (re: ...)" is the
+                # interesting line; suppressing it made an idle chat and a
+                # model declining to speak look identical, which is exactly
+                # the question asked five minutes after switching it on.
+                if act not in ("quiet", "rate_limited") or "(re: " in detail:
                     _log(f"chat [{act}] {detail}")
             sleep(POLL_NEAR_S if wait <= NEAR_PICKS else POLL_FAR_S)
             continue
