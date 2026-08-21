@@ -504,6 +504,36 @@ def free_agents(league_id, positions=("QB", "RB", "WR", "TE", "K", "DEF"),
     return out
 
 
+def user_id(username, _get_fn=None):
+    """Sleeper's account id for a display name. None if unknown.
+
+    Needed for MOCK drafts, which have no league at all (`league_id` is null),
+    so the roster route cannot be used to find our seat. A mock's `draft_order`
+    is keyed by user id, and that is the only place our slot is written down."""
+    u = _get(f"/user/{username}", _get_fn=_get_fn)
+    return str(u.get("user_id")) if isinstance(u, dict) and u.get("user_id") \
+        else None
+
+
+def slot_in_draft(draft_id, username, _get_fn=None, _draft_fn=None):
+    """Which draft SLOT we occupy in an arbitrary draft. None if we are not in
+    it.
+
+    Works for mocks and league drafts alike, because it reads `draft_order`
+    (user id -> slot) rather than the league's rosters. Sleeper writes this when
+    the seat is claimed, which happens on JOINING — so a draft we have not
+    joined correctly returns None rather than a guess. Watching the wrong slot
+    is not a hypothetical: an early loop sat on slot 1 while our real seat was
+    elsewhere and made zero picks (2026-08-15)."""
+    uid = user_id(username, _get_fn=_get_fn)
+    if not uid:
+        return None
+    d = (_draft_fn or draft)(draft_id) or {}
+    order = d.get("draft_order") or {}
+    slot = order.get(uid)
+    return int(slot) if slot else None
+
+
 def find_roster_id(league_id, username, _get_fn=None):
     """Which roster_id belongs to `username`. Returns None if not found.
 

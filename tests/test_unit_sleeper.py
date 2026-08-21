@@ -1301,3 +1301,45 @@ class TestHeadlessDefault:
         """Reads can run visible while a draft runs hidden, and vice versa."""
         assert sl._Session(headless=False).headless is False
         assert sl._Session(headless=True).headless is True
+
+
+class TestSeatInAnyDraft:
+    """A MOCK has no league at all (league_id is null), so the roster route
+    cannot find our seat. draft_order -- keyed by user id -- is the only place
+    it is written down, and reading it wrong is how an early loop sat on slot 1
+    while our real seat was elsewhere and made zero picks (2026-08-15)."""
+
+    def _get(self, path):
+        if "/user/" in path:
+            return {"user_id": "U1", "display_name": "awarmwalrus"}
+        return {}
+
+    def test_it_finds_our_slot(self):
+        got = sl.slot_in_draft("D", "awarmwalrus", _get_fn=lambda p, **k: self._get(p),
+                               _draft_fn=lambda d: {"draft_order": {"U1": 7}})
+        assert got == 7
+
+    def test_a_draft_we_have_not_joined_is_None_not_a_guess(self):
+        """The seat is claimed on JOINING. No entry means no seat, and drafting
+        into someone else's slot is not a recoverable mistake."""
+        got = sl.slot_in_draft("D", "awarmwalrus", _get_fn=lambda p, **k: self._get(p),
+                               _draft_fn=lambda d: {"draft_order": {"OTHER": 7}})
+        assert got is None
+
+    def test_an_empty_draft_order_is_None(self):
+        """Pre-draft, Sleeper has published nothing yet."""
+        got = sl.slot_in_draft("D", "awarmwalrus", _get_fn=lambda p, **k: self._get(p),
+                               _draft_fn=lambda d: {"draft_order": None})
+        assert got is None
+
+    def test_an_unknown_username_is_None(self):
+        got = sl.slot_in_draft("D", "nobody", _get_fn=lambda p, **k: {},
+                               _draft_fn=lambda d: {"draft_order": {"U1": 7}})
+        assert got is None
+
+    def test_user_id_lookup(self):
+        assert sl.user_id("awarmwalrus",
+                          _get_fn=lambda p, **k: self._get(p)) == "U1"
+
+    def test_user_id_of_nobody_is_None(self):
+        assert sl.user_id("nobody", _get_fn=lambda p, **k: {}) is None

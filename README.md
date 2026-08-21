@@ -103,6 +103,19 @@ It runs **headless** — no browser window steals focus while you work. Set
 `WES_SLEEPER_HEADLESS=0` to watch it, which is worth doing if the draft room's
 DOM has changed under us.
 
+**To run it on a mock, or on anyone else's draft:** join the draft first (the
+seat is claimed on joining), then pass its id — the number in the URL
+`sleeper.com/draft/nfl/<id>`:
+
+```powershell
+& C:\Users\awarm\wes-pc\run_sleeper_draft.ps1 -DraftId 1394956625890017280
+```
+
+The seat comes from that draft's own `draft_order`, since a mock has no league
+at all. Scoring still comes from `-League` (your real one by default) because a
+mock has no scoring of its own — so a mock values players exactly as the real
+league would. `-RebuildSnapshot` refreshes the board first.
+
 Run `-Check` a day ahead too. Every item in it is a failure that has already
 happened once: a missing token stood down on all 15 picks while `cpu_autopick`
 took them and printed a plausible roster; a dead Ollama silently turns every

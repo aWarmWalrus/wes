@@ -44,7 +44,8 @@ USERNAME = "awarmwalrus"
 SNAPSHOT_MAX_AGE_S = 36 * 3600
 
 
-def preflight(league_id=LEAGUE, username=USERNAME, _probe_browser=True):
+def preflight(league_id=LEAGUE, username=USERNAME, draft_id=None,
+              _probe_browser=True):
     """Everything that must be true before the clock matters.
 
     Returns (ok, lines). Never raises: a pre-flight that dies on its first
@@ -68,18 +69,32 @@ def preflight(league_id=LEAGUE, username=USERNAME, _probe_browser=True):
 
     try:
         lg = wes_sleeper.league(league_id) or {}
-        draft_id = lg.get("draft_id")
-        check("league", bool(draft_id),
-              f"{lg.get('name')!r} status={lg.get('status')} draft={draft_id}")
+        # The league is still checked even when drafting elsewhere: it supplies
+        # the SCORING, and a mock has none of its own.
+        check("league", bool(lg.get("draft_id")),
+              f"{lg.get('name')!r} status={lg.get('status')} "
+              f"draft={lg.get('draft_id')}")
+        draft_id = draft_id or lg.get("draft_id")
     except Exception as e:  # noqa: BLE001 — report, do not abort the rest
         check("league", False, f"{type(e).__name__}: {e}")
         return ok, lines
 
     try:
-        roster_id = wes_sleeper.find_roster_id(league_id, username)
-        check("roster", roster_id is not None,
-              f"{username} is roster_id {roster_id}" if roster_id is not None
-              else f"no roster for {username!r} in that league")
+        if draft_id and draft_id != (lg or {}).get("draft_id"):
+            # Drafting somewhere other than our league: the seat comes from the
+            # draft itself, and NOT having one is a hard fail — an unjoined
+            # draft would leave us watching a seat that is not ours, which once
+            # produced a run of zero picks.
+            roster_id = wes_sleeper.slot_in_draft(draft_id, username)
+            check("seat", roster_id is not None,
+                  f"{username} holds slot {roster_id}" if roster_id
+                  else f"{username} has NOT joined draft {draft_id} - join it "
+                       f"first, the seat is claimed on joining")
+        else:
+            roster_id = wes_sleeper.find_roster_id(league_id, username)
+            check("roster", roster_id is not None,
+                  f"{username} is roster_id {roster_id}" if roster_id is not None
+                  else f"no roster for {username!r} in that league")
     except Exception as e:  # noqa: BLE001
         check("roster", False, f"{type(e).__name__}: {e}")
         roster_id = None
@@ -148,17 +163,33 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
                     help="pre-flight only; do not wait or draft")
-    ap.add_argument("--league", default=LEAGUE)
+    ap.add_argument("--draft", default=None,
+                    help="a specific draft id (a MOCK, or someone else's "
+                         "draft you have joined). Default: the league's own "
+                         "draft. The seat is read from the draft, not the "
+                         "league, because a mock has no league at all.")
+    ap.add_argument("--league", default=LEAGUE,
+                    help="the league whose SCORING to value under. A mock has "
+                         "league_id null and no scoring of its own, so this "
+                         "stays pointed at the real league even for mocks.")
     ap.add_argument("--username", default=USERNAME)
     ap.add_argument("--wait-hours", type=float, default=8.0,
                     help="how long to wait for the room to open")
     ap.add_argument("--no-browser-probe", action="store_true")
+    ap.add_argument("--rebuild-snapshot", action="store_true",
+                    help="rebuild the local board first (~5s). The staleness "
+                         "check is the one that fails routinely, and the fix "
+                         "is one call - do it here rather than making the "
+                         "owner remember a second command.")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     print(f"=== WES draft day pre-flight "
           f"{time.strftime('%Y-%m-%d %H:%M:%S')} ===")
-    ok, lines = preflight(a.league, a.username,
+    if a.rebuild_snapshot:
+        meta = wes_snapshot.build()
+        print(f"  rebuilt snapshot: {meta['counts']}")
+    ok, lines = preflight(a.league, a.username, draft_id=a.draft,
                           _probe_browser=not a.no_browser_probe)
     print("\n".join(lines))
     if not ok:
@@ -168,9 +199,21 @@ def main():
     if a.check:
         return 0
 
-    lg = wes_sleeper.league(a.league) or {}
-    draft_id = lg.get("draft_id")
-    roster_id = wes_sleeper.find_roster_id(a.league, a.username)
+    if a.draft:
+        # An arbitrary draft: the seat lives in draft_order, keyed by user id.
+        # `roster_id` and `slot` coincide for a mock (slot_to_roster_id is the
+        # identity map), which is what the loop needs.
+        draft_id = a.draft
+        roster_id = wes_sleeper.slot_in_draft(draft_id, a.username)
+        if roster_id is None:
+            print(f"you have no seat in draft {draft_id} - JOIN it first "
+                  f"(the seat is claimed on joining, and draft_order is empty "
+                  f"until then)")
+            return 1
+    else:
+        lg = wes_sleeper.league(a.league) or {}
+        draft_id = lg.get("draft_id")
+        roster_id = wes_sleeper.find_roster_id(a.league, a.username)
 
     # WAIT, do not start. Sleeper opens the room on its own schedule; our job
     # is to be connected when it does.
