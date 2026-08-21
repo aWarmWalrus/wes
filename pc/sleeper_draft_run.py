@@ -139,6 +139,66 @@ def _roster_line(board_fn, league_id, draft_id, roster_id):
         return "roster unknown"
 
 
+def _banter_context(draft_id, league_id, roster_id, state, wait, board_fn):
+    """What the room actually looks like, for trash talk that lands.
+
+    Banter had `{round, picks_made, picks_until_our_turn}` and nothing about
+    who drafted what, so it could only produce generic ribbing. "That is your
+    fourth tight end" needs the picks; "your RB1 is on PUP with an ACL" needs
+    the notes. Both are things we already hold.
+
+    Best-effort: a chat line is never worth breaking a draft for."""
+    ctx = {"round": state.get("round"),
+           "picks_made": state.get("picks_made"),
+           "picks_until_our_turn": wait}
+    try:
+        import wes_notes
+        import wes_snapshot
+        idx = wes_snapshot.players()
+        picks = wes_sleeper.draft_picks(draft_id) or []
+        # WHO TOOK WHAT, lately. The last handful is what the room is still
+        # talking about.
+        ctx["recent_picks"] = [
+            {"pick": p.get("pick_no"), "slot": p.get("draft_slot"),
+             "player": " ".join(filter(None, [
+                 (p.get("metadata") or {}).get("first_name"),
+                 (p.get("metadata") or {}).get("last_name")])),
+             "position": (p.get("metadata") or {}).get("position")}
+            for p in picks[-6:]]
+        # EVERY team's shape, so it can needle the right person.
+        rosters = {}
+        for p in picks:
+            pos = (p.get("metadata") or {}).get("position")
+            if pos:
+                rosters.setdefault(p.get("draft_slot"), []).append(pos)
+        ctx["rosters_by_slot"] = {
+            str(k): _count(v) for k, v in sorted(rosters.items())
+            if k is not None}
+        ctx["our_slot"] = roster_id
+        # OUR injured players, in words. The most quotable facts in the room
+        # are usually about a body part.
+        hurt = []
+        for p in picks:
+            if p.get("draft_slot") != roster_id:
+                continue
+            info = idx.get(str(p.get("player_id"))) or {}
+            note = wes_notes.injury_note(info)
+            if note:
+                hurt.append(f"{info.get('name')}: {note}")
+        if hurt:
+            ctx["our_injuries"] = hurt
+    except Exception:  # noqa: BLE001 — a chat line is not worth a draft
+        pass
+    return ctx
+
+
+def _count(items):
+    out = {}
+    for i in items:
+        out[i] = out.get(i, 0) + 1
+    return out
+
+
 def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         _state_fn=None, _decide_fn=None, _submit_fn=None, _sleep_fn=None,
         _now_fn=None, _board_fn=None, _ledger_path=None, _record_fn=None,
@@ -191,10 +251,8 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             # Far from the clock is the only safe time to open the chat: a
             # read takes ~12s of browser, and a pick must never wait behind it.
             if wait > NEAR_PICKS:
-                act, detail = chat.tick(context={
-                    "round": state.get("round"),
-                    "picks_made": state.get("picks_made"),
-                    "picks_until_our_turn": wait})
+                act, detail = chat.tick(context=_banter_context(
+                    draft_id, league_id, roster_id, state, wait, board_fn))
                 # Log the QUIET decisions too when there was actually
                 # something to answer. "nothing worth saying (re: ...)" is the
                 # interesting line; suppressing it made an idle chat and a

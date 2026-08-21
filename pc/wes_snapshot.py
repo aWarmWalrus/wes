@@ -37,8 +37,15 @@ SNAPSHOT_PATH = os.environ.get(
 STALE_AFTER_S = 7 * 24 * 3600
 
 
+# How many PRIOR seasons of production to carry, for career trajectory.
+# Two is the minimum that shows a direction; three is enough to tell a blip
+# from a decline, and each one is a handful of cached HTTP calls at build time
+# rather than anything on a draft clock.
+HISTORY_SEASONS = 3
+
+
 def build(season=None, _players_fn=None, _proj_fn=None, _byes_fn=None,
-          _now=None, path=None):
+          _now=None, path=None, _history_fn=None):
     """Fetch everything a board needs and write it atomically.
 
     ATOMIC on purpose: a half-written snapshot discovered at draft time is worse
@@ -54,6 +61,7 @@ def build(season=None, _players_fn=None, _proj_fn=None, _byes_fn=None,
     players = (_players_fn or wes_sleeper.players_index)()
     projections = (_proj_fn or wes_nfl.season_projections)(season)
     byes = (_byes_fn or wes_schedule.bye_weeks)(season)
+    history = (_history_fn or _season_history)(int(season))
 
     # The CROSSWALK: sleeper_id -> espn_id, resolved once here rather than
     # fuzzily per lookup under a draft clock. Sleeper stopped maintaining its
@@ -74,10 +82,15 @@ def build(season=None, _players_fn=None, _proj_fn=None, _byes_fn=None,
         "counts": {"players": len(players or {}),
                    "projections": len(projections or []),
                    "byes": len(byes or {}),
-                   "crosswalk": len(crosswalk)},
+                   "crosswalk": len(crosswalk),
+                   "history": len(history or {})},
         "crosswalk_report": {k: (len(v) if isinstance(v, list) else v)
                              for k, v in (xreport or {}).items()},
         "crosswalk": crosswalk,
+        # espn_id -> [[season, points_per_game], ...] oldest first. Keyed by
+        # ESPN id because that is what the stat feed speaks; the crosswalk maps
+        # a Sleeper player onto it.
+        "history": history or {},
         "players": players or {},
         "projections": projections or [],
         "byes": byes or {},
@@ -97,6 +110,39 @@ def build(season=None, _players_fn=None, _proj_fn=None, _byes_fn=None,
             pass
         raise
     return snap
+
+
+def _season_history(season, back=HISTORY_SEASONS, _pool_fn=None):
+    """Per-game production for the previous `back` seasons, by espn_id.
+
+    Degrades to whatever it could get: a missing season is a shorter arc, not
+    a failure. Trajectory already treats fewer than two points as "no
+    direction", so partial history is honest rather than broken."""
+    import wes_nfl
+    pool_fn = _pool_fn or wes_nfl.pool_by_position
+    out = {}
+    for yr in range(season - back, season):
+        try:
+            pool, _failed = pool_fn(season=yr)
+        except Exception:  # noqa: BLE001 — one bad season must not lose the rest
+            continue
+        for row in pool or []:
+            eid = row.get("espn_id")
+            gp = row.get("gp") or 0
+            if not eid or not gp:
+                continue
+            pts = wes_nfl.fantasy_points(wes_nfl.per_game(row).get("cats"),
+                                         wes_nfl.DEFAULT_SCORING, None)
+            out.setdefault(str(eid), []).append([yr, round(pts, 2)])
+    for arc in out.values():
+        arc.sort(key=lambda x: x[0])
+    return out
+
+
+def history(path=None):
+    """espn_id -> [[season, pts/g], ...]. {} when absent."""
+    snap = load(path)
+    return (snap or {}).get("history") or {}
 
 
 _loaded = {"at": 0.0, "snap": None}

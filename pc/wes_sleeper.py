@@ -283,6 +283,24 @@ def parse_players(payload):
             "depth_chart_order": (p.get("depth_chart_order")
                                   if isinstance(p.get("depth_chart_order"), int)
                                   else None),
+            # QUALITATIVE NOTES WE ALREADY PAY FOR. All of this arrives in the
+            # 14MB dump we fetch daily and was being reduced to the single word
+            # "PUP". "Knee - ACL, Surgery" is a different fact from "PUP", and
+            # the difference is the whole question of whether to draft him.
+            # Coverage measured 2026-08-21: body part 570/648 injured players,
+            # notes 84/648, news timestamp 580/648.
+            "injury_body_part": p.get("injury_body_part") or "",
+            "injury_notes": p.get("injury_notes") or "",
+            # When Sleeper last had news about him, in ms. Stale news on an
+            # injured player is itself information: nothing new in three weeks
+            # reads differently from a report this morning.
+            "news_updated": (p.get("news_updated")
+                             if isinstance(p.get("news_updated"), int)
+                             else None),
+            "age": p.get("age") if isinstance(p.get("age"), int) else None,
+            "years_exp": (p.get("years_exp")
+                          if isinstance(p.get("years_exp"), int) else None),
+            "college": p.get("college") or "",
         }
     return out
 
