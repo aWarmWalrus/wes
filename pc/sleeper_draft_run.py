@@ -108,6 +108,37 @@ def _record(league_id, roster_id, draft_id, pick_no, board, decision,
     wes_execute.record_action(entry, _ledger_path)
 
 
+_ROSTER_CACHE = {}
+
+
+def _roster_line(board_fn, league_id, draft_id, roster_id):
+    """"3 RB, 2 WR, 1 QB" — what we hold, at a glance.
+
+    Cached on our own pick count: the board is the expensive call and a
+    heartbeat must never cost what a decision costs."""
+    try:
+        key = (draft_id, roster_id)
+        made = len(_ROSTER_CACHE.get(key, {}).get("roster", []))
+        board = board_fn(league_id, draft_id, roster_id, limit=1)
+        if isinstance(board, str):
+            return "roster unknown"
+        _ROSTER_CACHE[key] = board
+        counts = {}
+        for r in board.get("roster") or []:
+            pos = r.get("position") or "?"
+            counts[pos] = counts.get(pos, 0) + 1
+        if not counts:
+            return "no picks yet"
+        held = ", ".join(f"{n} {p}" for p, n in sorted(counts.items(),
+                                                       key=lambda x: -x[1]))
+        gaps = board.get("still_unfilled") or {}
+        need = ("; need " + ", ".join(f"{p}x{n}" for p, n in gaps.items())
+                if gaps else "; starters full")
+        return held + need
+    except Exception:  # noqa: BLE001 — a heartbeat must never break a draft
+        return "roster unknown"
+
+
 def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         _state_fn=None, _decide_fn=None, _submit_fn=None, _sleep_fn=None,
         _now_fn=None, _board_fn=None, _ledger_path=None, _record_fn=None,
@@ -129,6 +160,7 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     started = now()
     acted_on = set()
     made = []
+    last_wait = None
 
     while True:
         if now() - started > max_seconds:
@@ -146,6 +178,15 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         wait = state.get("picks_until_turn")
         if wait is None:
             return f"our draft is done; made {len(made)} pick(s)"
+        # A HEARTBEAT, so the log says something between picks. Without it the
+        # gap between our turns is indistinguishable from a hung process --
+        # and in a draft with no clock, hung is a real possibility nobody
+        # would notice.
+        if wait != last_wait:
+            last_wait = wait
+            _log(f"round {state.get('round', '?')}, {state.get('picks_made')} "
+                 f"picks in — {wait} until our turn "
+                 f"({_roster_line(board_fn, league_id, draft_id, roster_id)})")
         if wait > 0:
             # Far from the clock is the only safe time to open the chat: a
             # read takes ~12s of browser, and a pick must never wait behind it.

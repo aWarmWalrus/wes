@@ -44,13 +44,27 @@ if ($RebuildSnapshot) { $args += "--rebuild-snapshot" }
 if ($Banter -ne "off") { $args += @("--banter", $Banter) }
 if ($BanterGap -gt 0) { $args += @("--banter-gap", "$BanterGap") }
 
+# UTF-8 END TO END. Tee-Object writes UTF-16LE, which put a NUL between every
+# character of the log: grep found nothing, tail printed spaced-out gibberish,
+# and every em-dash arrived as mojibake. A log you cannot grep is not a log.
+# Setting the console encoding too keeps the live view readable.
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$env:PYTHONIOENCODING = "utf-8"
+
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm"
 $log = "$logdir\sleeper_draft.log"
-Add-Content $log "==== WES sleeper draft $stamp ===="
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::AppendAllText($log,
+    "==== WES sleeper draft $stamp ====" + [Environment]::NewLine, $utf8)
 
-# Tee so the owner can watch it live AND have the record afterwards. A draft is
-# not something you want to reconstruct from memory.
-& $py @args 2>&1 | Tee-Object -FilePath $log -Append
+# Stream to the console AND the file, line by line. Tee-Object would be the
+# obvious tool; it is the one that broke the encoding.
+& $py @args 2>&1 | ForEach-Object {
+    $line = "$_"
+    Write-Output $line
+    [System.IO.File]::AppendAllText($log, $line + [Environment]::NewLine, $utf8)
+}
 
 if ($LASTEXITCODE -ne 0) {
     Write-Output "draft run exited $LASTEXITCODE (see $log)"
