@@ -1343,3 +1343,119 @@ class TestSeatInAnyDraft:
 
     def test_user_id_of_nobody_is_None(self):
         assert sl.user_id("nobody", _get_fn=lambda p, **k: {}) is None
+
+
+class TestJoinDraft:
+    """Our own mocks were joined implicitly by creating them, so claiming a
+    seat in a stranger's draft was never exercised until it was needed."""
+
+    class Btn:
+        def __init__(self):
+            self.clicked = False
+
+        def click(self):
+            self.clicked = True
+
+    class Seat:
+        def __init__(self, label, btn):
+            self.label, self.btn = label, btn
+
+        def inner_text(self):
+            return self.label
+
+        def query_selector(self, _sel):
+            return self.btn
+
+    class Page:
+        def __init__(self, seats):
+            self.seats = seats
+
+        def goto(self, *a, **k):
+            pass
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+        def query_selector_all(self, _sel):
+            return self.seats
+
+    def _session(self, page):
+        class S:
+            def __enter__(_s):
+                return page
+
+            def __exit__(_s, *a):
+                return False
+        return S
+
+    def test_already_in_it_returns_the_seat_without_clicking(self, monkeypatch):
+        """Re-running must not claim a SECOND seat."""
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        btn = self.Btn()
+        page = self.Page([self.Seat("CLAIM Team 3", btn)])
+        got = sl.join_draft("D", _session_cls=self._session(page),
+                            _slot_fn=lambda d, n: 2, _sleep_fn=lambda _s: None)
+        assert got == 2 and btn.clicked is False
+
+    def test_it_claims_a_free_seat(self, monkeypatch):
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        btn = self.Btn()
+        page = self.Page([self.Seat("johannhof", self.Btn()),
+                          self.Seat("CLAIM Team 3", btn)])
+        seen = iter([None, None, 3])
+        got = sl.join_draft("D", _session_cls=self._session(page),
+                            _slot_fn=lambda d, n: next(seen),
+                            _sleep_fn=lambda _s: None)
+        assert got == 3 and btn.clicked
+
+    def test_it_can_target_a_named_seat(self, monkeypatch):
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        three, four = self.Btn(), self.Btn()
+        page = self.Page([self.Seat("CLAIM Team 3", three),
+                          self.Seat("CLAIM Team 4", four)])
+        seen = iter([None, None, 4])
+        sl.join_draft("D", slot=4, _session_cls=self._session(page),
+                      _slot_fn=lambda d, n: next(seen),
+                      _sleep_fn=lambda _s: None)
+        assert four.clicked and not three.clicked
+
+    def test_a_full_draft_refuses_rather_than_clicking_something_else(
+            self, monkeypatch):
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        other = self.Btn()
+        page = self.Page([self.Seat("johannhof", other)])
+        try:
+            sl.join_draft("D", _session_cls=self._session(page),
+                          _slot_fn=lambda d, n: None,
+                          _sleep_fn=lambda _s: None)
+            assert False, "should have refused"
+        except RuntimeError as e:
+            assert "no free seat" in str(e)
+        assert other.clicked is False
+
+    def test_a_click_that_does_not_take_is_reported_as_failure(self,
+                                                              monkeypatch):
+        """Verified by the API, never by the click. Trusting a click that did
+        not throw is how a pick was reported successful while the draft room
+        had ignored it (2026-08-15)."""
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        page = self.Page([self.Seat("CLAIM Team 3", self.Btn())])
+        try:
+            sl.join_draft("D", _session_cls=self._session(page),
+                          _slot_fn=lambda d, n: None,
+                          _sleep_fn=lambda _s: None)
+            assert False, "should have refused"
+        except RuntimeError as e:
+            assert "still does not list" in str(e)
+
+    def test_writes_off_means_no_seat_is_claimed(self, monkeypatch):
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: False)
+        try:
+            sl.join_draft("D", _slot_fn=lambda d, n: None)
+            assert False, "should have refused"
+        except RuntimeError as e:
+            assert "writes are off" in str(e)

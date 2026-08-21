@@ -676,6 +676,82 @@ def draft_picks(draft_id, _get_fn=None):
     return _get(f"/draft/{draft_id}/picks", ttl=15.0, _get_fn=_get_fn)
 
 
+def join_draft(draft_id, username=None, slot=None, _session_cls=None,
+               _slot_fn=None, _sleep_fn=None):
+    """Claim a free seat in a draft someone else created. Returns the slot.
+
+    **NOT PROVEN AGAINST A LIVE DRAFT — see the caveat below.** Use the Sleeper
+    app to join, then point the loop at the draft id.
+
+    Our own mocks were joined implicitly by creating them, so this gesture was
+    never exercised until asked to join a stranger's board. An empty seat
+    renders as a `.draft-user-header` whose button reads "CLAIM Team N";
+    occupied seats carry the owner's display name instead.
+
+    WHAT ACTUALLY HAPPENED WHEN TRIED (2026-08-21, draft 1396622287322509312).
+    Clicking the button, clicking the header, and dispatching a JS click that
+    bypasses hit-testing ALL returned cleanly and changed nothing: the seat
+    stayed unclaimed and `draft_order` never listed us. A human joined the same
+    seat from the app minutes later without trouble. The console carried
+    `unauthorized_to_send_message` — which may be unrelated chat noise, so it
+    is reported here as evidence, not as a diagnosis.
+    So the gesture is wrong, or joining a mock needs the invite path rather
+    than the draft URL. Unresolved.
+
+    The function stays because its FAILURE mode is right: it verifies against
+    `draft_order` and refuses rather than reporting a seat we cannot see. That
+    is what stopped this being recorded as a successful join.
+
+    ALREADY IN IT IS A SUCCESS, NOT AN ERROR. Re-running must not claim a
+    second seat, so the existing slot is checked first and returned unchanged.
+
+    VERIFIED BY THE API, not by the click. `draft_order` is where the seat is
+    actually recorded, and it is read CACHE-BYPASSED afterwards — trusting a
+    click that "did not throw" is how a pick was reported successful while the
+    draft room had ignored it (2026-08-15)."""
+    name = username or "awarmwalrus"
+    slot_fn = _slot_fn or slot_in_draft
+    sleep = _sleep_fn or time.sleep
+
+    have = slot_fn(draft_id, name)
+    if have:
+        return have
+    if not LIVE_WRITES_OK():
+        raise RuntimeError("Sleeper writes are off")
+
+    want = f"CLAIM TEAM {slot}" if slot else "CLAIM"
+    with (_session_cls or _Session)() as page:
+        if not authenticate(page):
+            raise RuntimeError("no WES_SLEEPER_TOKEN — cannot reach the draft")
+        page.goto(f"{WEB}/draft/nfl/{draft_id}",
+                  wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(9000)
+
+        seat = None
+        for h in page.query_selector_all(".draft-user-header"):
+            txt = " ".join((h.inner_text() or "").split()).upper()
+            if txt.startswith(want):
+                seat = h.query_selector(".header-button")
+                if seat:
+                    break
+        if seat is None:
+            raise RuntimeError(
+                f"no free seat matching {want!r} in draft {draft_id} — it is "
+                f"either full or the seat labels have changed")
+        seat.click()
+
+        # Poll the API rather than the DOM. The seat is ours when Sleeper says
+        # so, and only then.
+        for _ in range(10):
+            sleep(2)
+            got = slot_fn(draft_id, name)
+            if got:
+                return got
+    raise RuntimeError(
+        f"clicked a free seat in draft {draft_id} but draft_order still does "
+        f"not list {name} — refusing to report a seat we cannot see")
+
+
 def drafted_player_ids_fresh(draft_id, _get_fn=None):
     """Taken ids, CACHE BYPASSED — for the check made immediately before a pick.
 
