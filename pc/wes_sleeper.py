@@ -689,14 +689,28 @@ def join_draft(draft_id, username=None, slot=None, _session_cls=None,
     occupied seats carry the owner's display name instead.
 
     WHAT ACTUALLY HAPPENED WHEN TRIED (2026-08-21, draft 1396622287322509312).
-    Clicking the button, clicking the header, and dispatching a JS click that
-    bypasses hit-testing ALL returned cleanly and changed nothing: the seat
-    stayed unclaimed and `draft_order` never listed us. A human joined the same
-    seat from the app minutes later without trouble. The console carried
-    `unauthorized_to_send_message` — which may be unrelated chat noise, so it
-    is reported here as evidence, not as a diagnosis.
-    So the gesture is wrong, or joining a mock needs the invite path rather
-    than the draft URL. Unresolved.
+    Six gestures, all clean, all inert: the inner button, the header, a JS
+    click bypassing hit-testing, the second of the two overlapping duplicates,
+    a real mouse click at its centre, and a Playwright text selector. The seat
+    stayed unclaimed and `draft_order` never listed us. A human claimed the
+    adjacent seat from the app minutes later without trouble.
+
+    THE DECISIVE MEASUREMENT: watching the network, the click fires **no POST
+    at all**. The app is not attempting the claim and failing — the handler
+    never runs. So this is not a gesture problem to be solved by clicking
+    harder or elsewhere.
+
+    Best current theory, unconfirmed: token injection buys a rendered page and
+    the public read API, but the app's own session never loads a draft we have
+    not joined into its store, so the seat renders as a live control while
+    being wired to nothing. The console's
+    `unauthorized_to_send_message` / "could not find the draft" is consistent
+    with that, though it may be unrelated chat noise. Every one of OUR mocks
+    was created in-session, which is why clicking worked there and nowhere
+    else.
+
+    Do not spend more clicks on this without a new idea; joining takes a human
+    five seconds in the app, and everything downstream is verified.
 
     The function stays because its FAILURE mode is right: it verifies against
     `draft_order` and refuses rather than reporting a seat we cannot see. That
