@@ -164,12 +164,16 @@ class Banter:
         if since < self.min_gap_s:
             return "rate_limited", f"{self.min_gap_s - since:.0f}s to go"
 
+        # Carried into the return so the log shows the EXCHANGE. A
+        # transcript of only our own lines reads like a bot talking to itself,
+        # which is also the failure mode worth spotting early.
+        prompt = " | ".join(f"{m['author']}: {m['text'][:60]}" for m in fresh[-2:])
         line = compose(msgs, context=context, _post_fn=_post_fn)
         if not line:
-            return "quiet", "nothing worth saying"
+            return "quiet", f"nothing worth saying (re: {prompt})"
         if self.mode != "auto":
             self.last_sent_at = self._now()   # propose mode is rate-limited too
-            return "would_say", line
+            return "would_say", f"{line}   <- re: {prompt}"
         try:
             ok = (_send_fn or _default_send)(self.draft_id, line)
         except Exception as e:  # noqa: BLE001
@@ -177,7 +181,8 @@ class Banter:
         # The clock starts whether or not it landed: a failing send that is
         # retried every poll is exactly the flood this exists to prevent.
         self.last_sent_at = self._now()
-        return ("said", line) if ok else ("send_failed", line)
+        detail = f"{line}   <- re: {prompt}"
+        return ("said", detail) if ok else ("send_failed", detail)
 
 
 def _default_read(draft_id):

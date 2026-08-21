@@ -111,7 +111,7 @@ def _record(league_id, roster_id, draft_id, pick_no, board, decision,
 def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         _state_fn=None, _decide_fn=None, _submit_fn=None, _sleep_fn=None,
         _now_fn=None, _board_fn=None, _ledger_path=None, _record_fn=None,
-        banter_mode="off", _banter=None):
+        banter_mode="off", banter_gap=None, _banter=None):
     """Watch and draft until the draft ends. Returns a short summary string."""
     turn_fn = _state_fn or wes_sleeper.draft_turn
     board_fn = _board_fn or wes_sleeper.draft_candidates
@@ -123,7 +123,8 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     # singleton, so a second process reading the chat would collide with the
     # one submitting picks. Only touched when we are NOT on the clock.
     chat = _banter if _banter is not None else wes_banter.Banter(
-        draft_id, mode=banter_mode)
+        draft_id, mode=banter_mode,
+        min_gap_s=wes_banter.MIN_GAP_S if banter_gap is None else banter_gap)
 
     started = now()
     acted_on = set()
@@ -290,6 +291,11 @@ def main():
     ap.add_argument("roster_id", type=int)
     ap.add_argument("--league", default="1393935116232818688")
     ap.add_argument("--max-seconds", type=int, default=6 * 3600)
+    ap.add_argument("--banter-gap", type=float, default=None,
+                    help="minimum seconds between messages. The floor is not "
+                         "the only limiter: chat is only read when more than "
+                         "two picks from the clock, so the poll cadence caps "
+                         "it too.")
     ap.add_argument("--banter", choices=("off", "propose", "auto"),
                     default="off",
                     help="chat in the draft room. 'propose' composes and logs "
@@ -300,7 +306,7 @@ def main():
     _log(f"watching draft {a.draft_id} for roster {a.roster_id} "
          f"(writes {'ON' if wes_execute.writes_enabled() else 'OFF'})")
     print(run(a.draft_id, a.league, a.roster_id, max_seconds=a.max_seconds,
-              banter_mode=a.banter))
+              banter_mode=a.banter, banter_gap=a.banter_gap))
 
 
 if __name__ == "__main__":

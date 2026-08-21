@@ -178,6 +178,7 @@ def main():
     ap.add_argument("--no-browser-probe", action="store_true")
     ap.add_argument("--banter", choices=("off", "propose", "auto"),
                     default="off")
+    ap.add_argument("--banter-gap", type=float, default=None)
     ap.add_argument("--rebuild-snapshot", action="store_true",
                     help="rebuild the local board first (~5s). The staleness "
                          "check is the one that fails routinely, and the fix "
@@ -238,7 +239,8 @@ def main():
           f"(roster {roster_id})\n")
     print(sleeper_draft_run.run(draft_id, a.league, roster_id,
                                 max_seconds=6 * 3600,
-                                banter_mode=a.banter))
+                                banter_mode=a.banter,
+                                banter_gap=a.banter_gap))
     return 0
 
 

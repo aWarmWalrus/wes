@@ -143,7 +143,10 @@ class TestBanterLoop:
         act, detail = b.tick(_read_fn=lambda d: _msgs(("bob", "hi")),
                              _send_fn=lambda d, t: sent.append(t) or True,
                              _post_fn=_model("would say this"))
-        assert act == "would_say" and detail == "would say this"
+        # The detail now carries the exchange, not just our half of it.
+        assert act == "would_say"
+        assert detail.startswith("would say this")
+        assert "bob: hi" in detail
         assert sent == []
 
     def test_propose_mode_is_rate_limited_too(self):
@@ -192,3 +195,25 @@ class TestBanterLoop:
         act, detail = b.tick(_read_fn=lambda d: _msgs(("bob", "hi")),
                              _send_fn=boom, _post_fn=_model("a"))
         assert act == "error" and "no message box" in detail
+
+
+class TestExchangeLogging:
+    """A transcript of only our own lines reads like a bot talking to itself
+    -- which is also the failure worth spotting early."""
+
+    def test_a_sent_line_records_what_prompted_it(self):
+        b = banter.Banter("D", me="me", mode="auto", min_gap_s=0,
+                          _now=lambda: 1000.0)
+        b.tick(_read_fn=lambda d: [], _post_fn=_model(""))
+        _act, detail = b.tick(
+            _read_fn=lambda d: _msgs(("bob", "your team is bad")),
+            _send_fn=lambda d, t: True, _post_fn=_model("bold words"))
+        assert "bold words" in detail and "bob: your team is bad" in detail
+
+    def test_staying_quiet_records_what_it_declined_to_answer(self):
+        b = banter.Banter("D", me="me", mode="auto", min_gap_s=0,
+                          _now=lambda: 1000.0)
+        b.tick(_read_fn=lambda d: [], _post_fn=_model(""))
+        act, detail = b.tick(_read_fn=lambda d: _msgs(("bob", "hello there")),
+                             _post_fn=_model(""))
+        assert act == "quiet" and "bob: hello there" in detail

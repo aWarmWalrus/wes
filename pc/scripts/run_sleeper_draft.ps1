@@ -19,7 +19,8 @@
 [CmdletBinding()]
 param([switch]$Check, [double]$WaitHours = 8.0, [string]$DraftId,
       [string]$League, [switch]$RebuildSnapshot,
-      [ValidateSet('off','propose','auto')][string]$Banter = 'off')
+      [ValidateSet('off','propose','auto')][string]$Banter = 'off',
+      [double]$BanterGap = 0)
 
 $base = "C:\Users\awarm\wes-pc"
 $repo = if ($env:WES_REPO) { $env:WES_REPO } else { "C:\Users\awarm\wes" }
@@ -41,6 +42,7 @@ if ($DraftId) { $args += @("--draft", $DraftId) }
 if ($League) { $args += @("--league", $League) }
 if ($RebuildSnapshot) { $args += "--rebuild-snapshot" }
 if ($Banter -ne "off") { $args += @("--banter", $Banter) }
+if ($BanterGap -gt 0) { $args += @("--banter-gap", "$BanterGap") }
 
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm"
 $log = "$logdir\sleeper_draft.log"
