@@ -213,3 +213,78 @@ class TestOneSessionAtATime:
         except RuntimeError:
             pass
         assert sdsession.Session._live == 0
+
+
+class TestAutopickIsClearedOnBuild:
+    """Sleeper turns AUTO-PICK on by itself after one missed pick and leaves
+    it on, so one miss costs the REST of the draft rather than one pick.
+
+    A fresh session is the first chance to notice, and the lifecycle tests
+    above deliberately stub the toggle away to stay about the lifecycle -- so
+    without these, the clear-on-build path had no test at all.
+    """
+
+    class TogglePage(FakePage):
+        """A page whose AUTO-PICK control is present and ON."""
+
+        def __init__(self, on=True):
+            super().__init__()
+            self.state = {"on": on}
+            self.slider_clicks = 0
+            page = self
+
+            class Slider:
+                def click(_s):
+                    page.slider_clicks += 1
+                    page.state["on"] = not page.state["on"]
+            self._slider = Slider()
+
+        def evaluate(self, js, arg=None):
+            # The autopick probe is the one that passes a selector.
+            if arg is not None or "checkbox" in str(js):
+                return self.state["on"]
+            return self.ok
+
+        def query_selector(self, _sel):
+            return self._slider
+
+    def _session_yielding(self, page):
+        class S:
+            def __init__(_s):
+                _s.exited = False
+
+            def __enter__(_s):
+                return page
+
+            def __exit__(_s, *a):
+                _s.exited = True
+                return False
+        return S
+
+    def _build(self, monkeypatch, page):
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
+        said = []
+        br = sdbrowser.Browser("D", _session_cls=self._session_yielding(page),
+                               _now=lambda: 1000.0, _log=said.append)
+        br.page()
+        return br, said
+
+    def test_a_session_that_finds_autopick_on_turns_it_off(self, monkeypatch):
+        page = self.TogglePage(on=True)
+        _, said = self._build(monkeypatch, page)
+        assert page.state["on"] is False
+        assert page.slider_clicks == 1
+
+    def test_it_says_so_rather_than_silently_undoing_the_platform(
+            self, monkeypatch):
+        """An agent that quietly reverses something Sleeper did is one you
+        cannot debug afterwards."""
+        _, said = self._build(monkeypatch, self.TogglePage(on=True))
+        assert any("AUTO-PICK" in m for m in said), said
+
+    def test_autopick_already_off_is_left_alone(self, monkeypatch):
+        """Toggling a control that is already right would turn it ON."""
+        page = self.TogglePage(on=False)
+        _, said = self._build(monkeypatch, page)
+        assert page.slider_clicks == 0
+        assert not any("AUTO-PICK" in m for m in said)

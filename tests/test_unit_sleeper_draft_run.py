@@ -538,6 +538,19 @@ class TestUnknownIsNotOff:
         assert any("UNKNOWN" in m for m in said), "must say so"
         assert got == 0.0, "must retry next cycle, not wait another interval"
 
+    def test_the_next_look_still_acts_on_a_real_ON(self, monkeypatch):
+        """Retrying is only useful if the retry can still intervene -- an
+        unknown read must not leave the guard wedged."""
+        br = TestAutopickGuard.FakeBrowser(on=True)
+        monkeypatch.setattr(loop.wes_sleeper, "autopick_on", lambda p: None)
+        cleared = []
+        monkeypatch.setattr(loop.wes_sleeper, "set_autopick",
+                            lambda p, on=False: cleared.append(on))
+        t = loop._keep_autopick_off(br, 0.0, 1000.0, lambda m: None)
+        monkeypatch.setattr(loop.wes_sleeper, "autopick_on", lambda p: True)
+        loop._keep_autopick_off(br, t, 1000.5, lambda m: None)
+        assert cleared == [False], "the retry must be able to turn it off"
+
 
 class TestLandedLateChecksTheirPlayer:
     """"Our pick number was filled by our slot" is NOT "we got our player".
