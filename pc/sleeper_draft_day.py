@@ -35,6 +35,7 @@ import sleeper_draft_run
 import wes_execute
 import wes_sleeper
 import wes_snapshot
+from sleeperdraft import config as sd_config
 
 LEAGUE = "1393935116232818688"          # Alloy Agents vs. Humans
 USERNAME = wes_sleeper.USERNAME       # WES_SLEEPER_USER overrides
@@ -59,8 +60,12 @@ def preflight(league_id=LEAGUE, username=USERNAME, draft_id=None,
             ok = False
         return good
 
-    check("token", bool(wes_sleeper.TOKEN),
-          f"{len(wes_sleeper.TOKEN)} chars" if wes_sleeper.TOKEN
+    # Read from the package's config, not from a name bound when this module
+    # loaded. The token is owned by `sleeperdraft.config`, and a copy taken at
+    # import would keep reporting one that has since been replaced.
+    token = sd_config.TOKEN
+    check("token", bool(token),
+          f"{len(token)} chars" if token
           else "no WES_SLEEPER_TOKEN — writes cannot happen")
 
     check("live writes", wes_execute.writes_enabled(),

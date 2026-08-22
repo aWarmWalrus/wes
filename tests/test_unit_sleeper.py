@@ -15,6 +15,9 @@ import wes_draft_agent as agent  # noqa: E402
 import wes_nfl  # noqa: E402
 import wes_snapshot as snapshot  # noqa: E402
 import wes_sleeper as sl  # noqa: E402
+from sleeperdraft import config as sdconfig  # noqa: E402
+from sleeperdraft import pick as sdpick  # noqa: E402
+from sleeperdraft import session as sdsession  # noqa: E402
 
 
 class TestParseScoring:
@@ -299,7 +302,7 @@ class TestLoginWallDetection:
         """This is the check run to diagnose another failure, so it has to
         survive the failure it is diagnosing. A token is set here so the check
         gets past the missing-token guard and actually reaches the browser."""
-        monkeypatch.setattr(sl, "TOKEN", "tok")
+        monkeypatch.setattr(sdconfig, "TOKEN", "tok")
 
         class Boom:
             def __enter__(self):
@@ -335,7 +338,7 @@ class TestTokenAuthentication:
                 self.store[arg[0]] = arg[1]
 
     def test_writes_the_token_to_the_pinned_key(self, monkeypatch):
-        monkeypatch.setattr(sl, "TOKEN", "abc123")
+        monkeypatch.setattr(sdconfig, "TOKEN", "abc123")
         page = self.FakePage()
         assert sl.authenticate(page) is True
         assert page.store == {"token": "abc123"}
@@ -343,7 +346,7 @@ class TestTokenAuthentication:
     def test_loads_the_origin_first(self, monkeypatch):
         """localStorage is per-ORIGIN; writing it from about:blank lands
         nowhere at all, silently."""
-        monkeypatch.setattr(sl, "TOKEN", "abc123")
+        monkeypatch.setattr(sdconfig, "TOKEN", "abc123")
         page = self.FakePage()
         sl.authenticate(page)
         assert page.goto_urls and page.goto_urls[0].startswith(sl.WEB)
@@ -352,11 +355,11 @@ class TestTokenAuthentication:
             self, monkeypatch):
         """Presenting an anonymous browser would scrape the marketing page and
         report a mysteriously empty roster."""
-        monkeypatch.setattr(sl, "TOKEN", "")
+        monkeypatch.setattr(sdconfig, "TOKEN", "")
         assert sl.authenticate(self.FakePage()) is False
 
     def test_logged_in_says_so_when_the_token_is_missing(self, monkeypatch):
-        monkeypatch.setattr(sl, "TOKEN", "")
+        monkeypatch.setattr(sdconfig, "TOKEN", "")
         ok, detail = sl.logged_in("L")
         assert ok is False and "WES_SLEEPER_TOKEN" in detail
 
@@ -529,7 +532,7 @@ class TestSubmitPick:
         """Refusing beats clicking a different row — that is the Yahoo swap bug
         wearing a different hat."""
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         page = self.FakePage([self.FakeRow("Someone Else", self.FakeBtn())])
         try:
             sl.submit_pick("D", "1", "Target Guy",
@@ -549,8 +552,8 @@ class TestSubmitPick:
         longer be mistaken for success, because verification requires the
         pick's draft_slot to be OURS."""
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
-        monkeypatch.setattr(sl, "ENABLE_WAIT_TRIES", 2)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdpick, "ENABLE_WAIT_TRIES", 2)
         btn = self.FakeBtn("draft-button disable")
         page = self.FakePage([self.FakeRow("Target Guy", btn)])
         ok = sl.submit_pick("D", "1", "Target Guy",
@@ -564,7 +567,7 @@ class TestSubmitPick:
         """The name matched and the click landed, but the id that actually got
         drafted is the only proof."""
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         btn = self.FakeBtn("draft-button")
         page = self.FakePage([self.FakeRow("Target Guy", btn)])
         ok = sl.submit_pick("D", "77", "Target Guy",
@@ -577,7 +580,7 @@ class TestSubmitPick:
         """The whole reason verification exists: names are ambiguous, ids are
         not."""
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         page = self.FakePage([self.FakeRow("Target Guy", self.FakeBtn())])
         try:
             sl.submit_pick("D", "77", "Target Guy",
@@ -626,7 +629,7 @@ class TestVerificationIsPolled:
     def test_a_pick_that_appears_late_still_verifies(self, monkeypatch):
         """Sleeper takes a moment to commit; one eager read is not proof."""
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         calls = {"n": 0}
 
         def picks(_d):
@@ -639,7 +642,7 @@ class TestVerificationIsPolled:
 
     def test_it_gives_up_rather_than_polling_forever(self, monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         calls = {"n": 0}
 
         def picks(_d):
@@ -788,7 +791,7 @@ class TestWindowedList:
 
     def test_it_SCROLLS_before_declaring_a_player_unavailable(self, monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         btn = TestSubmitPick.FakeBtn("draft-button")
         box = self.Box()
         page = self.Page(box,
@@ -812,7 +815,7 @@ class TestWindowedList:
         """Two very different causes wore the same message before, and only one
         of them means 'pick someone else'."""
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         box = self.Box()
         # The list RENDERS -- it just does not contain him. That is the case
         # that genuinely means "pick someone else"; an empty list is a
@@ -882,7 +885,7 @@ class TestUnrenderedIsNotAbsent:
     def test_an_empty_list_says_so_instead_of_blaming_the_player(self,
                                                                 monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         page = self.Page(TestWindowedList.Box(), lambda: [])
 
         class S:
@@ -1017,7 +1020,7 @@ class TestDraftDayPreflight:
     def _clean(self, monkeypatch):
         import sleeper_draft_day as day
         import wes_draft_agent
-        monkeypatch.setattr(sl, "TOKEN", "tok" * 40)
+        monkeypatch.setattr(sdconfig, "TOKEN", "tok" * 40)
         monkeypatch.setattr(day.wes_execute, "writes_enabled", lambda: True)
         monkeypatch.setattr(day.wes_sleeper, "league", lambda i: {
             "name": "L", "status": "pre_draft", "draft_id": "D"})
@@ -1042,7 +1045,7 @@ class TestDraftDayPreflight:
 
     def test_a_missing_token_fails_it(self, monkeypatch):
         day = self._clean(monkeypatch)
-        monkeypatch.setattr(sl, "TOKEN", "")
+        monkeypatch.setattr(sdconfig, "TOKEN", "")
         ok, lines = day.preflight(_probe_browser=False)
         assert not ok
         assert any("FAIL" in ln and "token" in ln for ln in lines)
@@ -1089,7 +1092,7 @@ class TestDraftDayPreflight:
         """A pre-flight that dies on its first problem tells you about one
         thing when you wanted the list."""
         day = self._clean(monkeypatch)
-        monkeypatch.setattr(sl, "TOKEN", "")
+        monkeypatch.setattr(sdconfig, "TOKEN", "")
         monkeypatch.setattr(day.wes_snapshot, "age_seconds",
                             lambda: 40 * 3600.0)
         ok, lines = day.preflight(_probe_browser=False)
@@ -1334,11 +1337,16 @@ class TestHeadlessDefault:
         """Worth doing when the draft room's DOM changes under us."""
         monkeypatch.setenv("WES_SLEEPER_HEADLESS", "0")
         import importlib
-        importlib.reload(sl)
+        importlib.reload(sdconfig)
         try:
-            assert sl.HEADLESS is False
+            assert sdconfig.HEADLESS is False
         finally:
             monkeypatch.delenv("WES_SLEEPER_HEADLESS")
+            importlib.reload(sdconfig)
+            # Reloading the package's config discards the account and token
+            # WES set on it at import; reloading the adapter puts them back.
+            # Without this, every later test that claims a seat matches on an
+            # empty username and fails somewhere unrelated.
             importlib.reload(sl)
 
     def test_a_session_honours_an_explicit_override(self):
@@ -1452,7 +1460,7 @@ class TestJoinDraft:
         """.header-button has no onclick; clicking it is why this never
         worked."""
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         claim, wrapper = self.Btn(), self.Btn()
         seats = [self.Seat("Someone", None, None), self.Seat("Someone"),
                  self.Seat("CLAIM Team 2", claim, wrapper),
@@ -1472,7 +1480,7 @@ class TestJoinDraft:
         """draft_order lags by over a minute; a re-run inside that window
         claimed a SECOND seat."""
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         claim = self.Btn()
         seats = [self.Seat("awarmwalrus"), self.Seat("awarmwalrus"),
                  self.Seat("CLAIM Team 2", claim)]
@@ -1491,7 +1499,7 @@ class TestJoinDraft:
 
     def test_it_can_target_a_named_seat(self, monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         three, four = self.Btn(), self.Btn()
         seats = [self.Seat("CLAIM Team 3", three),
                  self.Seat("CLAIM Team 3", three),
@@ -1508,7 +1516,7 @@ class TestJoinDraft:
     def test_a_full_draft_refuses_rather_than_clicking_something_else(
             self, monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         page = self.Page([self.Seat("johannhof"), self.Seat("aykutb")])
         try:
             sl.join_draft("D", _session_cls=self._session(page),
@@ -1520,7 +1528,7 @@ class TestJoinDraft:
     def test_a_click_that_does_not_take_is_reported_as_failure(self,
                                                               monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
         page = self.Page([self.Seat("CLAIM Team 2", self.Btn())])
         try:
             sl.join_draft("D", _session_cls=self._session(page),
@@ -1619,6 +1627,7 @@ class TestAccountIsASetting:
 
     def test_join_draft_uses_the_configured_account(self, monkeypatch):
         monkeypatch.setattr(sl, "USERNAME", "GMBartimusPrime")
+        monkeypatch.setattr(sdconfig, "USERNAME", "GMBartimusPrime")
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
         seen = []
         sl.join_draft("D", _slot_fn=lambda d, n: seen.append(n) or 4)
@@ -1628,6 +1637,7 @@ class TestAccountIsASetting:
         """`me` is how it avoids answering itself; a stale default would make
         two agents in a room an infinite loop with an audience."""
         monkeypatch.setattr(sl, "USERNAME", "GMBartimusPrime")
+        monkeypatch.setattr(sdconfig, "USERNAME", "GMBartimusPrime")
         import wes_banter
         assert wes_banter.Banter("D").me == "GMBartimusPrime"
 
@@ -1685,8 +1695,8 @@ class TestPickVerificationIsOursOnly:
 
     def _submit(self, monkeypatch, picks, slot):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
-        monkeypatch.setattr(sl, "_click_pick", lambda *a, **k: None)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdpick, "click_pick", lambda *a, **k: None)
 
         class S:
             def __enter__(_s):
@@ -1803,8 +1813,8 @@ class TestDisabledButtonIsNotAVeto:
 
     def test_it_clicks_a_button_that_still_reads_disabled(self, monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        monkeypatch.setattr(sl, "authenticate", lambda p: True)
-        monkeypatch.setattr(sl, "ENABLE_WAIT_TRIES", 2)
+        monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
+        monkeypatch.setattr(sdpick, "ENABLE_WAIT_TRIES", 2)
         btn = TestSubmitPick.FakeBtn("draft-button disable")
         row = TestSubmitPick.FakeRow("Target Guy", btn)
 

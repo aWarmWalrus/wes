@@ -29,111 +29,73 @@ import os
 import re
 import time
 
+import sleeperdraft
 import wes_http
 import wes_nfl
+from sleeperdraft import chat as _sd_chat
+from sleeperdraft import config as _sd_config
+from sleeperdraft import pick as _sd_pick
+from sleeperdraft import read as _sd_read
+from sleeperdraft import session as _sd_session
 
-BASE = "https://api.sleeper.app/v1"
-WEB = "https://sleeper.com"
-
-# The browser profile that holds the Sleeper login. Separate from the Yahoo one
-# so a re-login on either platform cannot disturb the other. PC-local, never the
-# repo: it contains real session cookies.
-PROFILE_DIR = os.environ.get(
-    "WES_SLEEPER_PROFILE_DIR",
-    os.path.join(os.path.expanduser("~"), "wes-pc", "sleeper_profile"))
-# HEADLESS BY DEFAULT, unlike the Yahoo session. The original reasoning —
-# "the one-time login is interactive, and a headless window the owner cannot see
-# is a bad place to discover that a session expired" — was written before token
-# injection. Login is not interactive here, `authenticate` returns a boolean,
-# and the draft-day pre-flight checks the session explicitly, so a visible
-# window buys nothing and costs the owner a Chrome popup stealing focus every
-# pick, fifteen times an afternoon, on the machine they are working on.
+# --- the DOM layer lives in `sleeperdraft` -----------------------------------
+# Everything that drives the draft room -- the browser session, claiming a seat,
+# clicking a pick, the chat, the AUTO-PICK toggle -- moved into a standalone
+# package so it can be shared and tested without any of WES around it. What is
+# left in this module is the part that is genuinely OURS: Sleeper's scoring
+# translated into our stat keys, player identity, and the valued draft board.
 #
-# Verified identical, not assumed: a full headless mock drafted 15 of 15 with
-# zero substitutions in 620s, against 622s headed (2026-08-16). Same machine,
-# same browser, same profile — only the window is gone.
-#
-# Set WES_SLEEPER_HEADLESS=0 to watch it work, which is worth doing when the
-# draft room's DOM changes under us.
-HEADLESS = os.environ.get("WES_SLEEPER_HEADLESS", "1") == "1"
-BROWSER_CHANNEL = os.environ.get("WES_SLEEPER_BROWSER_CHANNEL", "chrome")
+# These names are re-exported rather than forwarded through wrappers, so
+# `wes_sleeper.submit_pick` IS `sleeperdraft.pick.submit_pick` -- one function,
+# one place it can be wrong.
+BASE = _sd_config.BASE
+WEB = _sd_config.WEB
+PROFILE_DIR = _sd_config.PROFILE_DIR
+HEADLESS = _sd_config.HEADLESS
+BROWSER_CHANNEL = _sd_config.BROWSER_CHANNEL
+TOKEN_KEY = _sd_config.TOKEN_KEY
+LEAGUE_TTL = _sd_config.LEAGUE_TTL
+PLAYERS_TTL = _sd_config.PLAYERS_TTL
+_read_token = _sd_config.read_token
 
-# The account token, from the PC user environment (never the repo), same
-# convention as WES_DISCORD_TOKEN.
-#
-# WHY A TOKEN AND NOT AN INTERACTIVE LOGIN: sleeper.com's login form is behind
-# hCaptcha, which is built to detect exactly the browser Playwright launches —
-# the owner could not get through it by hand in the automation profile, and
-# even one success would not last, since hCaptcha re-challenges. But the captcha
-# guards OBTAINING a session, not PRESENTING one. Injecting an existing token
-# walks straight past it, and the app then bootstraps its own session state as
-# if a human had signed in (verified 2026-08-14).
-def _read_token(username=None):
-    """The token for `username`, with a fallback to the PERSISTED user-scope
-    value on Windows.
-
-    Looks for WES_SLEEPER_TOKEN_<USERNAME> first, then the shared
-    WES_SLEEPER_TOKEN. So a second account is additive rather than a
-    replacement, and the account that holds the real league team keeps working
-    whatever else is configured.
-
-    A shell opened before the variable was set does not inherit it, and the
-    failure mode is quiet and expensive: a mock draft ran for seven minutes,
-    stood down on every turn with "no WES_SLEEPER_TOKEN", let cpu_autopick take
-    all fifteen picks, and printed a perfectly plausible roster that proved
-    nothing (2026-08-15). The value is already on the machine; there is no
-    reason for a stale shell to be the thing that decides whether we can draft.
-    """
-    names = []
-    if username:
-        names.append("WES_SLEEPER_TOKEN_"
-                     + "".join(c for c in username.upper() if c.isalnum()))
-    names.append("WES_SLEEPER_TOKEN")
-    for var in names:
-        tok = os.environ.get(var, "")
-        if tok:
-            return tok
-    if os.name != "nt":
-        return ""
-    try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
-            for var in names:
-                try:
-                    got = str(winreg.QueryValueEx(key, var)[0] or "")
-                except OSError:
-                    continue
-                if got:
-                    return got
-    except OSError:
-        return ""
-    return ""
-
-
-# WHO WES IS ON SLEEPER. A setting, not a constant: the owner has more than one
-# account (a personal one that holds the real league team, and a bot account for
-# mocks), and the account has to match the TOKEN or every write lands as the
-# wrong person -- or nowhere, since the seat lookups key off the display name.
+# WHO WES IS ON SLEEPER. The package defaults to no account at all, because it
+# has no business knowing whose it is; WES has exactly one owner, so the default
+# belongs here. The token is re-read against THIS name so the two cannot drift:
+# mismatching them is a quiet failure where writes land as somebody else.
 USERNAME = os.environ.get("WES_SLEEPER_USER", "awarmwalrus")
+_sd_config.USERNAME = USERNAME
+TOKEN = _sd_config.TOKEN = _sd_config.read_token(USERNAME)
 
-# PAIRED WITH THE ACCOUNT, so the two cannot drift apart. A per-account
-# variable wins over the shared one, which means adding a second account never
-# displaces the first -- and the first is the one holding the real league team.
-# Mismatching a token and a username is the failure this prevents, and it is
-# quiet: the writes would land as somebody else.
-TOKEN = _read_token(USERNAME)
+_Session = _sd_session.Session
+_is_login_wall = _sd_session.is_login_wall
+authenticate = _sd_session.authenticate
+logged_in = _sd_session.logged_in
 
-# The single localStorage key Sleeper's web app reads the token from. Pinned by
-# testing candidates ONE AT A TIME against a cleared store: of `token`,
-# `user_token`, `auth_token`, `jwt` and `access_token`, only this one gets past
-# the login wall. Injecting all five worked too, but shipping the shotgun would
-# have kept "working" if the real key changed — right up until it didn't.
-TOKEN_KEY = "token"
+draft = _sd_read.draft
+draft_status_fresh = _sd_read.draft_status_fresh
+draft_picks = _sd_read.draft_picks
+drafted_player_ids = _sd_read.drafted_player_ids
+drafted_player_ids_fresh = _sd_read.drafted_player_ids_fresh
+draft_turn = _sd_read.draft_turn
+user_id = _sd_read.user_id
+slot_in_draft = _sd_read.slot_in_draft
+slot_names = _sd_read.slot_names
 
-# League metadata changes rarely; the player dump changes ~daily and Sleeper's
-# docs ask callers not to pull it more than once a day (it is 14MB).
-LEAGUE_TTL = float(900)
-PLAYERS_TTL = float(6 * 3600)
+join_draft = sleeperdraft.join_draft
+submit_pick = _sd_pick.submit_pick
+autopick_on = _sd_pick.autopick_on
+set_autopick = _sd_pick.set_autopick
+_norm_name = _sd_pick.norm_name
+
+read_chat = _sd_chat.read_chat
+send_chat = _sd_chat.send_chat
+parse_chat = _sd_chat.parse_chat
+
+# THE WRITE GATE, wired by NAME rather than by value. The package's default is
+# "writes allowed"; WES puts the fantasy kill switch behind it instead. Looked
+# up at call time on purpose -- a direct reference would capture the function
+# now and ignore anything that replaces it later, and the tests replace it.
+_sd_pick.writes_allowed = lambda: LIVE_WRITES_OK()
 
 # How far back to look for a positional run. Roughly one trip round a 12-team
 # board, which is the horizon that matters: what happens inside it decides
@@ -621,58 +583,10 @@ def free_agents(league_id, positions=("QB", "RB", "WR", "TE", "K", "DEF"),
     return out
 
 
-def user_id(username, _get_fn=None):
-    """Sleeper's account id for a display name. None if unknown.
-
-    Needed for MOCK drafts, which have no league at all (`league_id` is null),
-    so the roster route cannot be used to find our seat. A mock's `draft_order`
-    is keyed by user id, and that is the only place our slot is written down."""
-    u = _get(f"/user/{username}", _get_fn=_get_fn)
-    return str(u.get("user_id")) if isinstance(u, dict) and u.get("user_id") \
-        else None
 
 
-def slot_in_draft(draft_id, username, _get_fn=None, _draft_fn=None):
-    """Which draft SLOT we occupy in an arbitrary draft. None if we are not in
-    it.
-
-    Works for mocks and league drafts alike, because it reads `draft_order`
-    (user id -> slot) rather than the league's rosters. Sleeper writes this when
-    the seat is claimed, which happens on JOINING — so a draft we have not
-    joined correctly returns None rather than a guess. Watching the wrong slot
-    is not a hypothetical: an early loop sat on slot 1 while our real seat was
-    elsewhere and made zero picks (2026-08-15)."""
-    uid = user_id(username, _get_fn=_get_fn)
-    if not uid:
-        return None
-    d = (_draft_fn or draft)(draft_id) or {}
-    order = d.get("draft_order") or {}
-    slot = order.get(uid)
-    return int(slot) if slot else None
 
 
-def slot_names(draft_id, _get_fn=None, _draft_fn=None):
-    """Draft slot -> the display name sitting in it. {} if unknown.
-
-    Banter was told to "needle the right person" while holding nothing but
-    slot NUMBERS, so the best it could manage was ribbing an integer. A name
-    is what makes a chat line land.
-
-    Reads `draft_order` (user id -> slot) and resolves each id through
-    `/user/{id}`, which takes an id as happily as a username -- so this works
-    for MOCK drafts, which have no league and therefore no /users route.
-    Best-effort per seat: one unresolvable id costs that name, not the map.
-    """
-    d = (_draft_fn or draft)(draft_id) or {}
-    out = {}
-    for uid, slot in (d.get("draft_order") or {}).items():
-        if not slot:
-            continue
-        u = _get(f"/user/{uid}", _get_fn=_get_fn)
-        name = u.get("display_name") if isinstance(u, dict) else None
-        if name:
-            out[int(slot)] = str(name)
-    return out
 
 
 def find_roster_id(league_id, username, _get_fn=None):
@@ -696,276 +610,20 @@ def find_roster_id(league_id, username, _get_fn=None):
                  if str(r.get("owner_id")) == str(uid)), None)
 
 
-# --- browser session (writes, #039) -----------------------------------------
-# Sleeper's public API is read-only, so anything that CHANGES a team has to go
-# through the web app. Mirrors wes_yahoo._Session deliberately: same persistent
-# -profile trick, same automation-tell stripping, same context-manager shape, so
-# there is one pattern to understand rather than two.
-class _Session:
-    """A launched persistent browser context holding the Sleeper login.
-
-        with _Session() as page:
-            page.goto(...)
-    """
-
-    # How many sessions are currently open. Class-level: the limit is per
-    # process, not per instance.
-    _live = 0
-
-    def __init__(self, headless=None):
-        self.headless = HEADLESS if headless is None else headless
-        self._pw = None
-        self._ctx = None
-
-    def __enter__(self):
-        from playwright.sync_api import sync_playwright
-        # ONE AT A TIME. Playwright's sync API cannot have two instances live
-        # in a thread, and the error it gives -- "Sync API inside the asyncio
-        # loop" -- says nothing about the actual mistake. That mistake is easy
-        # to make now that a Browser can hold a session for a whole draft: a
-        # code path that forgets to accept the held browser opens its own and
-        # forfeits a pick (2026-08-21, caught in a full mock).
-        if _Session._live:
-            raise RuntimeError(
-                "a browser session is already open — pass the held "
-                "wes_browser.Browser through instead of opening a second one "
-                "(Playwright's sync API allows only one per thread)")
-        os.makedirs(PROFILE_DIR, exist_ok=True)
-        self._pw = sync_playwright().start()
-        launch = dict(
-            headless=self.headless,
-            args=["--disable-blink-features=AutomationControlled"],
-            ignore_default_args=["--enable-automation"],
-        )
-        try:
-            self._ctx = self._pw.chromium.launch_persistent_context(
-                PROFILE_DIR, channel=BROWSER_CHANNEL or None, **launch)
-        except Exception:  # noqa: BLE001 — no Chrome/Edge: bundled Chromium
-            self._ctx = self._pw.chromium.launch_persistent_context(
-                PROFILE_DIR, **launch)
-        page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
-        # ACCEPT NATIVE DIALOGS. Sleeper confirms destructive actions with
-        # window.confirm ("Are you sure you want to start the draft? This action
-        # cannot be undone"), and Playwright AUTO-DISMISSES native dialogs
-        # unless a handler is registered. That is invisible: the click lands,
-        # nothing appears in the DOM (a native dialog is not in the DOM), and
-        # nothing happens — which was twice misread as "the app ignores
-        # synthetic clicks" (2026-08-15).
-        #
-        # Accepting is right for this module because nothing here clicks
-        # anything the caller has not already decided to do: every write is
-        # gated by the kill switch, and the guardrails live above this layer,
-        # not in a browser prompt.
-        page.on("dialog", lambda d: d.accept())
-        _Session._live += 1
-        return page
-
-    def __exit__(self, *exc):
-        try:
-            try:
-                if self._ctx:
-                    self._ctx.close()
-            finally:
-                if self._pw:
-                    self._pw.stop()
-        finally:
-            # ALWAYS release, even if closing threw. A leaked counter would
-            # lock out every later session, which is worse than the bug it
-            # guards against.
-            _Session._live = max(0, _Session._live - 1)
-        return False
 
 
-def _is_login_wall(url, body):
-    """Sleeper bounces a signed-out request to `/?redirect=...&login=` rather
-    than showing an error, so a scrape of a logged-out session returns a
-    perfectly valid page about something else entirely. Detect it explicitly —
-    silently parsing the marketing page would look like an empty roster."""
-    return "login=" in (url or "") or "redirect=" in (url or "") \
-        or "LOG IN" in (body or "")
 
 
-def authenticate(page):
-    """Put the account token where the web app looks for it.
-
-    Must run with the ORIGIN already loaded — localStorage is per-origin, so
-    writing it from about:blank silently lands nowhere. Returns False if no
-    token is configured, so callers can say something useful instead of
-    presenting an anonymous browser and reporting a mysteriously empty roster."""
-    if not TOKEN:
-        return False
-    page.goto(WEB, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(1500)
-    page.evaluate("([k, v]) => window.localStorage.setItem(k, v)",
-                  [TOKEN_KEY, TOKEN])
-    return True
 
 
-def logged_in(league_id, _session_cls=None):
-    """Is the stored profile still signed in? (bool, detail).
-
-    Never raises: this is the check the owner runs to find out WHY something
-    else failed, so it has to survive the failure it is diagnosing."""
-    if not TOKEN:
-        return False, ("no WES_SLEEPER_TOKEN in the environment — set it and "
-                       "restart the process that needs it.")
-    try:
-        with (_session_cls or _Session)() as page:
-            authenticate(page)
-            page.goto(f"{WEB}/leagues/{league_id}/team",
-                      wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(4000)
-            body = " ".join((page.inner_text("body") or "").split())
-            if _is_login_wall(page.url, body):
-                return False, ("Sleeper bounced to the login page — log in "
-                               "once in the browser profile (see #039).")
-            return True, f"signed in; team page loaded ({len(body)} chars)"
-    except Exception as e:  # noqa: BLE001
-        return False, f"couldn't check the Sleeper session: {e}"
 
 
-# --- draft (#039) -----------------------------------------------------------
-# The draft READ path needs no auth at all: picks, order and settings are all
-# public. That matters for sequencing — "who is gone, whose turn is it, who
-# should I take" is fully solvable today, and only SUBMITTING a pick needs the
-# session that hCaptcha is currently blocking.
-def draft(draft_id, _get_fn=None):
-    return _get(f"/draft/{draft_id}", ttl=60.0, _get_fn=_get_fn)
 
 
-def draft_status_fresh(draft_id, _get_fn=None):
-    """The draft's status, CACHE BYPASSED. For the pre-start wait only.
-
-    `draft()` caches for 60s, and the wait loop also slept 60s -- so polling
-    faster would have changed nothing, and the interval looked like the whole
-    cause when it was half of it. Arriving 60s late to a 120s clock cost pick 1
-    of a live draft, which then engaged autopick and cost the whole draft
-    (2026-08-22)."""
-    d = _get(f"/draft/{draft_id}", ttl=0, _get_fn=_get_fn)
-    return (d or {}).get("status")
 
 
-def draft_picks(draft_id, _get_fn=None):
-    """Every pick made so far, oldest first. Short TTL: during a live draft this
-    is the fast-moving fact everything else depends on."""
-    return _get(f"/draft/{draft_id}/picks", ttl=15.0, _get_fn=_get_fn)
 
 
-def join_draft(draft_id, username=None, slot=None, _session_cls=None,
-               _slot_fn=None, _sleep_fn=None):
-    """Claim a free seat in a draft someone else created. Returns the slot.
-
-    THE BUG, AND WHY IT TOOK TWO INVESTIGATIONS (2026-08-21)
-
-    An empty seat renders as a `.draft-user-header` containing a
-    `.header-button` wrapper, which contains `.claim-text` ("CLAIM") and
-    `.header-text` ("Team 3"). **The onclick is on `.claim-text`. The wrapper
-    has none.**
-
-    Eleven gestures were aimed at the wrapper across two sessions -- Playwright
-    click, the header itself, a JS click bypassing hit-testing, the second of
-    the two overlapping duplicates, a real mouse click at its centre, a text
-    selector, a dispatched pointer sequence, a dispatched touch sequence,
-    focus+Enter. Every one was correctly ignored by an element with no handler,
-    and each null result sent me looking for a more exotic cause: an overlay,
-    React Native Web's responder system, a websocket transport, an
-    authorisation state that only real logins get. All wrong.
-
-    What found it in seconds was reading `el.onclick` across the seat's
-    descendants instead of theorising about why the click "did not land". The
-    lesson is cheap and I paid full price for it: when a click does nothing,
-    ask the DOM which element is listening before asking why the event failed.
-
-    THE SECOND HALF: `draft_order` is EVENTUALLY consistent. The seat renders
-    as ours immediately, the API can still say nothing for some seconds. The
-    original 20s verification window reported failure on a claim that had
-    actually succeeded -- so even after the click was fixed, this would have
-    looked broken.
-
-    ALREADY IN IT IS A SUCCESS, NOT AN ERROR. Re-running must not claim a
-    second seat, so the existing slot is checked first and returned unchanged.
-
-    VERIFIED BY THE API, not by the click. `draft_order` is where the seat is
-    actually recorded, and it is read CACHE-BYPASSED afterwards — trusting a
-    click that "did not throw" is how a pick was reported successful while the
-    draft room had ignored it (2026-08-15)."""
-    name = username or USERNAME
-    slot_fn = _slot_fn or slot_in_draft
-    sleep = _sleep_fn or time.sleep
-
-    have = slot_fn(draft_id, name)
-    if have:
-        return have
-    if not LIVE_WRITES_OK():
-        raise RuntimeError("Sleeper writes are off")
-
-    want = f"CLAIM TEAM {slot}" if slot else "CLAIM"
-    with (_session_cls or _Session)() as page:
-        if not authenticate(page):
-            raise RuntimeError("no WES_SLEEPER_TOKEN — cannot reach the draft")
-        page.goto(f"{WEB}/draft/nfl/{draft_id}",
-                  wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(9000)
-
-        def _labels():
-            return [" ".join((h.inner_text() or "").split())
-                    for h in page.query_selector_all(".draft-user-header")]
-
-        # ALREADY SEATED? ASK THE DOM, NOT THE API. The cheap check above uses
-        # `draft_order`, which lags the claim by over a minute — so a re-run
-        # inside that window sailed past it and claimed a SECOND seat. That is
-        # the one outcome this function exists to prevent, and the first fix
-        # for the lag reintroduced it at the other end.
-        held = [i for i, t in enumerate(_labels()) if t.lower() == name.lower()]
-        if held:
-            return held[0] // 2 + 1
-
-        seat = None
-        for h in page.query_selector_all(".draft-user-header"):
-            txt = " ".join((h.inner_text() or "").split()).upper()
-            if txt.startswith(want):
-                # THE HANDLER IS ON `.claim-text`, NOT on the `.header-button`
-                # wrapper. That single fact is the whole bug: eleven gestures
-                # across two investigations were all aimed at the wrapper,
-                # which has no onclick, so every one of them was correctly
-                # ignored. Reading `el.onclick` on the seat's descendants
-                # found it in seconds after hours of clicking harder.
-                seat = (h.query_selector(".claim-text")
-                        or h.query_selector(".header-text")
-                        or h.query_selector(".header-button"))
-                if seat:
-                    break
-        if seat is None:
-            raise RuntimeError(
-                f"no free seat matching {want!r} in draft {draft_id} — it is "
-                f"either full or the seat labels have changed")
-        seat.click()
-
-        # Poll the API rather than the DOM. The seat is ours when Sleeper says
-        # so, and only then.
-        #
-        # PATIENTLY, though: `draft_order` is EVENTUALLY consistent. The seat
-        # renders as ours immediately and the API can still say nothing for
-        # some seconds afterwards — which is the second half of this bug. The
-        # original 20s window reported failure on a claim that had in fact
-        # succeeded, and a false failure here invites a human to claim a
-        # second seat.
-        # THE DOM IS THE AUTHORITY FOR "did the click land", and the API is
-        # not. Measured: a claim that renders instantly took over 73 seconds to
-        # appear in `draft_order`, so an API-only check reported failure on a
-        # seat we already held — and a false failure here invites a second
-        # claim, which is the one outcome worth avoiding.
-        for _ in range(10):
-            page.wait_for_timeout(1500)
-            mine = [i for i, t in enumerate(_labels())
-                    if t.lower() == name.lower()]
-            if mine:
-                # Seats render as an adjacent PAIR per team, so the team number
-                # is the index halved and one-based.
-                return mine[0] // 2 + 1
-        raise RuntimeError(
-            f"clicked the free seat in draft {draft_id} but no seat shows "
-            f"{name} — the claim did not take")
 
 
 # The chat lives behind a tab in the draft room and has NO public endpoint —
@@ -973,163 +631,22 @@ def join_draft(draft_id, username=None, slot=None, _session_cls=None,
 _CHAT_AGO = re.compile(r"^\d+\s+(second|minute|hour|day|week)s?\s+ago$", re.I)
 
 
-def _chat_rows(page):
-    """Scrape the open chat panel. Reads the page, changes nothing.
-
-    Sleeper renders each message as `.message-text` inside a container whose
-    text begins with the AUTHOR, then a relative timestamp, then "reply".
-    System messages ("X has joined the draft!") have no author line at all,
-    which is exactly how we tell them apart — and not replying to the server
-    announcing that someone joined is most of the value."""
-    return page.evaluate("""() => {
-        const out = [];
-        for (const m of document.querySelectorAll('.message-text')) {
-            let p = m, hops = 0, ctx = '';
-            while (p && hops < 5) {
-                p = p.parentElement; hops++;
-                if (p && (p.innerText || '').length > (m.innerText || '').length) {
-                    ctx = p.innerText; break;
-                }
-            }
-            out.push({text: (m.innerText || '').trim(),
-                      context: (ctx || '').split('\\n').slice(0, 2)});
-        }
-        return out;
-    }""")
 
 
-def parse_chat(rows):
-    """Rows -> [{author, text, system}]. PURE, so the parser is testable
-    without a browser."""
-    out = []
-    for r in rows or []:
-        text = (r.get("text") or "").strip()
-        if not text:
-            continue
-        # Accept a STRING or a list of lines. Iterating a bare string yields
-        # CHARACTERS, which silently produced authors like "a" and "2" -- a
-        # wrong answer wearing the shape of a right one.
-        ctx = r.get("context") or []
-        if isinstance(ctx, str):
-            ctx = ctx.splitlines()
-        author = ""
-        for line in [str(x).strip() for x in ctx]:
-            if line and line.lower() != "reply" and not _CHAT_AGO.match(line):
-                author = line
-                break
-        # A SYSTEM message has no author line, so the first non-timestamp line
-        # is the message itself — and taking that as the author made the server
-        # look like a participant called "aykutb has joined the draft!". If the
-        # two match, nobody said it.
-        if author and text.startswith(author):
-            author = ""
-        out.append({"author": author, "text": text, "system": not author})
-    return out
 
 
-def _show_chat(page):
-    """Bring the CHAT tab forward on a page ALREADY in the draft room.
-
-    Idempotent: if the panel is up we leave it, so a held-open session does not
-    pay a tab click and a 3s settle on every read."""
-    if page.query_selector("textarea[placeholder='Enter Message']"):
-        return
-    tab = next((t for t in page.query_selector_all(".round-tab, .tab")
-                if " ".join((t.inner_text() or "").split()).upper() == "CHAT"),
-               None)
-    if tab is None:
-        raise RuntimeError("no CHAT tab in the draft room")
-    tab.click()
-    page.wait_for_timeout(2000)
 
 
-def _open_chat(page, draft_id):
-    page.goto(f"{WEB}/draft/nfl/{draft_id}", wait_until="domcontentloaded",
-              timeout=60000)
-    page.wait_for_timeout(9000)
-    _show_chat(page)
 
 
-def read_chat(draft_id, _session_cls=None, browser=None):
-    """Every message in the draft chat, oldest first. Read-only.
-
-    `browser` is an optional wes_browser.Browser holding a page open for the
-    draft. Reading the chat cost a full browser launch every time -- ~9s, paid
-    on almost every poll of the banter loop -- and with a held page it is
-    sub-second. Without one it behaves exactly as before."""
-    if browser is not None:
-        page = browser.page()
-        _show_chat(page)
-        return parse_chat(_chat_rows(page))
-    with (_session_cls or _Session)() as page:
-        page.set_viewport_size({"width": 1600, "height": 1000})
-        if not authenticate(page):
-            raise RuntimeError("no WES_SLEEPER_TOKEN — cannot reach the draft")
-        _open_chat(page, draft_id)
-        return parse_chat(_chat_rows(page))
 
 
-def send_chat(draft_id, text, _session_cls=None, browser=None):
-    """Post one message. True once it is VISIBLE in the panel afterwards.
-
-    Verified by re-reading, like every other write here: `join_draft` clicked a
-    live-looking control six different ways and fired no network request at
-    all, so "the click did not throw" means nothing on this site."""
-    body = " ".join((text or "").split())
-    if not body:
-        return False
-    if not LIVE_WRITES_OK():
-        raise RuntimeError("Sleeper writes are off")
-    if browser is not None:
-        page = browser.page()
-        _show_chat(page)
-        return _post_message(page, body)
-    with (_session_cls or _Session)() as page:
-        page.set_viewport_size({"width": 1600, "height": 1000})
-        if not authenticate(page):
-            raise RuntimeError("no WES_SLEEPER_TOKEN — cannot reach the draft")
-        _open_chat(page, draft_id)
-        return _post_message(page, body)
 
 
-def _post_message(page, body):
-    """Type and send, then confirm it is visible. Shared by both paths so the
-    held-open session cannot quietly diverge from the per-call one."""
-    box = page.query_selector("textarea[placeholder='Enter Message']")
-    if box is None:
-        raise RuntimeError("no message box in the chat panel")
-    box.click()
-    box.fill(body)
-    page.keyboard.press("Enter")
-    page.wait_for_timeout(2500)
-    return any(m["text"] == body for m in parse_chat(_chat_rows(page)))
 
 
-def drafted_player_ids_fresh(draft_id, _get_fn=None):
-    """Taken ids, CACHE BYPASSED — for the check made immediately before a pick.
-
-    `draft_picks` holds a 15s TTL, which is fine for polling and fatal here:
-    the loop's "re-check availability before submitting" rail was reading a
-    pick list up to 15 seconds old, so a player taken moments earlier still
-    looked available. That is exactly how a pick was wasted on Ka'imi
-    Fairbairn, who had already been drafted (2026-08-15). Verifying against a
-    cache is not verifying — the same lesson as the post-write check."""
-    picks = _get(f"/draft/{draft_id}/picks", ttl=0, _get_fn=_get_fn)
-    if not isinstance(picks, list):
-        return set()
-    return {str(p.get("player_id")) for p in picks if p.get("player_id")}
 
 
-def drafted_player_ids(draft_id, _get_fn=None):
-    """Ids already taken by ANYONE.
-
-    Matched by player_id, never by name: Sleeper hands us the exact id on every
-    pick, and name matching is how a draft bot recommends someone who is already
-    gone (two players share a name, or a suffix differs)."""
-    picks = draft_picks(draft_id, _get_fn)
-    if not isinstance(picks, list):
-        return set()
-    return {str(p.get("player_id")) for p in picks if p.get("player_id")}
 
 
 def _draft_pool():
@@ -1523,29 +1040,8 @@ _AUTOPICK_BOX = ".autopick-toggle-container input[type=checkbox]"
 _AUTOPICK_SLIDER = ".autopick-toggle-container span.slider"
 
 
-def autopick_on(page):
-    """Is our seat set to draft automatically? None if the control is absent."""
-    return page.evaluate(
-        "(sel) => { const c = document.querySelector(sel);"
-        " return c ? !!c.checked : null; }", _AUTOPICK_BOX)
 
 
-def set_autopick(page, on=False, _tries=6):
-    """Force AUTO-PICK to `on`. Returns the state we ended up in.
-
-    Verified by re-reading the checkbox, not by the click landing: this is a
-    control whose whole purpose is to act instead of us, so believing a click
-    we cannot confirm is the worst possible place to be optimistic."""
-    for _ in range(_tries):
-        cur = autopick_on(page)
-        if cur is None or cur == on:
-            return cur
-        slider = page.query_selector(_AUTOPICK_SLIDER)
-        if slider is None:
-            return cur
-        slider.click()
-        page.wait_for_timeout(700)
-    return autopick_on(page)
 
 
 # The player list is a ReactVirtualized grid: ~98,000px of content in a 371px
@@ -1558,254 +1054,14 @@ SCROLL_STEPS = 40
 SCROLL_PX = 1500
 
 
-def _scroll_to_row(page, find_fn, steps=SCROLL_STEPS):
-    """Wheel down the player list until `find_fn()` matches, or we run out.
-
-    Returns the row or None. Stops early when the window stops moving, which
-    means we have hit the bottom and he is genuinely not in the list -- as
-    opposed to merely not drawn yet, a distinction this module has paid for
-    repeatedly."""
-    lst = page.query_selector(".ReactVirtualized__Grid")
-    if lst is None:
-        return None
-    box = lst.bounding_box()
-    if not box:
-        return None
-    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-    last_marker = None
-    for _ in range(steps):
-        page.mouse.wheel(0, SCROLL_PX)
-        page.wait_for_timeout(350)
-        row = find_fn()
-        if row is not None:
-            return row
-        first = page.query_selector(".player-rank-item2")
-        marker = (first.inner_text() or "")[:40] if first else None
-        if marker is not None and marker == last_marker:
-            return None                    # bottomed out
-        last_marker = marker
-    return None
 
 
-def _click_pick(page, player_name, want, find_fn=None):
-    """Find the player's ROW and click its draft control.
-
-    Shared by the per-call and held-open paths. Moved here verbatim
-    rather than duplicated: a fix applied to one copy and not the
-    other is precisely how the held-open path would diverge from the
-    behaviour that is actually tested."""
-    # WAIT FOR THE LIST TO EXIST, don't assume a fixed 6s is enough. An
-    # unrendered list and an absent player look identical to a query
-    # selector, and reading the first as the second cost a pick: Amon-Ra St.
-    # Brown was declared gone on the run's first (slowest) page load and
-    # taken by us one pick later, so he had plainly been there all along
-    # (2026-08-15).
-    try:
-        page.wait_for_selector(".player-rank-item2", timeout=25000)
-    except Exception:  # noqa: BLE001 — turned into a clearer error below
-        pass
-    page.wait_for_timeout(1500)   # let the rest of the window paint
-
-    def _find_row():
-        for r in page.query_selector_all(".player-rank-item2"):
-            nm = r.query_selector(".name-wrapper")
-            first = (nm.inner_text() or "").split("\n")[0] if nm else ""
-            if nm and _norm_name(first) == want:
-                return r
-        return None
-
-    find_fn = find_fn or _find_row
-    row = _find_row()
-    if row is None:
-        # OUTSIDE THE RENDERED WINDOW: scroll to him rather than search.
-        # The search box looks like the answer and is not -- measured
-        # live, "Amon-Ra St. Brown" returns ZERO rows and "Amon-Ra"
-        # returns Montana Lemonious-Craig, a different and undraftable
-        # player whose row is disabled. Clicking that fires no request,
-        # verification fails, and the loop reports "clicked X but it
-        # never appeared" -- which cost most of a draft while I blamed
-        # the button, the session and the socket in turn (2026-08-22).
-        row = _scroll_to_row(page, _find_row)
-    if row is None:
-        # TWO CAUSES, and only one of them means "pick someone else". If the
-        # list is empty the draft room never rendered and we know NOTHING
-        # about this player — saying "he is gone" there is a guess, and the
-        # caller substitutes on it.
-        if not page.query_selector_all(".player-rank-item2"):
-            raise RuntimeError(
-                "the draft room's player list never rendered — cannot tell "
-                "whether anyone is available; refusing to pick blind")
-        raise RuntimeError(
-            f"{player_name!r} is not available in the draft room even "
-            f"after searching — he has most likely just been taken. "
-            f"Refusing to click a different row")
-
-    btn = row.query_selector(".draft-button")
-    if btn is None:
-        raise RuntimeError(f"no draft control on {player_name}'s row")
-    if "disable" in (btn.get_attribute("class") or ""):
-        # WAIT FOR IT TO ENABLE, do not sample it once. The button is disabled
-        # until the room has been told over its socket that it is our turn, and
-        # a page loaded seconds earlier has not heard yet. Checking once cost
-        # pick 1 of a live draft to cpu_autopick while it genuinely WAS our
-        # turn (2026-08-21).
-        #
-        # The refusal below still stands, and still matters -- clicking a
-        # disabled control reports a pick that never happened. This only
-        # distinguishes "not yet" from "not ours", which is the same
-        # unrendered-versus-absent distinction that has bitten twice already.
-        for _ in range(ENABLE_WAIT_TRIES):
-            page.wait_for_timeout(1000)
-            # RE-QUERY THE DOCUMENT, do not poll a handle. The player list is a
-            # virtualised React grid that re-renders constantly, so the `row`
-            # captured a moment ago is soon DETACHED -- and a detached node
-            # keeps its old class forever and swallows clicks. Polling it read
-            # "disable" for twenty seconds while a fresh query of the same page
-            # showed all 25 rows ENABLED, seconds apart (2026-08-22, measured
-            # side by side on a live turn). Every "the button is disabled"
-            # failure traces to this.
-            fresh = find_fn()
-            if fresh is not None:
-                row = fresh
-            btn = row.query_selector(".draft-button") or btn
-            if "disable" not in (btn.get_attribute("class") or ""):
-                break
-        else:
-            # TRY ANYWAY. This refusal made sense when a click that landed on
-            # nothing could be mistaken for success -- but verification now
-            # requires the pick's draft_slot to be OURS, so a no-op click
-            # fails honestly a few seconds later.
-            #
-            # And the class is not trustworthy: on 2026-08-22, with 37 picks
-            # made, pick 38 ours, and autopick confirmed OFF, the button still
-            # read `disable` after twenty seconds. Refusing there forfeited a
-            # pick we were entitled to make. A click that might work beats a
-            # certainty of standing down.
-            print(f"[sleeper] draft button still reads disabled after "
-                  f"{ENABLE_WAIT_TRIES}s — clicking anyway; verification will "
-                  f"catch it if it does nothing", flush=True)
-    btn.scroll_into_view_if_needed()
-    page.wait_for_timeout(300)
-    btn.click()
-    page.wait_for_timeout(1500)
-
-    # START DRAFT opens a confirmation modal; assume this does too rather
-    # than rediscovering it the expensive way (2026-08-15).
-    for sel in ("button:has-text('Confirm')", "button:has-text('Draft')",
-                "[class*='confirm'] button", "[class*='modal'] button"):
-        el = page.query_selector(sel)
-        if el and el.is_visible():
-            el.click()
-            break
-    page.wait_for_timeout(3000)
 
 
-def submit_pick(draft_id, player_key, player_name, _session_cls=None,
-                _picks_fn=None, _sleep_fn=None, browser=None, slot=None):
-    """Draft ONE player in the live draft room. Raises on any doubt.
-
-    THE ID/NAME SEAM, and why this verifies afterwards. The engine reasons in
-    `player_id` — exact, unambiguous, the id Sleeper itself hands us on every
-    pick. **But the draft room's DOM contains no player id anywhere**: a row is
-    `div.player-rank-item2` holding a `.name-wrapper` with a display name and a
-    per-row `.draft-button`. So the click has to be matched by NAME, and names
-    are the ambiguous thing (suffixes, punctuation, two players sharing one).
-
-    That gap is closed the only honest way — by reading the pick back from the
-    API and confirming the id that actually got drafted is the id we intended.
-    Same discipline as `_submit_lineup` and `_submit_add_drop`: never assume a
-    click did what it looked like.
-
-    Note EVERY row has its own `.draft-button`, so "click the draft button"
-    would draft whoever happens to sit at the top of a re-sorting list. That is
-    the Yahoo swap bug wearing a different hat, and it is why this targets the
-    ROW belonging to a named player and never a bare control.
-
-    NOT YET EXERCISED AGAINST A LIVE CLOCK — the button carries a `disable`
-    class until it is your turn, and the mock finished before one came round.
-    """
-    if not LIVE_WRITES_OK():
-        raise RuntimeError("Sleeper writes are off")
-
-    want = _norm_name(player_name)
-    if browser is not None:
-        # A held page is already in the draft room, but RELOAD it first: the
-        # available list is the one thing a long-lived page cannot be trusted
-        # about, and picking off a stale list is the whole class of bug this
-        # module keeps paying for.
-        _click_pick(browser.refresh(), player_name, want)
-    else:
-        with (_session_cls or _Session)() as page:
-            if not authenticate(page):
-                raise RuntimeError(
-                    "no WES_SLEEPER_TOKEN — cannot reach the draft")
-            page.goto(f"{WEB}/draft/nfl/{draft_id}",
-                      wait_until="domcontentloaded", timeout=60000)
-            _click_pick(page, player_name, want)
-
-    # Verify by ID — the only thing that closes the name-matching gap.
-    #
-    # POLLED, and UNCACHED. Two ways the first version got this wrong, both of
-    # which reported failure on a pick that had actually succeeded (2026-08-15,
-    # live): Sleeper takes a moment to commit, so a single read ~3s after the
-    # click can legitimately miss it; and `draft_picks` caches for 15s, so the
-    # verification could be served the pre-write answer — verifying against a
-    # cache is not verifying at all.
-    #
-    # A false "did it work?" is worse here than a slow yes: it invites a human
-    # into a live draft to fix something that is not broken, and the obvious
-    # fix (pick again) drafts twice.
-    # TWELVE attempts, not six. Sleeper commits a pick in about fifteen
-    # seconds, and six attempts at 2.5s gave up at almost exactly that -- so a
-    # pick that WORKED was reported as failed, the loop stood down, and
-    # cpu_autopick took a turn we had already won. Measured by hand at the
-    # moment of a live click: two POSTs fired and the pick appeared at ~15s
-    # (2026-08-22).
-    #
-    # Waiting longer is cheap (30s against a 300-600s clock) and no longer
-    # risky: verification requires the pick's draft_slot to be OURS, so a
-    # patient check cannot be satisfied by somebody else's pick.
-    for attempt in range(12):
-        if attempt:
-            (_sleep_fn or time.sleep)(2.5)
-        picks = (_picks_fn or _draft_picks_uncached)(draft_id) or []
-        # BY US, not by anyone. The first version asked only whether the player
-        # appeared in the pick list at all, so when our click missed and
-        # ANOTHER MANAGER took him two picks later, it read their pick as ours
-        # and reported success. Observed live: the log said "DRAFTED Trey
-        # McBride" while McBride went to slot 3 at pick 23 and our pick 21 was
-        # Lamar Jackson (2026-08-21).
-        #
-        # This is the check that was supposed to close the name-matching gap,
-        # and a check that can be satisfied by someone else's action closes
-        # nothing.
-        for pk in picks:
-            if str(pk.get("player_id")) != str(player_key):
-                continue
-            if slot is None or int(pk.get("draft_slot") or -1) == int(slot):
-                return True
-            raise RuntimeError(
-                f"{player_name!r} was drafted, but by slot "
-                f"{pk.get('draft_slot')} at pick {pk.get('pick_no')} — not by "
-                f"us (slot {slot}). Our click did not land.")
-    raise RuntimeError(
-        f"clicked {player_name!r} but {player_key} never appeared in the "
-        f"draft's picks after ~15s — check the draft room before assuming "
-        f"either way")
 
 
-def _draft_picks_uncached(draft_id):
-    """Picks with the cache bypassed, for post-write verification only."""
-    return _get(f"/draft/{draft_id}/picks", ttl=0)
 
 
-def _norm_name(s):
-    """Loose name key: case, punctuation and suffixes removed, so 'A.J. Brown'
-    matches 'AJ Brown' and 'Marvin Harrison Jr.' matches 'Marvin Harrison Jr'."""
-    s = (s or "").lower()
-    for junk in (".", ",", "'", "-", " jr", " sr", " ii", " iii", " iv"):
-        s = s.replace(junk, "")
-    return " ".join(s.split())
 
 
 def LIVE_WRITES_OK():
@@ -1816,39 +1072,3 @@ def LIVE_WRITES_OK():
     return wes_execute.writes_enabled()
 
 
-def draft_turn(draft_id, roster_id, _get_fn=None):
-    """CHEAP "is it my turn?" — two small API reads, no valuation.
-
-    Split from `draft_candidates` because the loop has to poll FAST and that
-    function is expensive: it pulls the ESPN projection pool and the 12k-player
-    index every call. Polling with it meant each look cost seconds, so a draft
-    moving at ~4s per pick was over before the loop ever saw its own turn
-    (observed live 2026-08-15: 65 picks elapsed, 0 taken).
-
-    The expensive board is built ONLY once this says we are close."""
-    try:
-        d = draft(draft_id, _get_fn)
-        picks = _get(f"/draft/{draft_id}/picks", ttl=3.0, _get_fn=_get_fn)
-    except Exception as e:  # noqa: BLE001
-        return f"I couldn't reach Sleeper's draft API ({e})."
-    if not isinstance(d, dict):
-        return "Sleeper returned no draft for that id."
-    if d.get("status") == "complete":
-        return "That draft is over."
-    picks = picks if isinstance(picks, list) else []
-
-    settings = d.get("settings") or {}
-    teams = int(settings.get("teams") or 0)
-    rounds = int(settings.get("rounds") or 0)
-    reversal = int(settings.get("reversal_round") or 0)
-    slot_of = {str(v): int(k)
-               for k, v in (d.get("slot_to_roster_id") or {}).items()}
-    my_slot = slot_of.get(str(roster_id))
-    if not (teams and rounds and my_slot):
-        return "That draft hasn't published its order yet."
-
-    import wes_draft
-    made = len(picks)
-    wait = wes_draft.picks_until_turn(my_slot, teams, made, rounds, reversal)
-    return {"picks_made": made, "picks_until_turn": wait,
-            "on_the_clock": wait == 0, "my_slot": my_slot, "teams": teams}

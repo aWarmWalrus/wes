@@ -1,4 +1,4 @@
-"""Unit tests for the held-open browser (wes_browser, #039).
+"""Unit tests for the held-open browser (sleeperdraft.browser, #039).
 
 The speed is not the risky part -- the RESTARTS are. A page held for two hours
 can be navigated away, bounced to a login wall, have its React tree detached,
@@ -11,7 +11,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
-import wes_browser  # noqa: E402
+from sleeperdraft import browser as sdbrowser  # noqa: E402
+from sleeperdraft import session as sdsession  # noqa: E402
 
 
 class FakePage:
@@ -68,9 +69,9 @@ class FakeSession:
 
 
 def _br(monkeypatch, now=None):
-    monkeypatch.setattr(wes_browser.wes_sleeper, "authenticate", lambda p: True)
+    monkeypatch.setattr(sdsession, "authenticate", lambda p: True)
     FakeSession.made = []
-    return wes_browser.Browser("D", _session_cls=FakeSession,
+    return sdbrowser.Browser("D", _session_cls=FakeSession,
                                _now=now or (lambda: 1000.0))
 
 
@@ -127,7 +128,7 @@ class TestHealth:
 class TestRecycling:
     def test_it_recycles_after_MAX_USES(self, monkeypatch):
         br = _br(monkeypatch)
-        for _ in range(wes_browser.MAX_USES + 1):
+        for _ in range(sdbrowser.MAX_USES + 1):
             br.page()
         assert br.rebuilds == 2
         assert br.failures == 0, "a scheduled recycle is not a failure"
@@ -136,7 +137,7 @@ class TestRecycling:
         t = [1000.0]
         br = _br(monkeypatch, now=lambda: t[0])
         br.page()
-        t[0] += wes_browser.MAX_AGE_S + 1
+        t[0] += sdbrowser.MAX_AGE_S + 1
         br.page()
         assert br.rebuilds == 2 and br.failures == 0
 
@@ -152,10 +153,10 @@ class TestRecycling:
 class TestFailureHandling:
     def test_a_failed_build_does_not_leave_a_session_holding_the_lock(
             self, monkeypatch):
-        monkeypatch.setattr(wes_browser.wes_sleeper, "authenticate",
+        monkeypatch.setattr(sdsession, "authenticate",
                             lambda p: False)
         FakeSession.made = []
-        br = wes_browser.Browser("D", _session_cls=FakeSession,
+        br = sdbrowser.Browser("D", _session_cls=FakeSession,
                                  _now=lambda: 1000.0)
         try:
             br.page()
@@ -188,10 +189,9 @@ class TestOneSessionAtATime:
 
     def test_a_second_session_is_refused_with_a_useful_message(self,
                                                                monkeypatch):
-        import wes_sleeper
-        monkeypatch.setattr(wes_sleeper._Session, "_live", 1)
+        monkeypatch.setattr(sdsession.Session, "_live", 1)
         try:
-            wes_sleeper._Session().__enter__()
+            sdsession.Session().__enter__()
             assert False, "should have refused"
         except RuntimeError as e:
             assert "already open" in str(e)
@@ -200,18 +200,16 @@ class TestOneSessionAtATime:
     def test_the_counter_is_released_even_if_closing_throws(self, monkeypatch):
         """A leaked counter would lock out every later session -- worse than
         the bug it guards against."""
-        import wes_sleeper
-
         class Boom:
             def close(self):
                 raise RuntimeError("close failed")
 
-        monkeypatch.setattr(wes_sleeper._Session, "_live", 1)
-        sess = wes_sleeper._Session()
+        monkeypatch.setattr(sdsession.Session, "_live", 1)
+        sess = sdsession.Session()
         sess._ctx = Boom()
         sess._pw = None
         try:
             sess.__exit__(None, None, None)
         except RuntimeError:
             pass
-        assert wes_sleeper._Session._live == 0
+        assert sdsession.Session._live == 0
