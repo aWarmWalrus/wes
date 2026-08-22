@@ -1590,3 +1590,42 @@ class TestAccountIsASetting:
     def test_an_explicit_name_still_wins(self):
         import wes_banter
         assert wes_banter.Banter("D", me="someone-else").me == "someone-else"
+
+
+class TestPerAccountToken:
+    """A second account must be ADDITIVE. The shared WES_SLEEPER_TOKEN holds
+    the personal account that owns the real league team, so a bot account that
+    replaced it would silently stop WES drafting on the day."""
+
+    def test_the_per_account_variable_wins(self, monkeypatch):
+        monkeypatch.setenv("WES_SLEEPER_TOKEN", "shared")
+        monkeypatch.setenv("WES_SLEEPER_TOKEN_GMBARTIMUSPRIME", "bot")
+        assert sl._read_token("GMBartimusPrime") == "bot"
+
+    def test_the_shared_one_is_the_fallback(self, monkeypatch):
+        monkeypatch.setenv("WES_SLEEPER_TOKEN", "shared")
+        monkeypatch.delenv("WES_SLEEPER_TOKEN_AWARMWALRUS", raising=False)
+        assert sl._read_token("awarmwalrus") == "shared"
+
+    def test_adding_a_bot_account_does_not_displace_the_owner(self,
+                                                              monkeypatch):
+        """The whole point: both work at once."""
+        monkeypatch.setenv("WES_SLEEPER_TOKEN", "owner-token")
+        monkeypatch.setenv("WES_SLEEPER_TOKEN_GMBARTIMUSPRIME", "bot-token")
+        assert sl._read_token("awarmwalrus") == "owner-token"
+        assert sl._read_token("GMBartimusPrime") == "bot-token"
+
+    def test_punctuation_in_a_name_does_not_break_the_lookup(self,
+                                                             monkeypatch):
+        monkeypatch.setenv("WES_SLEEPER_TOKEN_ABC123", "x")
+        assert sl._read_token("a-b.c_123") == "x"
+
+    def test_no_username_still_reads_the_shared_one(self, monkeypatch):
+        monkeypatch.setenv("WES_SLEEPER_TOKEN", "shared")
+        assert sl._read_token() == "shared"
+
+    def test_nothing_configured_is_empty_not_an_exception(self, monkeypatch):
+        monkeypatch.delenv("WES_SLEEPER_TOKEN", raising=False)
+        monkeypatch.delenv("WES_SLEEPER_TOKEN_NOBODY", raising=False)
+        monkeypatch.setattr(sl.os, "name", "posix")
+        assert sl._read_token("nobody") == ""

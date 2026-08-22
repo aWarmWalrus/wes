@@ -68,8 +68,14 @@ BROWSER_CHANNEL = os.environ.get("WES_SLEEPER_BROWSER_CHANNEL", "chrome")
 # guards OBTAINING a session, not PRESENTING one. Injecting an existing token
 # walks straight past it, and the app then bootstraps its own session state as
 # if a human had signed in (verified 2026-08-14).
-def _read_token():
-    """The token, with a fallback to the PERSISTED user-scope value on Windows.
+def _read_token(username=None):
+    """The token for `username`, with a fallback to the PERSISTED user-scope
+    value on Windows.
+
+    Looks for WES_SLEEPER_TOKEN_<USERNAME> first, then the shared
+    WES_SLEEPER_TOKEN. So a second account is additive rather than a
+    replacement, and the account that holds the real league team keeps working
+    whatever else is configured.
 
     A shell opened before the variable was set does not inherit it, and the
     failure mode is quiet and expensive: a mock draft ran for seven minutes,
@@ -78,24 +84,44 @@ def _read_token():
     nothing (2026-08-15). The value is already on the machine; there is no
     reason for a stale shell to be the thing that decides whether we can draft.
     """
-    tok = os.environ.get("WES_SLEEPER_TOKEN", "")
-    if tok or os.name != "nt":
-        return tok
+    names = []
+    if username:
+        names.append("WES_SLEEPER_TOKEN_"
+                     + "".join(c for c in username.upper() if c.isalnum()))
+    names.append("WES_SLEEPER_TOKEN")
+    for var in names:
+        tok = os.environ.get(var, "")
+        if tok:
+            return tok
+    if os.name != "nt":
+        return ""
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
-            return str(winreg.QueryValueEx(key, "WES_SLEEPER_TOKEN")[0] or "")
+            for var in names:
+                try:
+                    got = str(winreg.QueryValueEx(key, var)[0] or "")
+                except OSError:
+                    continue
+                if got:
+                    return got
     except OSError:
         return ""
+    return ""
 
-
-TOKEN = _read_token()
 
 # WHO WES IS ON SLEEPER. A setting, not a constant: the owner has more than one
 # account (a personal one that holds the real league team, and a bot account for
 # mocks), and the account has to match the TOKEN or every write lands as the
 # wrong person -- or nowhere, since the seat lookups key off the display name.
 USERNAME = os.environ.get("WES_SLEEPER_USER", "awarmwalrus")
+
+# PAIRED WITH THE ACCOUNT, so the two cannot drift apart. A per-account
+# variable wins over the shared one, which means adding a second account never
+# displaces the first -- and the first is the one holding the real league team.
+# Mismatching a token and a username is the failure this prevents, and it is
+# quiet: the writes would land as somebody else.
+TOKEN = _read_token(USERNAME)
 
 # The single localStorage key Sleeper's web app reads the token from. Pinned by
 # testing candidates ONE AT A TIME against a cleared store: of `token`,

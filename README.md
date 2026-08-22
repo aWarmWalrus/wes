@@ -105,6 +105,19 @@ It runs **headless** — no browser window steals focus while you work. Set
 `WES_SLEEPER_HEADLESS=0` to watch it, which is worth doing if the draft room's
 DOM has changed under us.
 
+**Which Sleeper account** comes from `WES_SLEEPER_USER` (default `awarmwalrus`,
+who holds the real league team). Its token is looked up per account —
+`WES_SLEEPER_TOKEN_<NAME>` first, then the shared `WES_SLEEPER_TOKEN` — so
+adding a bot account never displaces the one that drafts on the day:
+
+```powershell
+$env:WES_SLEEPER_USER = "GMBartimusPrime"   # mocks, as the bot account
+```
+
+The username must match the token. A mismatch fails *quietly*: seat lookups key
+off the display name, so it reads as "not in this draft" rather than as an auth
+error.
+
 **To run it on a mock, or on anyone else's draft:** join the draft first (the
 seat is claimed on joining), then pass its id — the number in the URL
 `sleeper.com/draft/nfl/<id>`:
