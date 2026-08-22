@@ -91,6 +91,12 @@ def _read_token():
 
 TOKEN = _read_token()
 
+# WHO WES IS ON SLEEPER. A setting, not a constant: the owner has more than one
+# account (a personal one that holds the real league team, and a bot account for
+# mocks), and the account has to match the TOKEN or every write lands as the
+# wrong person -- or nowhere, since the seat lookups key off the display name.
+USERNAME = os.environ.get("WES_SLEEPER_USER", "awarmwalrus")
+
 # The single localStorage key Sleeper's web app reads the token from. Pinned by
 # testing candidates ONE AT A TIME against a cleared store: of `token`,
 # `user_token`, `auth_token`, `jwt` and `access_token`, only this one gets past
@@ -816,7 +822,7 @@ def join_draft(draft_id, username=None, slot=None, _session_cls=None,
     actually recorded, and it is read CACHE-BYPASSED afterwards — trusting a
     click that "did not throw" is how a pick was reported successful while the
     draft room had ignored it (2026-08-15)."""
-    name = username or "awarmwalrus"
+    name = username or USERNAME
     slot_fn = _slot_fn or slot_in_draft
     sleep = _sleep_fn or time.sleep
 

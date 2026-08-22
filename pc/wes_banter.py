@@ -133,13 +133,20 @@ class Banter:
     and report, post nothing) or "auto" (post) — the same vocabulary as team
     autonomy, so there is one idea to learn rather than two."""
 
-    def __init__(self, draft_id, me="awarmwalrus", mode="propose",
+    def __init__(self, draft_id, me=None, mode="propose",
                  min_gap_s=MIN_GAP_S, _now=None, browser=None):
         # An optional held-open browser. Reading the chat cost a full launch
         # every poll -- ~9s to fetch a handful of messages -- which is what
         # made the bot feel sluggish in a live room.
         self.browser = browser
-        self.draft_id, self.me, self.mode = draft_id, me, mode
+        # Defaulted late, from wes_sleeper, so switching accounts is one
+        # setting rather than a hunt. Getting this wrong is not cosmetic: `me`
+        # is how the bot knows not to answer itself, and a mismatch turns two
+        # agents in a room into an infinite loop with an audience.
+        import wes_sleeper
+        self.draft_id = draft_id
+        self.me = me or wes_sleeper.USERNAME
+        self.mode = mode
         self.min_gap_s = min_gap_s
         self.seen = set()
         self.last_sent_at = 0.0

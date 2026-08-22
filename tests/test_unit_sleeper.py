@@ -1552,3 +1552,41 @@ class TestEntryNotesArePayloadSafe:
         c = {"player_key": "1", "name": "A", "positions": ["RB"], "vor": 1.0,
              "notes": {"role": "RB2 behind X"}}
         assert agent._entry_with_notes(c)["notes"] == {"role": "RB2 behind X"}
+
+
+class TestAccountIsASetting:
+    """The owner has more than one Sleeper account -- a personal one holding
+    the real league team, and a bot account for mocks. The username has to
+    track the TOKEN, or writes land as the wrong person and every seat lookup
+    (which keys off the display name) silently finds nothing."""
+
+    def test_it_defaults_to_the_owner(self):
+        assert sl.USERNAME
+
+    def test_the_environment_overrides_it(self, monkeypatch):
+        monkeypatch.setenv("WES_SLEEPER_USER", "GMBartimusPrime")
+        import importlib
+        importlib.reload(sl)
+        try:
+            assert sl.USERNAME == "GMBartimusPrime"
+        finally:
+            monkeypatch.delenv("WES_SLEEPER_USER")
+            importlib.reload(sl)
+
+    def test_join_draft_uses_the_configured_account(self, monkeypatch):
+        monkeypatch.setattr(sl, "USERNAME", "GMBartimusPrime")
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        seen = []
+        sl.join_draft("D", _slot_fn=lambda d, n: seen.append(n) or 4)
+        assert seen == ["GMBartimusPrime"]
+
+    def test_banter_knows_which_name_is_its_own(self, monkeypatch):
+        """`me` is how it avoids answering itself; a stale default would make
+        two agents in a room an infinite loop with an audience."""
+        monkeypatch.setattr(sl, "USERNAME", "GMBartimusPrime")
+        import wes_banter
+        assert wes_banter.Banter("D").me == "GMBartimusPrime"
+
+    def test_an_explicit_name_still_wins(self):
+        import wes_banter
+        assert wes_banter.Banter("D", me="someone-else").me == "someone-else"

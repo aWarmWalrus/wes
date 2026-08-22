@@ -37,7 +37,7 @@ import wes_sleeper
 import wes_snapshot
 
 LEAGUE = "1393935116232818688"          # Alloy Agents vs. Humans
-USERNAME = "awarmwalrus"
+USERNAME = wes_sleeper.USERNAME       # WES_SLEEPER_USER overrides
 
 # How stale a snapshot may be before draft day is a bad time to find out. The
 # thing takes ~5s to rebuild, so there is no reason to run on a week-old board.
