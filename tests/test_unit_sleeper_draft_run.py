@@ -484,3 +484,22 @@ class TestAutopickGuardReadsFreshState:
         br = NotBuilt(on=True)
         loop._keep_autopick_off(br, 0.0, 1000.0, lambda m: None)
         assert getattr(br, "refreshed", 0) == 0
+
+
+class TestUnknownIsNotOff:
+    """A querySelector on a control that has not rendered returns null, and
+    autopick_on() reports None for it. Reading that as False is why the guard
+    stayed silent while autopick ran a whole draft (2026-08-22) -- the same
+    unknown-versus-zero mistake this project keeps making."""
+
+    def test_an_unreadable_toggle_is_not_treated_as_off(self, monkeypatch):
+        br = TestAutopickGuard.FakeBrowser(on=True)
+        monkeypatch.setattr(loop.wes_sleeper, "autopick_on", lambda p: None)
+        cleared = []
+        monkeypatch.setattr(loop.wes_sleeper, "set_autopick",
+                            lambda p, on=False: cleared.append(1))
+        said = []
+        got = loop._keep_autopick_off(br, 0.0, 1000.0, said.append)
+        assert cleared == [], "must not act on a state it could not read"
+        assert any("UNKNOWN" in m for m in said), "must say so"
+        assert got == 0.0, "must retry next cycle, not wait another interval"

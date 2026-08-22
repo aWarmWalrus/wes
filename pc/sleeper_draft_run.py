@@ -166,7 +166,15 @@ def _keep_autopick_off(browser, last_checked, now, log):
         if browser.peek() is None:
             return last_checked          # nothing built yet, nothing to check
         page = browser.refresh()
-        if wes_sleeper.autopick_on(page):
+        state = wes_sleeper.autopick_on(page)
+        if state is None:
+            # UNKNOWN IS NOT OFF. A missing control means we could not read
+            # it, and reading that as "fine" is what let autopick run an
+            # entire draft while this function reported nothing.
+            log("could not read the AUTO-PICK toggle — treating as UNKNOWN, "
+                "will retry")
+            return last_checked          # retry next cycle rather than assume
+        if state:
             got = wes_sleeper.set_autopick(page, False)
             log(f"AUTO-PICK had switched itself ON — turned it "
                 f"{'off' if got is False else f'to {got!r}'}")

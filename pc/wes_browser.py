@@ -183,7 +183,17 @@ class Browser:
         page = self.page()
         page.goto(f"{wes_sleeper.WEB}/draft/nfl/{self.draft_id}",
                   wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(3000)
+        # WAIT FOR THE ROOM, do not guess at 3 seconds. It takes 6-9s to
+        # render, so a fixed wait handed callers a page whose controls did not
+        # exist yet -- and a querySelector on a missing control returns null,
+        # which the autopick guard read as "not on". Unknown became off, and
+        # autopick ran the whole draft (2026-08-22).
+        try:
+            page.wait_for_selector(".autopick-toggle-container, .draft-board",
+                                   timeout=20000)
+        except Exception:  # noqa: BLE001 — caller decides what absence means
+            pass
+        page.wait_for_timeout(1000)
         return page
 
     def stats(self):
