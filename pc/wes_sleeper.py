@@ -1584,10 +1584,19 @@ def _click_pick(page, player_name, want):
             if "disable" not in (btn.get_attribute("class") or ""):
                 break
         else:
-            raise RuntimeError(
-                "the draft button is still disabled after "
-                f"{ENABLE_WAIT_TRIES}s — not on the clock, so a click would "
-                "do nothing and we would report a pick that never was")
+            # TRY ANYWAY. This refusal made sense when a click that landed on
+            # nothing could be mistaken for success -- but verification now
+            # requires the pick's draft_slot to be OURS, so a no-op click
+            # fails honestly a few seconds later.
+            #
+            # And the class is not trustworthy: on 2026-08-22, with 37 picks
+            # made, pick 38 ours, and autopick confirmed OFF, the button still
+            # read `disable` after twenty seconds. Refusing there forfeited a
+            # pick we were entitled to make. A click that might work beats a
+            # certainty of standing down.
+            print(f"[sleeper] draft button still reads disabled after "
+                  f"{ENABLE_WAIT_TRIES}s — clicking anyway; verification will "
+                  f"catch it if it does nothing", flush=True)
     btn.scroll_into_view_if_needed()
     page.wait_for_timeout(300)
     btn.click()

@@ -533,19 +533,27 @@ class TestSubmitPick:
         except RuntimeError as e:
             assert "not available in the draft room" in str(e)
 
-    def test_refuses_when_the_button_is_disabled(self, monkeypatch):
-        """`disable` means not on the clock. Clicking anyway would do nothing
-        and we would report a pick that never happened."""
+    def test_a_disabled_button_is_waited_out_then_TRIED(self, monkeypatch):
+        """This used to REFUSE, on the theory that `disable` means "not on the
+        clock" and a click would report a pick that never happened.
+
+        Both halves of that turned out to be wrong. The class is not a
+        reliable signal -- with 37 picks made, pick 38 ours and autopick
+        confirmed off, it still read disabled after twenty seconds and
+        refusing forfeited the pick (2026-08-22). And a no-op click can no
+        longer be mistaken for success, because verification requires the
+        pick's draft_slot to be OURS."""
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
         monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sl, "ENABLE_WAIT_TRIES", 2)
         btn = self.FakeBtn("draft-button disable")
         page = self.FakePage([self.FakeRow("Target Guy", btn)])
-        try:
-            sl.submit_pick("D", "1", "Target Guy",
-                           _session_cls=self._session(page))
-            assert False, "should have refused"
-        except RuntimeError as e:
-            assert "disabled" in str(e) and not btn.clicked
+        ok = sl.submit_pick("D", "1", "Target Guy",
+                            _session_cls=self._session(page),
+                            _picks_fn=lambda d: [{"player_id": "1",
+                                                  "draft_slot": 4}],
+                            _sleep_fn=lambda _s: None, slot=4)
+        assert ok is True and btn.clicked, "must try rather than stand down"
 
     def test_verifies_the_pick_by_ID_not_by_the_click(self, monkeypatch):
         """The name matched and the click landed, but the id that actually got
@@ -1748,3 +1756,37 @@ class TestAutopickToggle:
                 return None
         assert sl.autopick_on(NoControl(False)) is None
         assert sl.set_autopick(NoControl(False), False) is None
+
+
+class TestDisabledButtonIsNotAVeto:
+    """The `disable` class is not a reliable signal of whose turn it is: with
+    37 picks made, pick 38 ours and autopick confirmed OFF, it still read
+    disabled after twenty seconds (2026-08-22). Refusing there forfeited a
+    pick we were entitled to make -- and it is now safe to try, because
+    verification requires the pick's slot to be ours."""
+
+    def test_it_clicks_a_button_that_still_reads_disabled(self, monkeypatch):
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sl, "ENABLE_WAIT_TRIES", 2)
+        btn = TestSubmitPick.FakeBtn("draft-button disable")
+        row = TestSubmitPick.FakeRow("Target Guy", btn)
+
+        class Page(TestWindowedList.Page):
+            def wait_for_selector(self, *a, **k):
+                return True
+
+        page = Page(TestWindowedList.Box(), lambda: [row])
+
+        class S:
+            def __enter__(_s):
+                return page
+
+            def __exit__(_s, *a):
+                return False
+        ok = sl.submit_pick("D", "42", "Target Guy", _session_cls=S,
+                            _picks_fn=lambda d: [{"player_id": "42",
+                                                  "draft_slot": 2}],
+                            _sleep_fn=lambda _s: None, slot=2)
+        assert ok is True
+        assert btn.clicked, "must attempt rather than stand down"
