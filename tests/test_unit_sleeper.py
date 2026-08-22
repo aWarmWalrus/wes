@@ -1917,3 +1917,37 @@ class TestMustFillClosesTheBoard:
             _picks=picks, _get_fn=lambda p, **k: self._get(p))
         assert not isinstance(out, str), out
         assert out["candidates"], "must still offer somebody"
+
+
+class TestSlotNames:
+    """Banter was told to needle the right person while holding nothing but
+    slot numbers (2026-08-22)."""
+
+    DRAFT = {"draft_order": {"u1": 1, "u2": 3}}
+
+    @staticmethod
+    def _users(path, **k):
+        return {"/user/u1": {"display_name": "GMBartimusPrime"},
+                "/user/u2": {"display_name": "awarmwalrus"}}.get(
+                    path.replace(sl.BASE, ""), {})
+
+    def test_it_maps_each_seat_to_a_name(self):
+        got = sl.slot_names("D", _get_fn=self._users,
+                            _draft_fn=lambda d: self.DRAFT)
+        assert got == {1: "GMBartimusPrime", 3: "awarmwalrus"}
+
+    def test_an_unresolvable_id_costs_that_name_only(self):
+        got = sl.slot_names("D", _get_fn=lambda p, **k: (
+            {"display_name": "Known"} if p.endswith("u1") else {}),
+            _draft_fn=lambda d: self.DRAFT)
+        assert got == {1: "Known"}
+
+    def test_a_draft_with_no_order_yields_nothing(self):
+        assert sl.slot_names("D", _get_fn=self._users,
+                             _draft_fn=lambda d: {}) == {}
+
+    def test_an_unclaimed_seat_is_skipped(self):
+        """draft_order carries null for seats nobody has taken."""
+        assert sl.slot_names("D", _get_fn=self._users,
+                             _draft_fn=lambda d: {
+                                 "draft_order": {"u1": None}}) == {}

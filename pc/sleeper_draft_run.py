@@ -217,8 +217,23 @@ def _banter_context(draft_id, league_id, roster_id, state, wait, board_fn):
         picks = wes_sleeper.draft_picks(draft_id) or []
         # WHO TOOK WHAT, lately. The last handful is what the room is still
         # talking about.
+        # WHOSE PICK IT WAS, said outright. Slot numbers alone made the model
+        # join `our_slot` against `draft_slot` to work out which picks were
+        # its own -- and it got that wrong in front of the owner, denying a
+        # player it had drafted itself: "at least my first-round pick isn't
+        # listed as questionable", about Puka Nacua, its own first-round pick,
+        # who was listed as questionable (2026-08-22). Ownership is a fact we
+        # hold; it does not go to the model as a puzzle.
+        names = {}
+        try:
+            names = wes_sleeper.slot_names(draft_id)
+        except Exception:  # noqa: BLE001
+            pass
         ctx["recent_picks"] = [
             {"pick": p.get("pick_no"), "slot": p.get("draft_slot"),
+             "by": ("US" if p.get("draft_slot") == roster_id
+                    else names.get(p.get("draft_slot"))),
+             "ours": p.get("draft_slot") == roster_id,
              "player": " ".join(filter(None, [
                  (p.get("metadata") or {}).get("first_name"),
                  (p.get("metadata") or {}).get("last_name")])),
@@ -231,9 +246,19 @@ def _banter_context(draft_id, league_id, roster_id, state, wait, board_fn):
             if pos:
                 rosters.setdefault(p.get("draft_slot"), []).append(pos)
         ctx["rosters_by_slot"] = {
-            str(k): _count(v) for k, v in sorted(rosters.items())
-            if k is not None}
+            ("US" if k == roster_id else (names.get(k) or f"slot {k}")):
+                _count(v)
+            for k, v in sorted(rosters.items()) if k is not None}
         ctx["our_slot"] = roster_id
+        # OUR OWN ROSTER, by name, as its own field. The model should never
+        # have to reconstruct what it drafted from a table of everyone's.
+        ctx["our_roster"] = [
+            {"player": " ".join(filter(None, [
+                (p.get("metadata") or {}).get("first_name"),
+                (p.get("metadata") or {}).get("last_name")])),
+             "position": (p.get("metadata") or {}).get("position"),
+             "round": p.get("round")}
+            for p in picks if p.get("draft_slot") == roster_id]
         # OUR injured players, in words. The most quotable facts in the room
         # are usually about a body part.
         hurt = []

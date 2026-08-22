@@ -651,6 +651,30 @@ def slot_in_draft(draft_id, username, _get_fn=None, _draft_fn=None):
     return int(slot) if slot else None
 
 
+def slot_names(draft_id, _get_fn=None, _draft_fn=None):
+    """Draft slot -> the display name sitting in it. {} if unknown.
+
+    Banter was told to "needle the right person" while holding nothing but
+    slot NUMBERS, so the best it could manage was ribbing an integer. A name
+    is what makes a chat line land.
+
+    Reads `draft_order` (user id -> slot) and resolves each id through
+    `/user/{id}`, which takes an id as happily as a username -- so this works
+    for MOCK drafts, which have no league and therefore no /users route.
+    Best-effort per seat: one unresolvable id costs that name, not the map.
+    """
+    d = (_draft_fn or draft)(draft_id) or {}
+    out = {}
+    for uid, slot in (d.get("draft_order") or {}).items():
+        if not slot:
+            continue
+        u = _get(f"/user/{uid}", _get_fn=_get_fn)
+        name = u.get("display_name") if isinstance(u, dict) else None
+        if name:
+            out[int(slot)] = str(name)
+    return out
+
+
 def find_roster_id(league_id, username, _get_fn=None):
     """Which roster_id belongs to `username`. Returns None if not found.
 

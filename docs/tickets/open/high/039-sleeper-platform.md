@@ -1227,3 +1227,35 @@ pick is mandatory, and an incomplete roster beats a forfeited pick.
 
 `must_fill` is also reported in the payload, so the model is told it was
 constrained rather than handed a boardless of kickers and left to infer why.
+
+## Banter did not know which roster was its own (2026-08-22)
+
+Live, in the owner's room:
+
+    awarmwalrus: you're the one that took puka you dumb dumb
+    WES:         At least my first-round pick isn't currently listed as a
+                 'questionable' gamble.
+
+Puka Nacua was our first-round pick, and was listed questionable.
+
+The context held `our_slot` and a `draft_slot` on every pick, and left the
+model to JOIN them -- the one kind of inference the rest of the board code
+deliberately precomputes ("COMPUTED, not left for the model to infer"). It got
+the join wrong in front of the owner.
+
+Fixed by stating ownership instead of implying it:
+
+* every `recent_picks` entry carries `ours` and `by` -- the manager's name, or
+  literally `"US"` when it was our pick;
+* `our_roster` is its own field, so the model never reconstructs what it
+  drafted out of a table of everyone's;
+* `rosters_by_slot` is keyed by MANAGER NAME rather than slot number, via the
+  new `wes_sleeper.slot_names`, which resolves `draft_order` through
+  `/user/{id}` -- that route takes an id as happily as a username, so it works
+  for mocks, which have no league and no /users route. Banter had been told to
+  "needle the right person" while holding nothing but integers.
+
+Replayed against the live model, the same exchange now owns the pick and
+counters with the opponent's actual player rather than disowning its own. Asked
+"who do you have so far?" it answers with its real roster and needles the right
+manager by name.

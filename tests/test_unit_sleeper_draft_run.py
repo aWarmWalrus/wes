@@ -567,3 +567,69 @@ class TestLandedLateChecksTheirPlayer:
                                                             "model"),
                        _submit_fn=boom, _sleep_fn=lambda _s: None)
         assert "made 0 pick(s)" in out,             "must not count another player in our slot as our pick"
+
+
+class TestBanterKnowsItsOwnRoster:
+    """Told "you're the one that took Puka you dumb dumb", banter replied that
+    at least its first-rounder was not a questionable gamble -- about its own
+    first-round pick, who was listed questionable. It held `our_slot` and
+    `draft_slot` and was left to join them itself (2026-08-22).
+    """
+
+    PICKS = [
+        {"pick_no": 1, "round": 1, "draft_slot": 1, "player_id": "9493",
+         "metadata": {"first_name": "Puka", "last_name": "Nacua",
+                      "position": "WR"}},
+        {"pick_no": 2, "round": 1, "draft_slot": 2, "player_id": "22",
+         "metadata": {"first_name": "Bijan", "last_name": "Robinson",
+                      "position": "RB"}},
+    ]
+
+    @pytest.fixture(autouse=True)
+    def _stub(self, monkeypatch):
+        monkeypatch.setattr(wes_sleeper, "draft_picks",
+                            lambda d, **k: list(self.PICKS))
+        monkeypatch.setattr(wes_sleeper, "slot_names",
+                            lambda d, **k: {1: "GMBartimusPrime",
+                                            2: "awarmwalrus"})
+
+    def _ctx(self, roster_id=1):
+        return loop._banter_context("D", "L", roster_id,
+                                    {"round": 1, "picks_made": 2}, 10,
+                                    lambda *a, **k: None)
+
+    def test_our_pick_is_labelled_ours(self):
+        ours = [p for p in self._ctx()["recent_picks"] if p["player"]
+                == "Puka Nacua"][0]
+        assert ours["ours"] is True and ours["by"] == "US"
+
+    def test_someone_elses_pick_carries_their_name(self):
+        theirs = [p for p in self._ctx()["recent_picks"]
+                  if p["player"] == "Bijan Robinson"][0]
+        assert theirs["ours"] is False and theirs["by"] == "awarmwalrus"
+
+    def test_our_roster_is_its_own_field(self):
+        assert self._ctx()["our_roster"] == [
+            {"player": "Puka Nacua", "position": "WR", "round": 1}]
+
+    def test_rosters_are_keyed_by_manager_not_slot_number(self):
+        assert set(self._ctx()["rosters_by_slot"]) == {"US", "awarmwalrus"}
+
+    def test_ownership_follows_our_actual_slot(self):
+        """Sitting in slot 2, Bijan is ours and Puka is not."""
+        ctx = self._ctx(roster_id=2)
+        by = {p["player"]: p["by"] for p in ctx["recent_picks"]}
+        assert by == {"Puka Nacua": "GMBartimusPrime", "Bijan Robinson": "US"}
+        assert [r["player"] for r in ctx["our_roster"]] == ["Bijan Robinson"]
+
+    def test_unnameable_managers_do_not_break_the_context(self):
+        """A mock seat whose id will not resolve still gets a pick entry."""
+        import wes_sleeper as ws
+        orig = ws.slot_names
+        try:
+            ws.slot_names = lambda d, **k: {}
+            ctx = self._ctx()
+            assert ctx["recent_picks"][1]["by"] is None
+            assert ctx["recent_picks"][0]["by"] == "US", "ours needs no lookup"
+        finally:
+            ws.slot_names = orig
