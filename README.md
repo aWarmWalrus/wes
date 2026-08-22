@@ -43,6 +43,7 @@ is allowlisted, so it runs without a permission prompt, and it waits for
 | `reload [server\|discord\|exporters]` | restart the scheduled task, wait for `/health` |
 | `test [file]` | the pytest suite, or just one file (skips Pi hardware tests) |
 | `eval [local\|haiku]` | reply-quality eval vs the golden set |
+| `draft-eval` | golden DRAFT scenarios with known right answers |
 | `perf` | latency check against the recorded baseline |
 | `health` | `GET /health` as JSON |
 | `say <channel> <text>` | speak something |

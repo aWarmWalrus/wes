@@ -9,6 +9,7 @@
 #                           (test_unit_sleeper.py resolves against tests\)
 #   eval [local|haiku]      run the golden eval (judge defaults to local)
 #   perf                    run perf_check.py
+#   draft-eval [args]       golden draft scenarios (--with-claude, --repeat N)
 #   reload [server|discord|exporters]   restart the task (default server) + wait health
 #   health                  GET /health
 #   say <channel> <text>    POST /respond_text (text-only; no audio) -> prints reply
@@ -95,6 +96,10 @@ switch ($cmd) {
         & $py "$repo\tests\eval_turns.py" --judge $judge @extra
     }
     "perf"   { & $py "$repo\tests\perf_check.py" }
+    # Golden scenarios for the DRAFT agent, with known right answers. Run this
+    # after any change to the pick prompt or payload - "agreement with the
+    # engine" cannot tell a good change from a bad one, and this can.
+    "draft-eval" { & $py "$repo\tests\draft_eval.py" @rest }
     "reload" {
         $task = switch ($rest[0]) {
             "discord"   { "WES Discord" }
@@ -187,5 +192,5 @@ switch ($cmd) {
             "         The Pi runs pi/ from ITS clone, so the voice client may be stale."
         }
     }
-    default  { "unknown command '$cmd'. try: test eval perf reload health say reset turns usage log gpu models deploy sync" }
+    default  { "unknown command '$cmd'. try: test eval draft-eval perf reload health say reset turns usage log gpu models deploy sync" }
 }
