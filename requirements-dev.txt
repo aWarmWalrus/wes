@@ -17,19 +17,22 @@
 #   playwright               — wes_yahoo gates every use behind _have_playwright().
 # If a new module top-level-imports one of these, add it here AND say why.
 
-# THE SLEEPER DOM LAYER, now its own repo (../sleeperdraft). `wes_sleeper`
-# top-level-imports it, so CI cannot run without it.
+# THE SLEEPER DOM LAYER, its own repo now. `wes_sleeper` top-level-imports it,
+# so CI cannot run without it.
 #
-# CI IS RED UNTIL THIS REPO IS PUBLISHED. It is installed locally with
+# The repo is PRIVATE, so this needs credentials CI does not have by default:
+# the checkout's GITHUB_TOKEN is scoped to this repository alone. CI therefore
+# needs a PAT with `repo` scope in a secret, and the workflow rewrites the URL
+# to use it (see .github/workflows/ci.yml). Making the package public would
+# remove the need for any of that.
+#
+# Locally it is an editable install instead, so edits to the package are live:
 #     python -m pip install -e C:\Users\awarm\sleeperdraft
-# which CI cannot do, because CI checks out only this repo. The moment the
-# package has a remote, uncomment the line below and CI goes green again:
+# pip keeps whichever was installed last, and the editable one wins if present.
 #
-# sleeperdraft @ git+https://github.com/aWarmWalrus/sleeperdraft@main
-#
-# The alternative -- vendoring a copy back into pc/ -- is what the split just
-# undid, and two copies of a DOM adapter drift in exactly the place that costs
-# a draft. Better a red badge for a day than a silent fork.
+# NOT vendored back into pc/, deliberately: two copies of a DOM adapter drift
+# in exactly the place that costs a draft.
+sleeperdraft @ git+https://github.com/aWarmWalrus/sleeperdraft@master
 
 pytest==9.1.1
 Flask==3.1.3
