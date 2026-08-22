@@ -509,8 +509,20 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
                         break
                     if attempt == SUBMIT_TRIES - 1 or not _still_ours():
                         raise
-                    _log(f"pick {pick_no}: attempt {attempt + 1} failed "
-                         f"({str(e)[:70]}); clock is still ours, retrying")
+                    # A REFRESH IS NOT ENOUGH. Measured on a stalled turn: the
+                    # held page read the draft button as disabled for three
+                    # attempts while a BRAND NEW session, opened seconds later
+                    # against the same room, read it as enabled. A page built
+                    # before the draft opened carries that state through a
+                    # reload, so the retry throws the session away instead.
+                    if browser is not None:
+                        browser.close()
+                        _log(f"pick {pick_no}: attempt {attempt + 1} failed "
+                             f"({str(e)[:60]}); discarding the session and "
+                             f"retrying fresh")
+                    else:
+                        _log(f"pick {pick_no}: attempt {attempt + 1} failed "
+                             f"({str(e)[:70]}); clock is still ours, retrying")
             t_click = now()
             made.append(pick["name"])
             _log(f"pick {pick_no}: TIMING turn->click {t_click - t_turn:.1f}s "
