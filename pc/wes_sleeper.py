@@ -1548,7 +1548,7 @@ def _scroll_to_row(page, find_fn, steps=SCROLL_STEPS):
     return None
 
 
-def _click_pick(page, player_name, want):
+def _click_pick(page, player_name, want, find_fn=None):
     """Find the player's ROW and click its draft control.
 
     Shared by the per-call and held-open paths. Moved here verbatim
@@ -1575,6 +1575,7 @@ def _click_pick(page, player_name, want):
                 return r
         return None
 
+    find_fn = find_fn or _find_row
     row = _find_row()
     if row is None:
         # OUTSIDE THE RENDERED WINDOW: scroll to him rather than search.
@@ -1616,6 +1617,17 @@ def _click_pick(page, player_name, want):
         # unrendered-versus-absent distinction that has bitten twice already.
         for _ in range(ENABLE_WAIT_TRIES):
             page.wait_for_timeout(1000)
+            # RE-QUERY THE DOCUMENT, do not poll a handle. The player list is a
+            # virtualised React grid that re-renders constantly, so the `row`
+            # captured a moment ago is soon DETACHED -- and a detached node
+            # keeps its old class forever and swallows clicks. Polling it read
+            # "disable" for twenty seconds while a fresh query of the same page
+            # showed all 25 rows ENABLED, seconds apart (2026-08-22, measured
+            # side by side on a live turn). Every "the button is disabled"
+            # failure traces to this.
+            fresh = find_fn()
+            if fresh is not None:
+                row = fresh
             btn = row.query_selector(".draft-button") or btn
             if "disable" not in (btn.get_attribute("class") or ""):
                 break

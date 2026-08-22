@@ -1162,3 +1162,40 @@ not own.
 The `.start-draft-button` click reports success and leaves the draft in
 `pre_draft`. It has worked before, so it is intermittent. Not urgent -- nobody
 needs the agent to start a draft -- but it wasted an experiment tonight.
+
+## RESOLVED: the draft button was never disabled (2026-08-22)
+
+The section above is wrong about the cause, and the "what is still unknown"
+candidates (beta draftboard / commissioner vs participant / presence) are all
+irrelevant. Keeping it for the disproofs, which stand.
+
+The real bug: `_click_pick` captured the player's row ONCE, then polled
+`row.query_selector(".draft-button")` for twenty seconds. The player list is a
+virtualised React grid that re-renders continuously, so that handle DETACHES --
+and a detached node keeps whatever class it had forever, and swallows clicks.
+We were reading a photograph of the button and waiting for it to change.
+
+Measured side by side on a live turn, no clock, turn still ours after three
+failed attempts:
+
+    loop  (polling the captured handle)   "draft-button disable", 20s, 3 sessions
+    probe (re-querying the document)      25 of 25 rows ENABLED, same instant
+
+Every probe that read "all enabled" re-queried; every read of "disable" came
+from a held handle. The two never disagreed about the page -- only about
+whether they were still looking at it.
+
+Fix: re-query the row from the document on every poll. `_click_pick` now takes
+the finder and calls it each second instead of reusing the handle.
+
+First unaided pick in a room we do not own, immediately after:
+
+    pick 1: TIMING turn->click 17.4s (board 0.3s, availability 0.0s,
+            model 6.0s, submit 11.1s)
+    pick 1: DRAFTED Puka Nacua
+
+This also retires the commissioner-vs-participant correlation: it was real but
+coincidental. Our own mocks were drafted by a session built after the room
+opened, against a freshly rendered list; the owner's rooms had us holding a
+page across the transition, which is exactly when the re-render detaches the
+handle.
