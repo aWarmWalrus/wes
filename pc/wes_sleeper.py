@@ -647,6 +647,10 @@ class _Session:
             page.goto(...)
     """
 
+    # How many sessions are currently open. Class-level: the limit is per
+    # process, not per instance.
+    _live = 0
+
     def __init__(self, headless=None):
         self.headless = HEADLESS if headless is None else headless
         self._pw = None
@@ -654,6 +658,17 @@ class _Session:
 
     def __enter__(self):
         from playwright.sync_api import sync_playwright
+        # ONE AT A TIME. Playwright's sync API cannot have two instances live
+        # in a thread, and the error it gives -- "Sync API inside the asyncio
+        # loop" -- says nothing about the actual mistake. That mistake is easy
+        # to make now that a Browser can hold a session for a whole draft: a
+        # code path that forgets to accept the held browser opens its own and
+        # forfeits a pick (2026-08-21, caught in a full mock).
+        if _Session._live:
+            raise RuntimeError(
+                "a browser session is already open — pass the held "
+                "wes_browser.Browser through instead of opening a second one "
+                "(Playwright's sync API allows only one per thread)")
         os.makedirs(PROFILE_DIR, exist_ok=True)
         self._pw = sync_playwright().start()
         launch = dict(
@@ -681,15 +696,22 @@ class _Session:
         # gated by the kill switch, and the guardrails live above this layer,
         # not in a browser prompt.
         page.on("dialog", lambda d: d.accept())
+        _Session._live += 1
         return page
 
     def __exit__(self, *exc):
         try:
-            if self._ctx:
-                self._ctx.close()
+            try:
+                if self._ctx:
+                    self._ctx.close()
+            finally:
+                if self._pw:
+                    self._pw.stop()
         finally:
-            if self._pw:
-                self._pw.stop()
+            # ALWAYS release, even if closing threw. A leaked counter would
+            # lock out every later session, which is worse than the bug it
+            # guards against.
+            _Session._live = max(0, _Session._live - 1)
         return False
 
 

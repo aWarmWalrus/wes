@@ -171,3 +171,40 @@ class TestFailureHandling:
         br.page()
         st = br.stats()
         assert st["rebuilds"] == 1 and st["failures"] == 0
+
+
+class TestOneSessionAtATime:
+    """A held Browser plus a code path that opens its own session is two
+    Playwright instances in one thread. Playwright's own error --  "Sync API
+    inside the asyncio loop" -- says nothing about the real mistake, and the
+    real mistake forfeited a pick in a full mock (2026-08-21)."""
+
+    def test_a_second_session_is_refused_with_a_useful_message(self,
+                                                               monkeypatch):
+        import wes_sleeper
+        monkeypatch.setattr(wes_sleeper._Session, "_live", 1)
+        try:
+            wes_sleeper._Session().__enter__()
+            assert False, "should have refused"
+        except RuntimeError as e:
+            assert "already open" in str(e)
+            assert "held" in str(e), "must point at the fix, not just the fault"
+
+    def test_the_counter_is_released_even_if_closing_throws(self, monkeypatch):
+        """A leaked counter would lock out every later session -- worse than
+        the bug it guards against."""
+        import wes_sleeper
+
+        class Boom:
+            def close(self):
+                raise RuntimeError("close failed")
+
+        monkeypatch.setattr(wes_sleeper._Session, "_live", 1)
+        sess = wes_sleeper._Session()
+        sess._ctx = Boom()
+        sess._pw = None
+        try:
+            sess.__exit__(None, None, None)
+        except RuntimeError:
+            pass
+        assert wes_sleeper._Session._live == 0

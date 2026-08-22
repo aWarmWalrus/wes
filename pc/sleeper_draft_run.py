@@ -216,7 +216,7 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     """Watch and draft until the draft ends. Returns a short summary string."""
     turn_fn = _state_fn or wes_sleeper.draft_turn
     board_fn = _board_fn or wes_sleeper.draft_candidates
-    submit = _submit_fn or wes_sleeper.submit_pick
+    _raw_submit = _submit_fn or wes_sleeper.submit_pick
     sleep = _sleep_fn or time.sleep
     now = _now_fn or time.time
     record = _record_fn or _record
@@ -229,11 +229,27 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     # caller degrades to a per-call session if it cannot be built -- a speed
     # optimisation must never be able to stop a draft.
     browser = None
-    if banter_mode != "off":
+    if _banter is not None and getattr(_banter, "browser", None) is not None:
+        # An injected banter that already holds a page owns it. Building a
+        # second here is the same "two Playwright instances" bug in a
+        # different costume.
+        browser = _banter.browser
+    elif banter_mode != "off":
         try:
             browser = wes_browser.Browser(draft_id, _log=_log)
         except Exception as e:  # noqa: BLE001
             _log(f"browser: could not hold a session ({e}); per-call it is")
+    # THE HELD BROWSER MUST REACH THE PICK PATH TOO. Threading it into banter
+    # and not here meant a pick opened a SECOND Playwright while the first was
+    # alive, which fails with "Sync API inside the asyncio loop" and forfeits
+    # the pick. Wrapped rather than passed positionally so injected test stubs
+    # keep their three-argument signature.
+    if _submit_fn is None and browser is not None:
+        def submit(d, key, name):
+            return _raw_submit(d, key, name, browser=browser)
+    else:
+        submit = _raw_submit
+
     chat = _banter if _banter is not None else wes_banter.Banter(
         draft_id, mode=banter_mode, browser=browser,
         min_gap_s=wes_banter.MIN_GAP_S if banter_gap is None else banter_gap)
@@ -275,15 +291,17 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             # Far from the clock is the only safe time to open the chat: a
             # read takes ~12s of browser, and a pick must never wait behind it.
             if wait > NEAR_PICKS:
+                _t0 = now()
                 act, detail = chat.tick(context=_banter_context(
                     draft_id, league_id, roster_id, state, wait, board_fn))
+                _took = now() - _t0
                 # Log the QUIET decisions too when there was actually
                 # something to answer. "nothing worth saying (re: ...)" is the
                 # interesting line; suppressing it made an idle chat and a
                 # model declining to speak look identical, which is exactly
                 # the question asked five minutes after switching it on.
                 if act not in ("quiet", "rate_limited") or "(re: " in detail:
-                    _log(f"chat [{act}] {detail}")
+                    _log(f"chat [{act}] ({_took:.1f}s) {detail}")
             sleep(POLL_NEAR_S if wait <= NEAR_PICKS else POLL_FAR_S)
             continue
 
