@@ -34,9 +34,27 @@ import wes_http
 import wes_nfl
 from sleeperdraft import chat as _sd_chat
 from sleeperdraft import config as _sd_config
+from sleeperdraft import fetch as _sd_fetch
 from sleeperdraft import pick as _sd_pick
 from sleeperdraft import read as _sd_read
 from sleeperdraft import session as _sd_session
+
+# WE ARE THE HOST, so we do the wiring. The package is published and knows
+# nothing about WES; anything WES-shaped has to be configured from this side.
+#
+# Our environment variables are WES_SLEEPER_*, set on this machine and in the
+# scheduled tasks, and renaming them would mean touching every launcher for no
+# gain. Adding a prefix is what that seam is for. Ours goes SECOND, so a plain
+# SLEEPER_TOKEN still wins if anyone sets one.
+if "WES_SLEEPER" not in _sd_config.ENV_PREFIXES:
+    _sd_config.ENV_PREFIXES.append("WES_SLEEPER")
+
+# One HTTP client, not two. `wes_http` already owns retries, the shared cache
+# and a single User-Agent (#034, layer 1), and a second cache for Sleeper URLs
+# would drift from it — including on the TTLs, which are load-bearing here:
+# "cached for 60s" versus "cache bypassed" is the difference between verifying
+# a pick and verifying a memory of one.
+_sd_fetch.use_host(wes_http.get_json)
 
 # --- the DOM layer lives in `sleeperdraft` -----------------------------------
 # Everything that drives the draft room -- the browser session, claiming a seat,
