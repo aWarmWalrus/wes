@@ -1280,29 +1280,31 @@ lines and is now mostly re-exports plus `draft_candidates`.
 Fifteen test classes moved with the code, retargeted at the package and given
 neutral fixture identities. WES kept 1065 tests; the package has 79.
 
-### Published PRIVATE, and the one thing CI still needs
+### Published PUBLIC
 
-https://github.com/aWarmWalrus/sleeperdraft — private, branch `master` (to
-match this repo). `requirements-dev.txt` installs it by git URL, verified by
-installing into a clean venv from the remote and importing it.
+https://github.com/aWarmWalrus/sleeperdraft — MIT, branch `master`, 82 tests.
+`requirements-dev.txt` installs it by git URL and CI clones it anonymously, so
+there is no secret, no PAT and no URL-rewrite step. (It was private for about
+an hour, which needed all three. Public deleted them.)
 
-CI NEEDS ONE SECRET, AND DOES NOT HAVE IT YET. The checkout's automatic
-GITHUB_TOKEN is scoped to the WES repository alone, so pip cannot clone a
-SECOND private repo with it. `.github/workflows/ci.yml` rewrites the git URL
-prefix using `secrets.SLEEPERDRAFT_TOKEN` (a PAT with `repo` scope), which
-keeps the token out of `requirements-dev.txt` where it would be committed. The
-step fails LOUDLY with an actionable message when the secret is missing rather
-than letting the install quietly skip a dependency the whole suite imports.
+Before publishing, the repo was scanned for tokens, keys, real draft/league ids
+and personal identifiers: clean, and the history is a single commit so nothing
+is buried in it. Two things were fixed on the way out, because they were wrong
+for anyone who is not us:
 
-    Settings -> Secrets and variables -> Actions -> New repository secret
-    name: SLEEPERDRAFT_TOKEN
+* the settings were `WES_SLEEPER_*`, named after this project rather than the
+  package. They are now `SLEEPER_TOKEN` / `SLEEPER_USER` / `SLEEPER_HEADLESS` /
+  `SLEEPER_PROFILE_DIR`, with the `WES_` prefix still accepted on every one
+  (per-account names included) so nothing here broke. That fallback is a
+  compatibility promise, so it has three tests of its own.
+* the browser profile defaulted into `~/wes-pc/`, which would have put a
+  stranger's session cookies in a directory named after this project. It now
+  defaults to `~/.sleeperdraft/profile`, and `wes_sleeper` PINS the old path so
+  our logged-in profile is still the one that opens.
 
-Making the package public would delete the secret, the URL rewrite and that
-workflow step in one go.
-
-Locally it is an editable install (`pip install -e ..\sleeperdraft`), so edits
-to the package are live in WES with no reinstall — confirmed: WES resolves to
-the clone, and `wes_sleeper.submit_pick is sleeperdraft.submit_pick`.
+Locally it is an editable install, so edits to the package are live in WES with
+no reinstall — confirmed: WES resolves to the clone, and
+`wes_sleeper.submit_pick is sleeperdraft.submit_pick`.
 
 ### Next: the MCP server
 

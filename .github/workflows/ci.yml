@@ -24,28 +24,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
 
-      # `sleeperdraft` (the Sleeper draft-room DOM layer) is a PRIVATE repo, and
-      # the checkout's automatic GITHUB_TOKEN is scoped to this repository only,
-      # so pip cannot clone it. SLEEPERDRAFT_TOKEN is a PAT with `repo` scope;
-      # rewriting the URL prefix feeds it to git without putting it in
-      # requirements-dev.txt, where it would be committed.
-      #
-      # If the secret is absent this is a no-op and the install fails loudly on
-      # the clone rather than silently skipping a dependency the suite needs.
-      # Making the package public would remove all of this.
-      - name: Authenticate to the private sleeperdraft repo
-        env:
-          TOKEN: ${{ secrets.SLEEPERDRAFT_TOKEN }}
-        run: |
-          if [ -z "$TOKEN" ]; then
-            echo "::error::SLEEPERDRAFT_TOKEN is not set — pip cannot clone the"\
-                 "private sleeperdraft repo and every test that imports"\
-                 "wes_sleeper will fail. Add a PAT with 'repo' scope as a"\
-                 "repository secret, or make the package public."
-            exit 1
-          fi
-          git config --global url."https://${TOKEN}@github.com/".insteadOf "https://github.com/"
-
+      # `sleeperdraft` (the Sleeper draft-room DOM layer) is a public repo, so
+      # pip clones it anonymously and this step needs no credentials. It was
+      # briefly private, which needed a PAT in a secret and a git URL rewrite;
+      # making it public deleted all of that.
       - name: Install test deps
         run: |
           python -m pip install --upgrade pip

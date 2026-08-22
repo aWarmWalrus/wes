@@ -14,17 +14,17 @@
 #   piper-tts / onnxruntime  — TTS runs the piper binary via subprocess.
 #   pychromecast             — Cast output is imported lazily.
 #   discord.py               — wes_discord's 22 unit tests pass without it.
-#   playwright               — wes_yahoo gates every use behind _have_playwright().
 # If a new module top-level-imports one of these, add it here AND say why.
-
-# THE SLEEPER DOM LAYER, its own repo now. `wes_sleeper` top-level-imports it,
-# so CI cannot run without it.
 #
-# The repo is PRIVATE, so this needs credentials CI does not have by default:
-# the checkout's GITHUB_TOKEN is scoped to this repository alone. CI therefore
-# needs a PAT with `repo` scope in a secret, and the workflow rewrites the URL
-# to use it (see .github/workflows/ci.yml). Making the package public would
-# remove the need for any of that.
+# playwright USED to be on that list — wes_yahoo gates every use behind
+# _have_playwright(). It now arrives anyway, as a dependency of sleeperdraft
+# below. Only the Python package: CI never runs `playwright install`, so no
+# browser binary is downloaded and nothing here launches one.
+
+# THE SLEEPER DOM LAYER, its own public repo now:
+#   https://github.com/aWarmWalrus/sleeperdraft
+# `wes_sleeper` top-level-imports it, so CI cannot run without it. Public means
+# pip clones it anonymously -- no secret, no URL rewrite, no workflow step.
 #
 # Locally it is an editable install instead, so edits to the package are live:
 #     python -m pip install -e C:\Users\awarm\sleeperdraft

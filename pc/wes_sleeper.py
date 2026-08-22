@@ -50,7 +50,15 @@ from sleeperdraft import session as _sd_session
 # one place it can be wrong.
 BASE = _sd_config.BASE
 WEB = _sd_config.WEB
-PROFILE_DIR = _sd_config.PROFILE_DIR
+# PINNED TO WHERE OUR PROFILE ALREADY IS. The package defaults to
+# ~/.sleeperdraft/profile, which is right for anyone else and wrong for this
+# machine -- the logged-in Chrome profile has lived in ~/wes-pc since #039, and
+# silently pointing at an empty directory would launch an anonymous browser and
+# report a mysteriously empty draft room. Overridable by the environment, same
+# as everything else.
+PROFILE_DIR = _sd_config.PROFILE_DIR = os.environ.get(
+    "WES_SLEEPER_PROFILE_DIR",
+    os.path.join(os.path.expanduser("~"), "wes-pc", "sleeper_profile"))
 HEADLESS = _sd_config.HEADLESS
 BROWSER_CHANNEL = _sd_config.BROWSER_CHANNEL
 TOKEN_KEY = _sd_config.TOKEN_KEY
