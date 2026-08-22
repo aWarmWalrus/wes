@@ -809,6 +809,18 @@ def draft(draft_id, _get_fn=None):
     return _get(f"/draft/{draft_id}", ttl=60.0, _get_fn=_get_fn)
 
 
+def draft_status_fresh(draft_id, _get_fn=None):
+    """The draft's status, CACHE BYPASSED. For the pre-start wait only.
+
+    `draft()` caches for 60s, and the wait loop also slept 60s -- so polling
+    faster would have changed nothing, and the interval looked like the whole
+    cause when it was half of it. Arriving 60s late to a 120s clock cost pick 1
+    of a live draft, which then engaged autopick and cost the whole draft
+    (2026-08-22)."""
+    d = _get(f"/draft/{draft_id}", ttl=0, _get_fn=_get_fn)
+    return (d or {}).get("status")
+
+
 def draft_picks(draft_id, _get_fn=None):
     """Every pick made so far, oldest first. Short TTL: during a live draft this
     is the fast-moving fact everything else depends on."""

@@ -220,17 +220,26 @@ def main():
 
     # WAIT, do not start. Sleeper opens the room on its own schedule; our job
     # is to be connected when it does.
+    # FAST, AND UNCACHED. Missing the start by even half a minute can cost the
+    # first pick, and a missed pick engages Sleeper's autopick for the rest of
+    # the draft. Five seconds against a 600s clock is nothing; the status read
+    # is a couple of KB, so twelve a minute is ~1% of Sleeper's published rate
+    # guidance. The LOG stays on a minute so a three-hour wait does not write
+    # two thousand lines.
     deadline = time.time() + a.wait_hours * 3600
+    said = 0.0
     while time.time() < deadline:
-        status = (wes_sleeper.draft(draft_id) or {}).get("status")
+        status = wes_sleeper.draft_status_fresh(draft_id)
         if status == "drafting":
             break
         if status == "complete":
             print(f"draft {draft_id} is already complete — nothing to do")
             return 0
-        print(f"[wait] {time.strftime('%H:%M:%S')} status={status}, "
-              f"holding")
-        time.sleep(60)
+        if time.time() - said >= 60:
+            said = time.time()
+            print(f"[wait] {time.strftime('%H:%M:%S')} status={status}, "
+                  f"holding")
+        time.sleep(5)
     else:
         print("gave up waiting for the draft to open")
         return 1

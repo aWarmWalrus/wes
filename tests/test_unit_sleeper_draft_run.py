@@ -384,3 +384,76 @@ class TestLedgerIsSandboxedInTests:
         the real file."""
         loop.wes_execute.record_action({"ts": 1, "action_type": "probe"})
         assert os.path.exists(loop.wes_execute.LEDGER_FILE)
+
+
+class TestAutopickGuard:
+    """Sleeper turns AUTO-PICK on by itself after ONE missed pick, then takes
+    every later turn instantly. So the checks at session build and at pick
+    time are both on paths autopick PREVENTS US FROM REACHING -- in the live
+    draft of 2026-08-22 it made all nine of our picks and the loop never once
+    got to look. The check has to happen while merely waiting."""
+
+    class FakeBrowser:
+        def __init__(self, on):
+            self.on = on
+            self.cleared = 0
+
+        def page(self):
+            return "page"
+
+        def peek(self):
+            return "page"
+
+    def _patch(self, monkeypatch, br):
+        monkeypatch.setattr(loop.wes_sleeper, "autopick_on", lambda p: br.on)
+
+        def clear(p, on=False):
+            br.cleared += 1
+            br.on = on
+            return on
+        monkeypatch.setattr(loop.wes_sleeper, "set_autopick", clear)
+
+    def test_it_clears_autopick_when_it_finds_it_on(self, monkeypatch):
+        br = self.FakeBrowser(on=True)
+        self._patch(monkeypatch, br)
+        said = []
+        loop._keep_autopick_off(br, 0.0, 1000.0, said.append)
+        assert br.cleared == 1 and br.on is False
+        assert any("switched itself ON" in m for m in said),             "must be loud -- an agent that quietly undoes a platform action "             "cannot be debugged later"
+
+    def test_it_says_nothing_when_all_is_well(self, monkeypatch):
+        br = self.FakeBrowser(on=False)
+        self._patch(monkeypatch, br)
+        said = []
+        loop._keep_autopick_off(br, 0.0, 1000.0, said.append)
+        assert br.cleared == 0 and said == []
+
+    def test_it_is_rate_limited(self, monkeypatch):
+        """One evaluate per cycle would be wasteful; this runs every poll."""
+        br = self.FakeBrowser(on=True)
+        self._patch(monkeypatch, br)
+        t = loop._keep_autopick_off(br, 0.0, 1000.0, lambda m: None)
+        loop._keep_autopick_off(br, t, 1000.0 + 5, lambda m: None)
+        assert br.cleared == 1, "second call was inside the interval"
+
+    def test_it_checks_again_once_the_interval_passes(self, monkeypatch):
+        br = self.FakeBrowser(on=True)
+        self._patch(monkeypatch, br)
+        t = loop._keep_autopick_off(br, 0.0, 1000.0, lambda m: None)
+        br.on = True                      # Sleeper turned it back on
+        loop._keep_autopick_off(br, t, 1000.0 + loop.AUTOPICK_CHECK_S + 1,
+                                lambda m: None)
+        assert br.cleared == 2
+
+    def test_no_browser_is_not_a_crash(self):
+        assert loop._keep_autopick_off(None, 0.0, 1000.0, lambda m: None) == 0.0
+
+    def test_a_broken_check_never_breaks_the_draft(self, monkeypatch):
+        br = self.FakeBrowser(on=True)
+
+        def boom(_p):
+            raise RuntimeError("page gone")
+        monkeypatch.setattr(loop.wes_sleeper, "autopick_on", boom)
+        said = []
+        loop._keep_autopick_off(br, 0.0, 1000.0, said.append)
+        assert any("autopick check failed" in m for m in said)

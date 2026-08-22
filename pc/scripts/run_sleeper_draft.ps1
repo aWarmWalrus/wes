@@ -60,7 +60,12 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 
 # Stream to the console AND the file, line by line. Tee-Object would be the
 # obvious tool; it is the one that broke the encoding.
-& $py @args 2>&1 | ForEach-Object {
+# -u (UNBUFFERED) is load-bearing, not tidiness. Piped to anything other than
+# a console, Python block-buffers stdout, and a pre-flight is well under one
+# buffer -- so a backgrounded run wrote its launcher header and then appeared
+# to hang for five minutes while it was in fact working perfectly. A log that
+# arrives after the draft is not a log.
+& $py -u @args 2>&1 | ForEach-Object {
     $line = "$_"
     Write-Output $line
     [System.IO.File]::AppendAllText($log, $line + [Environment]::NewLine, $utf8)

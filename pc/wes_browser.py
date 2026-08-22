@@ -167,6 +167,16 @@ class Browser:
         self.uses += 1
         return self._page
 
+    def peek(self):
+        """The live page if one already exists and is healthy, else None.
+
+        Never BUILDS. For callers that want to glance at a session someone
+        else is already holding -- the autopick guard runs on every poll, and
+        making it launch Chrome would turn a cheap check into the most
+        expensive thing in the loop (and, in the test suite, into a real
+        browser launch that took the run from 23s to 195s)."""
+        return self._page if (self._page is not None and self.healthy())             else None
+
     def refresh(self):
         """Reload the draft room in place — cheaper than a rebuild when the
         page is fine but the content has drifted."""

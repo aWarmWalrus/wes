@@ -140,6 +140,39 @@ def _roster_line(board_fn, league_id, draft_id, roster_id):
         return "roster unknown"
 
 
+# How often to confirm AUTO-PICK is still off, in seconds. Sleeper turns it on
+# by itself after ONE missed pick and then takes every subsequent turn
+# instantly -- so the checks at session build and at pick time are both on
+# paths autopick prevents us from reaching. It has to be checked while we are
+# merely WAITING, which is the only state autopick leaves us in.
+AUTOPICK_CHECK_S = 45.0
+
+
+def _keep_autopick_off(browser, last_checked, now, log):
+    """Confirm AUTO-PICK is off. Returns the new last-checked time.
+
+    Cheap: one evaluate() against a page we are already holding. Silent when
+    all is well, loud when it had to intervene -- an agent that quietly undoes
+    something the platform did is one you cannot debug later."""
+    if browser is None or now - last_checked < AUTOPICK_CHECK_S:
+        return last_checked
+    try:
+        # PEEK, never build. If no page exists yet then no pick has been
+        # attempted, so autopick cannot have engaged -- and launching Chrome
+        # on a poll cycle would make the cheapest check the most expensive
+        # thing in the loop.
+        page = browser.peek()
+        if page is None:
+            return last_checked
+        if wes_sleeper.autopick_on(page):
+            got = wes_sleeper.set_autopick(page, False)
+            log(f"AUTO-PICK had switched itself ON — turned it "
+                f"{'off' if got is False else f'to {got!r}'}")
+    except Exception as e:  # noqa: BLE001 — never break a draft over this
+        log(f"autopick check failed: {type(e).__name__}: {e}")
+    return now
+
+
 def _shut(browser, log):
     """Close the held session and say what it cost. The counters are the only
     evidence of whether holding a page for two hours was a good idea."""
@@ -234,7 +267,10 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         # second here is the same "two Playwright instances" bug in a
         # different costume.
         browser = _banter.browser
-    elif banter_mode != "off":
+    else:
+        # ALWAYS, not just for banter. The AUTO-PICK guard needs a page it can
+        # look at while merely waiting, and holding one also takes ~7s off
+        # every pick. Degrades to per-call sessions if it cannot be built.
         try:
             browser = wes_browser.Browser(draft_id, _log=_log)
         except Exception as e:  # noqa: BLE001
@@ -264,6 +300,7 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     acted_on = set()
     made = []
     last_wait = None
+    last_autopick_check = 0.0
 
     while True:
         if now() - started > max_seconds:
@@ -294,6 +331,12 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             _log(f"round {state.get('round', '?')}, {state.get('picks_made')} "
                  f"picks in — {wait} until our turn "
                  f"({_roster_line(board_fn, league_id, draft_id, roster_id)})")
+        # EVERY CYCLE while waiting, not just before a pick. This is the only
+        # place the check can live: once autopick is on, our turn is taken
+        # before we ever reach the pick path.
+        last_autopick_check = _keep_autopick_off(
+            browser, last_autopick_check, now(), _log)
+
         if wait > 0:
             # Far from the clock is the only safe time to open the chat: a
             # read takes ~12s of browser, and a pick must never wait behind it.
