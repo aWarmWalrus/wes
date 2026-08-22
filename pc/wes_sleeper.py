@@ -340,6 +340,67 @@ def _can_play(info):
     return (info.get("roster_status") or "") not in UNDRAFTABLE_ROSTER
 
 
+# Adjusted-value distance from the leader within which candidates count as
+# "similar". 0.75 fires on ~70% of picks with 2-3 rows tied; tighten it to make
+# enrichment rarer. Tuned on evidence, not taste — see tests/draft_replay.py.
+CLOSE_GAP = 0.75
+
+# OFF BY DEFAULT, on evidence rather than caution. Measured on two real drafts
+# with a fixed board, notes on against notes off:
+#
+#   draft 509312  engine-agreement  8/15 -> 10/15   3 picks changed
+#   draft 743168  engine-agreement  8/15 ->  9/15   3 picks changed
+#   model latency 3.2s either way; no cost
+#
+# Agreement with the engine's top pick RISING is the failure signal for this
+# layer -- it means the model exercised less judgment, not more -- and the bar
+# set before the experiment was "ship only if the picks do not degrade". It
+# missed. The changed picks are not obviously worse (Loveland -> Hurts fills an
+# empty QB slot and looks like an improvement), but "not obviously worse" is
+# not the bar, and 15 picks with no ground truth cannot settle it.
+#
+# Kept, flagged, and honest: WES_CLOSE_CALL_NOTES=1 to try it. What would
+# settle the question is a metric better than agreement -- season points
+# scored by the resulting roster, which needs a season.
+CLOSE_CALL_NOTES = os.environ.get("WES_CLOSE_CALL_NOTES", "0") == "1"
+
+
+def _annotate_close_calls(board, index, xwalk, gap=CLOSE_GAP, _now=None):
+    """Attach `notes` to the candidates that are too close to separate.
+
+    Returns how many rows were annotated. Mutates in place because the board
+    rows are the same dicts the caller returns — copying them here would mean
+    two truths about one candidate."""
+    if len(board or []) < 2 or not CLOSE_CALL_NOTES:
+        return 0
+    import wes_notes
+    import wes_snapshot
+    top = board[0]["adj_value"]
+    tied = [c for c in board if top - c["adj_value"] <= gap]
+    if len(tied) < 2:
+        return 0
+    try:
+        hist = wes_snapshot.history()
+    except Exception:  # noqa: BLE001 — notes are a nicety, never a dependency
+        hist = {}
+    for c in tied:
+        info = index.get(str(c.get("player_key"))) or {}
+        espn = info.get("espn_id") or xwalk.get(str(c.get("player_key")))
+        seasons = [tuple(x) for x in hist.get(str(espn), [])] if espn else []
+        pos = (info.get("positions") or [None])[0]
+        team = (info.get("team") or "").strip()
+        # Same club, same position — the only players who can be "ahead of" him.
+        mates = ([t for t in index.values()
+                  if (t.get("team") or "").strip() == team
+                  and (t.get("positions") or [None])[0] == pos]
+                 if team and pos else [])
+        note = wes_notes.notes_for(info, seasons=seasons, teammates=mates,
+                                   now=_now)
+        if note:
+            c["notes"] = note
+    return len(tied)
+
+
 def _handcuff_for(info, my_players):
     """Which player of OURS this candidate backs up, if any.
 
@@ -1190,6 +1251,18 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     board = sorted(best_overall + per_pos,
                    key=lambda x: x["adj_value"], reverse=True)
 
+    # CLOSE CALLS GET DETAIL, and only close calls. Enriching every row made
+    # the local model measurably worse (see the frozen note in
+    # wes_draft_agent) — but when the top candidates sit within a rounding
+    # error of each other the engine has no opinion left to protect, and a
+    # career arc or a depth-chart role is the tiebreak a human would reach
+    # for. Measured on two real drafts: fires on ~70% of picks, but on 2-3
+    # rows rather than all eleven.
+    #
+    # If it destabilises the model it does so precisely where being wrong
+    # costs least, which is what makes it worth trying at all.
+    tied = _annotate_close_calls(board, index, _xwalk)
+
     unfilled = {pos: max(0, n - have.get(pos, 0))
                 for pos, n in targets.items()
                 if max(0, n - have.get(pos, 0)) > 0}
@@ -1235,6 +1308,10 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
         "bye_counts": bye_counts,
         # What the room has been taking lately, so a run is visible as a run.
         "recent_picks_by_position": recent,
+        # How many candidates the engine could not separate. Recorded so a
+        # later review can ask whether the model earned its keep on the picks
+        # that were genuinely close, rather than on the ones that were not.
+        "tied_count": tied,
         # WHICH DRAFT WE ARE IN. Filling starters and building a bench are
         # different problems, and need-based reasoning has nothing left to say
         # once every slot is full: the last seven picks of a clean mock were all

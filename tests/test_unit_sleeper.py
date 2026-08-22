@@ -1459,3 +1459,63 @@ class TestJoinDraft:
             assert False, "should have refused"
         except RuntimeError as e:
             assert "writes are off" in str(e)
+
+
+class TestCloseCallNotes:
+    """Enrichment fires only where the engine cannot separate the candidates,
+    and only when switched on -- it MISSED the bar set before the experiment
+    (agreement with the engine rose on both test drafts), so it ships off."""
+
+    IDX = {"1": {"name": "Alpha", "positions": ["RB"], "team": "KC",
+                 "injury_status": "PUP", "injury_body_part": "Knee",
+                 "age": 24, "years_exp": 2, "depth_chart_order": 2},
+           "2": {"name": "Beta", "positions": ["RB"], "team": "KC",
+                 "age": 30, "years_exp": 9, "depth_chart_order": 1}}
+
+    def _board(self, gap):
+        return [{"player_key": "1", "adj_value": 5.00, "positions": ["RB"]},
+                {"player_key": "2", "adj_value": 5.00 - gap,
+                 "positions": ["RB"]}]
+
+    def test_it_does_nothing_when_switched_off(self, monkeypatch):
+        monkeypatch.setattr(sl, "CLOSE_CALL_NOTES", False)
+        board = self._board(0.1)
+        assert sl._annotate_close_calls(board, self.IDX, {}) == 0
+        assert all("notes" not in c for c in board)
+
+    def test_close_candidates_get_notes(self, monkeypatch):
+        monkeypatch.setattr(sl, "CLOSE_CALL_NOTES", True)
+        board = self._board(0.1)
+        assert sl._annotate_close_calls(board, self.IDX, {}) == 2
+        assert "Knee" in board[0]["notes"]["injury"]
+
+    def test_a_clear_leader_gets_nothing(self, monkeypatch):
+        """No tie, no tiebreak needed -- and the frozen payload stays frozen."""
+        monkeypatch.setattr(sl, "CLOSE_CALL_NOTES", True)
+        board = self._board(5.0)
+        assert sl._annotate_close_calls(board, self.IDX, {}) == 0
+        assert all("notes" not in c for c in board)
+
+    def test_the_depth_chart_note_names_the_man_ahead(self, monkeypatch):
+        monkeypatch.setattr(sl, "CLOSE_CALL_NOTES", True)
+        board = self._board(0.1)
+        sl._annotate_close_calls(board, self.IDX, {})
+        assert "behind Beta" in board[0]["notes"]["role"]
+
+    def test_a_one_player_board_is_not_a_close_call(self, monkeypatch):
+        monkeypatch.setattr(sl, "CLOSE_CALL_NOTES", True)
+        assert sl._annotate_close_calls(
+            [{"player_key": "1", "adj_value": 1.0}], self.IDX, {}) == 0
+
+
+class TestEntryNotesArePayloadSafe:
+    """A row the engine CAN separate keeps the exact frozen payload."""
+
+    def test_an_unannotated_row_is_byte_identical(self):
+        c = {"player_key": "1", "name": "A", "positions": ["RB"], "vor": 1.0}
+        assert agent._entry_with_notes(c) == agent._entry(c)
+
+    def test_an_annotated_row_carries_its_notes(self):
+        c = {"player_key": "1", "name": "A", "positions": ["RB"], "vor": 1.0,
+             "notes": {"role": "RB2 behind X"}}
+        assert agent._entry_with_notes(c)["notes"] == {"role": "RB2 behind X"}

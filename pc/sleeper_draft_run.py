@@ -264,6 +264,11 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             continue
 
         # --- on the clock ---------------------------------------------------
+        # THE CLOCK STARTS HERE. Everything from noticing our turn to the
+        # button being clicked is time we are spending against the pick timer,
+        # and the only honest way to know the margin is to measure it rather
+        # than reason about it.
+        t_turn = now()
         pick_no = state.get("picks_made", 0) + 1
         if pick_no in acted_on:
             # Already submitted for this pick and the API has not caught up.
@@ -274,6 +279,7 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         # Only NOW pay for the board — this is the expensive call, and it is
         # worth seconds here where it was fatal in the poll.
         board = board_fn(league_id, draft_id, roster_id)
+        t_board = now()
         cands = [] if isinstance(board, str) else (board.get("candidates") or [])
         if not cands:
             _log(f"pick {pick_no}: no candidates — standing down, cpu_autopick "
@@ -307,6 +313,7 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         # board was true a moment ago, and a moment is enough for someone to
         # take him; reading a 15s-old pick list here is not a re-check at all.
         taken = wes_sleeper.drafted_player_ids_fresh(draft_id)
+        t_fresh = now()
         cands = [c for c in cands if str(c.get("player_key")) not in taken]
         if not cands:
             _log(f"pick {pick_no}: everyone on the shortlist is gone — "
@@ -316,6 +323,7 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
 
         decision = (_decide_fn or wes_draft_agent.decide_one)(
             cands, context=ctx)
+        t_decide = now()
         pick = decision["candidate"]
         reason, source = decision["reason"], decision["source"]
         if pick is None:
@@ -337,7 +345,15 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         acted_on.add(pick_no)          # marked BEFORE the attempt, deliberately
         try:
             submit(draft_id, pick["player_key"], pick["name"])
+            t_click = now()
             made.append(pick["name"])
+            _log(f"pick {pick_no}: TIMING turn->click {t_click - t_turn:.1f}s "
+                 f"(board {t_board - t_turn:.1f}s, availability "
+                 f"{t_fresh - t_board:.1f}s, model {t_decide - t_fresh:.1f}s, "
+                 f"submit {t_click - t_decide:.1f}s)"
+                 + (f" [{board.get('tied_count')} tied]"
+                    if isinstance(board, dict) and board.get("tied_count")
+                    else ""))
             # The full rationale, not just the sentence: the factors weighed
             # and the player nearly taken are what make a draft reviewable
             # afterwards, and this agent has already been caught narrating a

@@ -82,6 +82,10 @@ SYSTEM = (
     "you pick again — if the room has taken four running backs in the last "
     "twelve picks, the running backs you are looking at will not survive. A "
     "market_rank of null means unranked, NOT ranked last.\n"
+    "Some entries carry `notes` — injury detail, career arc, depth-chart "
+    "role. Those are the ones the board could NOT separate on value, so the "
+    "notes are the tiebreak: a rising 24-year-old starter beats a declining "
+    "30-year-old backup when the numbers are level.\n"
     "KICKERS AND DEFENCES GO LAST. Do not take one before round 12 unless its "
     "value over replacement towers over everything else on the shortlist. "
     "Replacement level at those positions is nearly flat — the 1st kicker is "
@@ -187,6 +191,18 @@ def _entry(c):
         "injury": c.get("injury"),
         "fit_concerns": c.get("fit_reasons") or [],
     }
+
+
+def _entry_with_notes(c):
+    """`_entry`, plus notes when the engine flagged this row as a close call.
+
+    A row the engine CAN separate keeps the exact frozen payload; only the
+    ones it cannot get extra. That is the whole experiment: depth where the
+    decision is live, nothing where it is not."""
+    row = _entry(c)
+    if c.get("notes"):
+        row["notes"] = c["notes"]
+    return row
 
 
 EXPLAIN_SYSTEM = (
@@ -295,7 +311,7 @@ def decide_one(candidates, context=None, _post_fn=None,
         return rec
 
     payload = {"context": context or {},
-               "shortlist": [_entry(c) for c in candidates]}
+               "shortlist": [_entry_with_notes(c) for c in candidates]}
 
     got = _ask_model(payload, _post_fn=_post_fn)
     if not isinstance(got, dict):
