@@ -27,10 +27,17 @@ class FakePage:
     def is_closed(self):
         return self.closed
 
-    def evaluate(self, _js):
+    def evaluate(self, js, arg=None):
         if self.raises:
             raise self.raises
+        # The autopick probe passes a selector; answer "no such control" so
+        # these tests stay about the browser lifecycle, not the toggle.
+        if arg is not None or "checkbox" in str(js):
+            return None
         return self.ok
+
+    def query_selector(self, _sel):
+        return None
 
     def set_viewport_size(self, _s):
         pass

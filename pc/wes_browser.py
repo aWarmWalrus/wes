@@ -84,6 +84,13 @@ class Browser:
             page.goto(f"{wes_sleeper.WEB}/draft/nfl/{self.draft_id}",
                       wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(6000)
+            # Leave the room in a state where WE make the picks. Sleeper turns
+            # AUTO-PICK on by itself after a missed pick and never turns it
+            # back off, so one miss costs the rest of the draft rather than
+            # one pick (2026-08-21).
+            if wes_sleeper.autopick_on(page):
+                wes_sleeper.set_autopick(page, False)
+                self._log("browser: AUTO-PICK was ON — turned it off")
         except BaseException:
             # A half-built session must not be left holding the profile lock.
             try:

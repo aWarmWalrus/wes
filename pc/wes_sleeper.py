@@ -1458,6 +1458,45 @@ def draft_board(league_id, draft_id, roster_id, limit=8, **kw):
     return "\n".join(lines)
 
 
+# The AUTO-PICK toggle. Sleeper turns this ON BY ITSELF the moment you miss a
+# pick, and it STAYS on until somebody clicks it off — so one missed pick does
+# not cost one pick, it costs the rest of the draft. That is what happened on
+# 2026-08-21: pick 1 was lost to a disabled button, autopick engaged, and every
+# later "pick" was Sleeper choosing instantly while our clicks landed on
+# nothing. The loop reported success throughout, because the player it wanted
+# had indeed been drafted — by somebody.
+#
+# Structure mirrors the claim seat: the state is a hidden checkbox and the
+# handler is on the `span.slider` beside it, not on any of the wrappers.
+_AUTOPICK_BOX = ".autopick-toggle-container input[type=checkbox]"
+_AUTOPICK_SLIDER = ".autopick-toggle-container span.slider"
+
+
+def autopick_on(page):
+    """Is our seat set to draft automatically? None if the control is absent."""
+    return page.evaluate(
+        "(sel) => { const c = document.querySelector(sel);"
+        " return c ? !!c.checked : null; }", _AUTOPICK_BOX)
+
+
+def set_autopick(page, on=False, _tries=6):
+    """Force AUTO-PICK to `on`. Returns the state we ended up in.
+
+    Verified by re-reading the checkbox, not by the click landing: this is a
+    control whose whole purpose is to act instead of us, so believing a click
+    we cannot confirm is the worst possible place to be optimistic."""
+    for _ in range(_tries):
+        cur = autopick_on(page)
+        if cur is None or cur == on:
+            return cur
+        slider = page.query_selector(_AUTOPICK_SLIDER)
+        if slider is None:
+            return cur
+        slider.click()
+        page.wait_for_timeout(700)
+    return autopick_on(page)
+
+
 def _click_pick(page, player_name, want):
     """Find the player's ROW and click its draft control.
 

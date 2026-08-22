@@ -1687,3 +1687,64 @@ class TestPickVerificationIsOursOnly:
                            [{"player_id": "77", "draft_slot": 9,
                              "pick_no": 5}], slot=None)
         assert got is True
+
+
+class TestAutopickToggle:
+    """Sleeper turns AUTO-PICK ON BY ITSELF after a missed pick and leaves it
+    on. So one missed pick does not cost one pick -- it costs the rest of the
+    draft, silently, while every click lands on nothing. That is exactly what
+    happened on 2026-08-21 (owner's diagnosis)."""
+
+    class Slider:
+        def __init__(self, state):
+            self.state = state
+            self.clicks = 0
+
+        def click(self):
+            self.clicks += 1
+            self.state["on"] = not self.state["on"]
+
+    class Page:
+        def __init__(self, on, slider=None):
+            self.state = {"on": on}
+            self.slider = slider or TestAutopickToggle.Slider(self.state)
+
+        def evaluate(self, _js, _sel=None):
+            return self.state["on"]
+
+        def query_selector(self, _sel):
+            return self.slider
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+    def test_it_reads_the_state(self):
+        assert sl.autopick_on(self.Page(True)) is True
+        assert sl.autopick_on(self.Page(False)) is False
+
+    def test_turning_it_off_when_it_is_on(self):
+        page = self.Page(True)
+        assert sl.set_autopick(page, False) is False
+        assert page.slider.clicks == 1
+
+    def test_it_does_not_click_when_already_off(self):
+        """Toggling a control that is already right would turn it ON."""
+        page = self.Page(False)
+        assert sl.set_autopick(page, False) is False
+        assert page.slider.clicks == 0
+
+    def test_it_verifies_rather_than_trusting_the_click(self):
+        """A control whose purpose is to act instead of us is the worst place
+        to be optimistic."""
+        page = self.Page(True)
+        page.slider = self.Slider({"on": True})   # click changes nothing real
+        got = sl.set_autopick(page, False, _tries=3)
+        assert got is True, "must report the state it actually ended in"
+        assert page.slider.clicks == 3, "must have kept trying"
+
+    def test_a_missing_control_is_None_not_a_crash(self):
+        class NoControl(TestAutopickToggle.Page):
+            def evaluate(self, _js, _sel=None):
+                return None
+        assert sl.autopick_on(NoControl(False)) is None
+        assert sl.set_autopick(NoControl(False), False) is None
