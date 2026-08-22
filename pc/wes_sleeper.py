@@ -775,22 +775,34 @@ def join_draft(draft_id, username=None, slot=None, _session_cls=None,
     stayed unclaimed and `draft_order` never listed us. A human claimed the
     adjacent seat from the app minutes later without trouble.
 
-    THE DECISIVE MEASUREMENT: watching the network, the click fires **no POST
-    at all**. The app is not attempting the claim and failing — the handler
-    never runs. So this is not a gesture problem to be solved by clicking
-    harder or elsewhere.
+    RULED OUT ON A SECOND INVESTIGATION (2026-08-21), so nobody repeats it:
 
-    Best current theory, unconfirmed: token injection buys a rendered page and
-    the public read API, but the app's own session never loads a draft we have
-    not joined into its store, so the seat renders as a live control while
-    being wired to nothing. The console's
-    `unauthorized_to_send_message` / "could not find the draft" is consistent
-    with that, though it may be unrelated chat noise. Every one of OUR mocks
-    was created in-session, which is why clicking worked there and nowhere
-    else.
+    * **Not the gesture.** Playwright click, real mouse down/up at the
+      element's centre, a dispatched pointer sequence, a dispatched touch
+      sequence, focus+Enter. Five more gestures, zero effect each.
+    * **Not the transport I was watching.** The first pass concluded "fires no
+      POST", which was true but incomplete: Sleeper is a realtime app on
+      `wss://gateway.sleeper.com`. Re-run watching WEBSOCKET frames too —
+      creating a mock flies 21 frames out and 38 back, and the CLAIM click
+      flies ZERO on both wires. The handler really does not run.
+    * **Not an overlay or the duplicate rows.** Both duplicates are visible and
+      the hidden consent modal is not in the way.
+    * **NOT "we are not a participant"** — the standing theory, and it is
+      wrong. In a mock WE created, seats still read CLAIM and clicking them is
+      equally inert.
 
-    Do not spend more clicks on this without a new idea; joining takes a human
-    five seconds in the app, and everything downstream is verified.
+    THE FACT THAT REFRAMES IT: `draft_order` is **null in a mock we created
+    ourselves**, and fills only when the draft STARTS. So in a solo mock the
+    web client never claims a seat into `draft_order` at all, and those CLAIM
+    controls are plausibly invite placeholders with nothing wired behind them —
+    which explains an inert control exactly.
+
+    In the friend's draft `draft_order` DID fill pre-draft as three humans
+    joined, so it works for them. The open question is WHICH CLIENT they used.
+    If that was the phone app, this may not be a bug at all but a control that
+    does not function on web, and the automation path is a dead end.
+
+    STOP CLICKING. The next useful step is information, not another gesture.
 
     The function stays because its FAILURE mode is right: it verifies against
     `draft_order` and refuses rather than reporting a seat we cannot see. That
@@ -843,7 +855,10 @@ def join_draft(draft_id, username=None, slot=None, _session_cls=None,
                 return got
     raise RuntimeError(
         f"clicked a free seat in draft {draft_id} but draft_order still does "
-        f"not list {name} — refusing to report a seat we cannot see")
+        f"not list {name}. This is the KNOWN limitation, not a transient "
+        f"failure: the web CLAIM control fires nothing on either wire (see "
+        f"join_draft's docstring). JOIN IN THE SLEEPER APP, then re-run — "
+        f"everything after joining works.")
 
 
 # The chat lives behind a tab in the draft room and has NO public endpoint —
