@@ -1090,3 +1090,75 @@ is explicitly NOT a failure; Sleeper publishes the order when the draft starts.
 Verified green against the real league: **2026-09-04 13:00 PDT**, 12 teams x 15
 rounds, **600s pick clock** (twenty times the margin the ~20s-per-pick mocks
 ran on), `cpu_autopick` on, roster_id 3.
+
+## The draft button: what is measured, and what is still unknown (2026-08-22)
+
+The agent drafts 15 of 15 on a mock we create and start ourselves. In the
+owner's rooms it has completed ZERO picks unaided. Five explanations were
+proposed and four are now disproved; this records the evidence so the next
+attempt does not re-derive it.
+
+### Disproved
+
+* **"The click is wrong."** It is not. Clicked by hand at a live turn: two
+  POSTs fire and the pick lands in ~15s. The verification window was six
+  attempts at 2.5s and gave up at almost exactly that -- fixed, now twelve.
+* **"The search box reaches unrendered players."** It does not, and this was a
+  real bug. "Amon-Ra St. Brown" returns ZERO rows; "Amon-Ra" returns Montana
+  Lemonious-Craig, an undraftable player whose row is disabled. Replaced with
+  `_scroll_to_row`, which wheels the ReactVirtualized list and is verified
+  against the live DOM.
+* **"A held page goes stale, a fresh one works."** Both read the same at the
+  same instant.
+* **"The session was built before the room opened."** `sleeper_draft_day`
+  waits for status `drafting` BEFORE calling `run()`, so it never is.
+
+### The measurement that matters
+
+Instrumented one turn end to end, sampling every second from page-load through
+our pick (`scratchpad/instrument_turn.py`, trace in `turn_trace.json`):
+
+    t        status     picks  rows  button                 covered  autopick
+    0.0      pre_draft      0    59  draft-button disable   False    False
+    63.4     drafting       0    59  draft-button disable   False    False
+    192.3    drafting      15    59  draft-button disable   False    False
+    289.2    drafting     107    59  draft-button disable   False    False
+
+`rows[0]`'s button read `disable` for the whole 289 seconds -- including while
+it was unambiguously our turn at pick 1, with nothing covering it and autopick
+off.
+
+And yet, minutes later, a freshly loaded page of a comparable room:
+
+    i  name                  button        already drafted?
+    0  Bijan Robinson        draft-button  False
+    ...  (25 of 25 enabled, 0 disabled)
+
+So `disable` is NOT a per-row property and NOT a whose-turn-it-is signal. Two
+pages of the same kind of room, same account, both loaded while `pre_draft`,
+disagree completely.
+
+### What is still unknown
+
+Why one page renders every draft button disabled and another renders them all
+enabled. Candidates not yet tested:
+
+1. **The beta draftboard.** Both rooms show "TRY NEW DRAFTBOARD beta / SWITCH"
+   in the body. If the account is being A/B'd between two draft UIs, the
+   disabled board may simply be a different app with a different gesture.
+2. **Commissioner versus participant.** Every SUCCESSFUL draft was a mock we
+   created; every failure was a room somebody else created. That correlation
+   has held all night and has never been tested directly.
+3. **Presence.** Whether the app considers our seat "connected" may gate the
+   controls, and a headless session may not register the way a real client
+   does.
+
+(2) is the cheapest to test and the most likely: create a mock, have the OWNER
+join and start it, and see whether our buttons render disabled in a room we do
+not own.
+
+### Also unresolved
+
+The `.start-draft-button` click reports success and leaves the draft in
+`pre_draft`. It has worked before, so it is intermittent. Not urgent -- nobody
+needs the agent to start a draft -- but it wasted an experiment tonight.
