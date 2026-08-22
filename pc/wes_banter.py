@@ -134,7 +134,11 @@ class Banter:
     autonomy, so there is one idea to learn rather than two."""
 
     def __init__(self, draft_id, me="awarmwalrus", mode="propose",
-                 min_gap_s=MIN_GAP_S, _now=None):
+                 min_gap_s=MIN_GAP_S, _now=None, browser=None):
+        # An optional held-open browser. Reading the chat cost a full launch
+        # every poll -- ~9s to fetch a handful of messages -- which is what
+        # made the bot feel sluggish in a live room.
+        self.browser = browser
         self.draft_id, self.me, self.mode = draft_id, me, mode
         self.min_gap_s = min_gap_s
         self.seen = set()
@@ -150,7 +154,10 @@ class Banter:
         if self.mode == "off":
             return "quiet", "banter is off"
         try:
-            msgs = (_read_fn or _default_read)(self.draft_id)
+            # An INJECTED reader keeps the simple signature: a test stub
+            # should not have to know this class grew a browser.
+            msgs = (_read_fn(self.draft_id) if _read_fn
+                    else _default_read(self.draft_id, self.browser))
         except Exception as e:  # noqa: BLE001 — chat must never break a draft
             return "error", f"{type(e).__name__}: {e}"
 
@@ -180,7 +187,8 @@ class Banter:
             self.last_sent_at = self._now()   # propose mode is rate-limited too
             return "would_say", f"{line}   <- re: {prompt}"
         try:
-            ok = (_send_fn or _default_send)(self.draft_id, line)
+            ok = (_send_fn(self.draft_id, line) if _send_fn
+                  else _default_send(self.draft_id, line, self.browser))
         except Exception as e:  # noqa: BLE001
             return "error", f"{type(e).__name__}: {e}"
         # The clock starts whether or not it landed: a failing send that is
@@ -190,11 +198,11 @@ class Banter:
         return ("said", detail) if ok else ("send_failed", detail)
 
 
-def _default_read(draft_id):
+def _default_read(draft_id, browser=None):
     import wes_sleeper
-    return wes_sleeper.read_chat(draft_id)
+    return wes_sleeper.read_chat(draft_id, browser=browser)
 
 
-def _default_send(draft_id, text):
+def _default_send(draft_id, text, browser=None):
     import wes_sleeper
-    return wes_sleeper.send_chat(draft_id, text)
+    return wes_sleeper.send_chat(draft_id, text, browser=browser)

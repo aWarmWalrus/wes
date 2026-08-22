@@ -932,21 +932,40 @@ def parse_chat(rows):
     return out
 
 
-def _open_chat(page, draft_id):
-    page.goto(f"{WEB}/draft/nfl/{draft_id}", wait_until="domcontentloaded",
-              timeout=60000)
-    page.wait_for_timeout(9000)
+def _show_chat(page):
+    """Bring the CHAT tab forward on a page ALREADY in the draft room.
+
+    Idempotent: if the panel is up we leave it, so a held-open session does not
+    pay a tab click and a 3s settle on every read."""
+    if page.query_selector("textarea[placeholder='Enter Message']"):
+        return
     tab = next((t for t in page.query_selector_all(".round-tab, .tab")
                 if " ".join((t.inner_text() or "").split()).upper() == "CHAT"),
                None)
     if tab is None:
         raise RuntimeError("no CHAT tab in the draft room")
     tab.click()
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(2000)
 
 
-def read_chat(draft_id, _session_cls=None):
-    """Every message in the draft chat, oldest first. Read-only."""
+def _open_chat(page, draft_id):
+    page.goto(f"{WEB}/draft/nfl/{draft_id}", wait_until="domcontentloaded",
+              timeout=60000)
+    page.wait_for_timeout(9000)
+    _show_chat(page)
+
+
+def read_chat(draft_id, _session_cls=None, browser=None):
+    """Every message in the draft chat, oldest first. Read-only.
+
+    `browser` is an optional wes_browser.Browser holding a page open for the
+    draft. Reading the chat cost a full browser launch every time -- ~9s, paid
+    on almost every poll of the banter loop -- and with a held page it is
+    sub-second. Without one it behaves exactly as before."""
+    if browser is not None:
+        page = browser.page()
+        _show_chat(page)
+        return parse_chat(_chat_rows(page))
     with (_session_cls or _Session)() as page:
         page.set_viewport_size({"width": 1600, "height": 1000})
         if not authenticate(page):
@@ -955,7 +974,7 @@ def read_chat(draft_id, _session_cls=None):
         return parse_chat(_chat_rows(page))
 
 
-def send_chat(draft_id, text, _session_cls=None):
+def send_chat(draft_id, text, _session_cls=None, browser=None):
     """Post one message. True once it is VISIBLE in the panel afterwards.
 
     Verified by re-reading, like every other write here: `join_draft` clicked a
@@ -966,19 +985,29 @@ def send_chat(draft_id, text, _session_cls=None):
         return False
     if not LIVE_WRITES_OK():
         raise RuntimeError("Sleeper writes are off")
+    if browser is not None:
+        page = browser.page()
+        _show_chat(page)
+        return _post_message(page, body)
     with (_session_cls or _Session)() as page:
         page.set_viewport_size({"width": 1600, "height": 1000})
         if not authenticate(page):
             raise RuntimeError("no WES_SLEEPER_TOKEN — cannot reach the draft")
         _open_chat(page, draft_id)
-        box = page.query_selector("textarea[placeholder='Enter Message']")
-        if box is None:
-            raise RuntimeError("no message box in the chat panel")
-        box.click()
-        box.fill(body)
-        page.keyboard.press("Enter")
-        page.wait_for_timeout(3000)
-        return any(m["text"] == body for m in parse_chat(_chat_rows(page)))
+        return _post_message(page, body)
+
+
+def _post_message(page, body):
+    """Type and send, then confirm it is visible. Shared by both paths so the
+    held-open session cannot quietly diverge from the per-call one."""
+    box = page.query_selector("textarea[placeholder='Enter Message']")
+    if box is None:
+        raise RuntimeError("no message box in the chat panel")
+    box.click()
+    box.fill(body)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(2500)
+    return any(m["text"] == body for m in parse_chat(_chat_rows(page)))
 
 
 def drafted_player_ids_fresh(draft_id, _get_fn=None):
@@ -1370,8 +1399,86 @@ def draft_board(league_id, draft_id, roster_id, limit=8, **kw):
     return "\n".join(lines)
 
 
+def _click_pick(page, player_name, want):
+    """Find the player's ROW and click its draft control.
+
+    Shared by the per-call and held-open paths. Moved here verbatim
+    rather than duplicated: a fix applied to one copy and not the
+    other is precisely how the held-open path would diverge from the
+    behaviour that is actually tested."""
+    # WAIT FOR THE LIST TO EXIST, don't assume a fixed 6s is enough. An
+    # unrendered list and an absent player look identical to a query
+    # selector, and reading the first as the second cost a pick: Amon-Ra St.
+    # Brown was declared gone on the run's first (slowest) page load and
+    # taken by us one pick later, so he had plainly been there all along
+    # (2026-08-15).
+    try:
+        page.wait_for_selector(".player-rank-item2", timeout=25000)
+    except Exception:  # noqa: BLE001 — turned into a clearer error below
+        pass
+    page.wait_for_timeout(1500)   # let the rest of the window paint
+
+    def _find_row():
+        for r in page.query_selector_all(".player-rank-item2"):
+            nm = r.query_selector(".name-wrapper")
+            first = (nm.inner_text() or "").split("\n")[0] if nm else ""
+            if nm and _norm_name(first) == want:
+                return r
+        return None
+
+    row = _find_row()
+    if row is None:
+        # THE LIST IS WINDOWED — roughly 59 rows render at a time, ordered
+        # by Sleeper's own ranking. A player we rate highly can sit far
+        # outside that window and be perfectly available while simply not
+        # drawn: a kicker failed seven times in one draft for exactly this,
+        # never having been taken at all (2026-08-15). The search box is how
+        # a human reaches him, so use it before concluding anything.
+        box = page.query_selector("input[placeholder*='Find player']")
+        if box is not None:
+            box.click()
+            box.fill(player_name)
+            page.wait_for_timeout(2500)
+            row = _find_row()
+    if row is None:
+        # TWO CAUSES, and only one of them means "pick someone else". If the
+        # list is empty the draft room never rendered and we know NOTHING
+        # about this player — saying "he is gone" there is a guess, and the
+        # caller substitutes on it.
+        if not page.query_selector_all(".player-rank-item2"):
+            raise RuntimeError(
+                "the draft room's player list never rendered — cannot tell "
+                "whether anyone is available; refusing to pick blind")
+        raise RuntimeError(
+            f"{player_name!r} is not available in the draft room even "
+            f"after searching — he has most likely just been taken. "
+            f"Refusing to click a different row")
+
+    btn = row.query_selector(".draft-button")
+    if btn is None:
+        raise RuntimeError(f"no draft control on {player_name}'s row")
+    if "disable" in (btn.get_attribute("class") or ""):
+        raise RuntimeError(
+            "the draft button is disabled — not on the clock, so a click "
+            "would do nothing and we would report a pick that never was")
+    btn.scroll_into_view_if_needed()
+    page.wait_for_timeout(300)
+    btn.click()
+    page.wait_for_timeout(1500)
+
+    # START DRAFT opens a confirmation modal; assume this does too rather
+    # than rediscovering it the expensive way (2026-08-15).
+    for sel in ("button:has-text('Confirm')", "button:has-text('Draft')",
+                "[class*='confirm'] button", "[class*='modal'] button"):
+        el = page.query_selector(sel)
+        if el and el.is_visible():
+            el.click()
+            break
+    page.wait_for_timeout(3000)
+
+
 def submit_pick(draft_id, player_key, player_name, _session_cls=None,
-                _picks_fn=None, _sleep_fn=None):
+                _picks_fn=None, _sleep_fn=None, browser=None):
     """Draft ONE player in the live draft room. Raises on any doubt.
 
     THE ID/NAME SEAM, and why this verifies afterwards. The engine reasons in
@@ -1398,80 +1505,20 @@ def submit_pick(draft_id, player_key, player_name, _session_cls=None,
         raise RuntimeError("Sleeper writes are off")
 
     want = _norm_name(player_name)
-    with (_session_cls or _Session)() as page:
-        if not authenticate(page):
-            raise RuntimeError("no WES_SLEEPER_TOKEN — cannot reach the draft")
-        page.goto(f"{WEB}/draft/nfl/{draft_id}",
-                  wait_until="domcontentloaded", timeout=60000)
-        # WAIT FOR THE LIST TO EXIST, don't assume a fixed 6s is enough. An
-        # unrendered list and an absent player look identical to a query
-        # selector, and reading the first as the second cost a pick: Amon-Ra St.
-        # Brown was declared gone on the run's first (slowest) page load and
-        # taken by us one pick later, so he had plainly been there all along
-        # (2026-08-15).
-        try:
-            page.wait_for_selector(".player-rank-item2", timeout=25000)
-        except Exception:  # noqa: BLE001 — turned into a clearer error below
-            pass
-        page.wait_for_timeout(1500)   # let the rest of the window paint
-
-        def _find_row():
-            for r in page.query_selector_all(".player-rank-item2"):
-                nm = r.query_selector(".name-wrapper")
-                first = (nm.inner_text() or "").split("\n")[0] if nm else ""
-                if nm and _norm_name(first) == want:
-                    return r
-            return None
-
-        row = _find_row()
-        if row is None:
-            # THE LIST IS WINDOWED — roughly 59 rows render at a time, ordered
-            # by Sleeper's own ranking. A player we rate highly can sit far
-            # outside that window and be perfectly available while simply not
-            # drawn: a kicker failed seven times in one draft for exactly this,
-            # never having been taken at all (2026-08-15). The search box is how
-            # a human reaches him, so use it before concluding anything.
-            box = page.query_selector("input[placeholder*='Find player']")
-            if box is not None:
-                box.click()
-                box.fill(player_name)
-                page.wait_for_timeout(2500)
-                row = _find_row()
-        if row is None:
-            # TWO CAUSES, and only one of them means "pick someone else". If the
-            # list is empty the draft room never rendered and we know NOTHING
-            # about this player — saying "he is gone" there is a guess, and the
-            # caller substitutes on it.
-            if not page.query_selector_all(".player-rank-item2"):
+    if browser is not None:
+        # A held page is already in the draft room, but RELOAD it first: the
+        # available list is the one thing a long-lived page cannot be trusted
+        # about, and picking off a stale list is the whole class of bug this
+        # module keeps paying for.
+        _click_pick(browser.refresh(), player_name, want)
+    else:
+        with (_session_cls or _Session)() as page:
+            if not authenticate(page):
                 raise RuntimeError(
-                    "the draft room's player list never rendered — cannot tell "
-                    "whether anyone is available; refusing to pick blind")
-            raise RuntimeError(
-                f"{player_name!r} is not available in the draft room even "
-                f"after searching — he has most likely just been taken. "
-                f"Refusing to click a different row")
-
-        btn = row.query_selector(".draft-button")
-        if btn is None:
-            raise RuntimeError(f"no draft control on {player_name}'s row")
-        if "disable" in (btn.get_attribute("class") or ""):
-            raise RuntimeError(
-                "the draft button is disabled — not on the clock, so a click "
-                "would do nothing and we would report a pick that never was")
-        btn.scroll_into_view_if_needed()
-        page.wait_for_timeout(300)
-        btn.click()
-        page.wait_for_timeout(1500)
-
-        # START DRAFT opens a confirmation modal; assume this does too rather
-        # than rediscovering it the expensive way (2026-08-15).
-        for sel in ("button:has-text('Confirm')", "button:has-text('Draft')",
-                    "[class*='confirm'] button", "[class*='modal'] button"):
-            el = page.query_selector(sel)
-            if el and el.is_visible():
-                el.click()
-                break
-        page.wait_for_timeout(3000)
+                    "no WES_SLEEPER_TOKEN — cannot reach the draft")
+            page.goto(f"{WEB}/draft/nfl/{draft_id}",
+                      wait_until="domcontentloaded", timeout=60000)
+            _click_pick(page, player_name, want)
 
     # Verify by ID — the only thing that closes the name-matching gap.
     #

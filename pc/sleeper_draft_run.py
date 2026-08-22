@@ -36,6 +36,7 @@ import sys
 import time
 
 import wes_banter
+import wes_browser
 import wes_draft
 import wes_draft_agent
 import wes_execute
@@ -139,6 +140,15 @@ def _roster_line(board_fn, league_id, draft_id, roster_id):
         return "roster unknown"
 
 
+def _shut(browser, log):
+    """Close the held session and say what it cost. The counters are the only
+    evidence of whether holding a page for two hours was a good idea."""
+    if browser is None:
+        return
+    log(f"browser: {browser.stats()}")
+    browser.close()
+
+
 def _banter_context(draft_id, league_id, roster_id, state, wait, board_fn):
     """What the room actually looks like, for trash talk that lands.
 
@@ -213,8 +223,19 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     # Banter shares this process ON PURPOSE. The Chrome profile is a persistent
     # singleton, so a second process reading the chat would collide with the
     # one submitting picks. Only touched when we are NOT on the clock.
+    # ONE BROWSER for the whole draft. Chat was paying a ~9s launch on
+    # almost every poll to fetch a handful of messages; a held page makes a
+    # read sub-second. It recycles itself on a failed health check, and every
+    # caller degrades to a per-call session if it cannot be built -- a speed
+    # optimisation must never be able to stop a draft.
+    browser = None
+    if banter_mode != "off":
+        try:
+            browser = wes_browser.Browser(draft_id, _log=_log)
+        except Exception as e:  # noqa: BLE001
+            _log(f"browser: could not hold a session ({e}); per-call it is")
     chat = _banter if _banter is not None else wes_banter.Banter(
-        draft_id, mode=banter_mode,
+        draft_id, mode=banter_mode, browser=browser,
         min_gap_s=wes_banter.MIN_GAP_S if banter_gap is None else banter_gap)
 
     started = now()
@@ -224,12 +245,14 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
 
     while True:
         if now() - started > max_seconds:
+            _shut(browser, _log)
             return f"stopped after {max_seconds}s; made {len(made)} pick(s)"
 
         state = turn_fn(draft_id, roster_id)
         if isinstance(state, str):
             # Includes the normal end condition ("that draft is over").
             if "over" in state.lower():
+                _shut(browser, _log)
                 return f"draft finished; made {len(made)} pick(s)"
             _log(f"state unavailable: {state}")
             sleep(POLL_FAR_S)
@@ -237,6 +260,7 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
 
         wait = state.get("picks_until_turn")
         if wait is None:
+            _shut(browser, _log)
             return f"our draft is done; made {len(made)} pick(s)"
         # A HEARTBEAT, so the log says something between picks. Without it the
         # gap between our turns is indistinguishable from a hung process --
