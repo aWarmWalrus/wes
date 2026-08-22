@@ -244,9 +244,15 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     # alive, which fails with "Sync API inside the asyncio loop" and forfeits
     # the pick. Wrapped rather than passed positionally so injected test stubs
     # keep their three-argument signature.
-    if _submit_fn is None and browser is not None:
+    # OUR SLOT reaches submit_pick so its verification can require that WE
+    # made the pick. Without it, another manager taking the same player
+    # satisfies the check and a missed click reports success.
+    _slot_holder = {"slot": None}
+
+    if _submit_fn is None:
         def submit(d, key, name):
-            return _raw_submit(d, key, name, browser=browser)
+            return _raw_submit(d, key, name, browser=browser,
+                               slot=_slot_holder["slot"])
     else:
         submit = _raw_submit
 
@@ -274,6 +280,7 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             sleep(POLL_FAR_S)
             continue
 
+        _slot_holder["slot"] = state.get("my_slot")
         wait = state.get("picks_until_turn")
         if wait is None:
             _shut(browser, _log)

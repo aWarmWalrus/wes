@@ -375,6 +375,11 @@ def _can_play(info):
 # Adjusted-value distance from the leader within which candidates count as
 # "similar". 0.75 fires on ~70% of picks with 2-3 rows tied; tighten it to make
 # enrichment rarer. Tuned on evidence, not taste — see tests/draft_replay.py.
+# How long to wait for the draft button to enable once we believe it is our
+# turn. Comfortably inside any real clock (120s in mocks, 600s on draft day)
+# and far longer than the socket needs.
+ENABLE_WAIT_TRIES = 20
+
 CLOSE_GAP = 0.75
 
 # OFF BY DEFAULT, on evidence rather than caution. Measured on two real drafts
@@ -1512,9 +1517,26 @@ def _click_pick(page, player_name, want):
     if btn is None:
         raise RuntimeError(f"no draft control on {player_name}'s row")
     if "disable" in (btn.get_attribute("class") or ""):
-        raise RuntimeError(
-            "the draft button is disabled — not on the clock, so a click "
-            "would do nothing and we would report a pick that never was")
+        # WAIT FOR IT TO ENABLE, do not sample it once. The button is disabled
+        # until the room has been told over its socket that it is our turn, and
+        # a page loaded seconds earlier has not heard yet. Checking once cost
+        # pick 1 of a live draft to cpu_autopick while it genuinely WAS our
+        # turn (2026-08-21).
+        #
+        # The refusal below still stands, and still matters -- clicking a
+        # disabled control reports a pick that never happened. This only
+        # distinguishes "not yet" from "not ours", which is the same
+        # unrendered-versus-absent distinction that has bitten twice already.
+        for _ in range(ENABLE_WAIT_TRIES):
+            page.wait_for_timeout(1000)
+            btn = row.query_selector(".draft-button") or btn
+            if "disable" not in (btn.get_attribute("class") or ""):
+                break
+        else:
+            raise RuntimeError(
+                "the draft button is still disabled after "
+                f"{ENABLE_WAIT_TRIES}s — not on the clock, so a click would "
+                "do nothing and we would report a pick that never was")
     btn.scroll_into_view_if_needed()
     page.wait_for_timeout(300)
     btn.click()
@@ -1532,7 +1554,7 @@ def _click_pick(page, player_name, want):
 
 
 def submit_pick(draft_id, player_key, player_name, _session_cls=None,
-                _picks_fn=None, _sleep_fn=None, browser=None):
+                _picks_fn=None, _sleep_fn=None, browser=None, slot=None):
     """Draft ONE player in the live draft room. Raises on any doubt.
 
     THE ID/NAME SEAM, and why this verifies afterwards. The engine reasons in
@@ -1590,9 +1612,25 @@ def submit_pick(draft_id, player_key, player_name, _session_cls=None,
         if attempt:
             (_sleep_fn or time.sleep)(2.5)
         picks = (_picks_fn or _draft_picks_uncached)(draft_id) or []
-        got = {str(p.get("player_id")) for p in picks if p.get("player_id")}
-        if str(player_key) in got:
-            return True
+        # BY US, not by anyone. The first version asked only whether the player
+        # appeared in the pick list at all, so when our click missed and
+        # ANOTHER MANAGER took him two picks later, it read their pick as ours
+        # and reported success. Observed live: the log said "DRAFTED Trey
+        # McBride" while McBride went to slot 3 at pick 23 and our pick 21 was
+        # Lamar Jackson (2026-08-21).
+        #
+        # This is the check that was supposed to close the name-matching gap,
+        # and a check that can be satisfied by someone else's action closes
+        # nothing.
+        for pk in picks:
+            if str(pk.get("player_id")) != str(player_key):
+                continue
+            if slot is None or int(pk.get("draft_slot") or -1) == int(slot):
+                return True
+            raise RuntimeError(
+                f"{player_name!r} was drafted, but by slot "
+                f"{pk.get('draft_slot')} at pick {pk.get('pick_no')} — not by "
+                f"us (slot {slot}). Our click did not land.")
     raise RuntimeError(
         f"clicked {player_name!r} but {player_key} never appeared in the "
         f"draft's picks after ~15s — check the draft room before assuming "

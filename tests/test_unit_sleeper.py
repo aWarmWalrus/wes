@@ -1629,3 +1629,61 @@ class TestPerAccountToken:
         monkeypatch.delenv("WES_SLEEPER_TOKEN_NOBODY", raising=False)
         monkeypatch.setattr(sl.os, "name", "posix")
         assert sl._read_token("nobody") == ""
+
+
+class TestPickVerificationIsOursOnly:
+    """A check that ANOTHER MANAGER can satisfy verifies nothing.
+
+    Observed live 2026-08-21: the loop logged "DRAFTED Trey McBride" while
+    McBride went to slot 3 at pick 23 and our own pick 21 was Lamar Jackson.
+    Our click had missed; the owner took the same player two picks later; the
+    verification saw the id in the pick list and called it ours."""
+
+    def _submit(self, monkeypatch, picks, slot):
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        monkeypatch.setattr(sl, "_click_pick", lambda *a, **k: None)
+
+        class S:
+            def __enter__(_s):
+                return TestWindowedList.Page(TestWindowedList.Box(),
+                                             lambda: [])
+
+            def __exit__(_s, *a):
+                return False
+        return sl.submit_pick("D", "77", "Target Guy", _session_cls=S,
+                              _picks_fn=lambda d: picks, _sleep_fn=lambda x: None,
+                              slot=slot)
+
+    def test_our_own_pick_verifies(self, monkeypatch):
+        got = self._submit(monkeypatch,
+                           [{"player_id": "77", "draft_slot": 4,
+                             "pick_no": 20}], slot=4)
+        assert got is True
+
+    def test_ANOTHER_managers_pick_is_refused(self, monkeypatch):
+        """The live bug, pinned."""
+        try:
+            self._submit(monkeypatch,
+                         [{"player_id": "77", "draft_slot": 3, "pick_no": 23}],
+                         slot=1)
+            assert False, "must not report someone else's pick as ours"
+        except RuntimeError as e:
+            assert "not by us" in str(e) and "slot 3" in str(e)
+
+    def test_it_still_waits_when_the_pick_has_not_landed_yet(self,
+                                                             monkeypatch):
+        try:
+            self._submit(monkeypatch, [], slot=1)
+            assert False, "should have raised"
+        except RuntimeError as e:
+            assert "never appeared" in str(e)
+
+    def test_without_a_slot_it_falls_back_to_the_old_looser_check(self,
+                                                                 monkeypatch):
+        """Callers that cannot know their slot are not broken by this, but the
+        draft loop always passes one."""
+        got = self._submit(monkeypatch,
+                           [{"player_id": "77", "draft_slot": 9,
+                             "pick_no": 5}], slot=None)
+        assert got is True
