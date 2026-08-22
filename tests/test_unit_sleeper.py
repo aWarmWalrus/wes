@@ -1346,8 +1346,16 @@ class TestSeatInAnyDraft:
 
 
 class TestJoinDraft:
-    """Our own mocks were joined implicitly by creating them, so claiming a
-    seat in a stranger's draft was never exercised until it was needed."""
+    """Two real bugs, both found the hard way (2026-08-21).
+
+    THE CLICK went to `.header-button`, the wrapper. The onclick is on its
+    grandchild `.claim-text`. Eleven gestures across two investigations were
+    all aimed at an element with no handler, and every null result sent me
+    hunting a more exotic cause.
+
+    THE VERIFICATION used `draft_order`, which lags the claim by over a
+    minute -- so it reported failure on a seat we already held, and the first
+    fix for that reintroduced double-claiming at the other end."""
 
     class Btn:
         def __init__(self):
@@ -1357,14 +1365,22 @@ class TestJoinDraft:
             self.clicked = True
 
     class Seat:
-        def __init__(self, label, btn):
-            self.label, self.btn = label, btn
+        """A seat whose handler lives on .claim-text, like the real one."""
+
+        def __init__(self, label, claim=None, wrapper=None):
+            self.label = label
+            self._claim = claim
+            self._wrapper = wrapper
 
         def inner_text(self):
             return self.label
 
-        def query_selector(self, _sel):
-            return self.btn
+        def query_selector(self, sel):
+            if sel == ".claim-text":
+                return self._claim
+            if sel == ".header-button":
+                return self._wrapper
+            return None
 
     class Page:
         def __init__(self, seats):
@@ -1388,69 +1404,86 @@ class TestJoinDraft:
                 return False
         return S
 
-    def test_already_in_it_returns_the_seat_without_clicking(self, monkeypatch):
-        """Re-running must not claim a SECOND seat."""
-        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
-        btn = self.Btn()
-        page = self.Page([self.Seat("CLAIM Team 3", btn)])
-        got = sl.join_draft("D", _session_cls=self._session(page),
-                            _slot_fn=lambda d, n: 2, _sleep_fn=lambda _s: None)
-        assert got == 2 and btn.clicked is False
-
-    def test_it_claims_a_free_seat(self, monkeypatch):
+    def test_it_clicks_the_element_that_has_the_handler(self, monkeypatch):
+        """.header-button has no onclick; clicking it is why this never
+        worked."""
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
         monkeypatch.setattr(sl, "authenticate", lambda p: True)
-        btn = self.Btn()
-        page = self.Page([self.Seat("johannhof", self.Btn()),
-                          self.Seat("CLAIM Team 3", btn)])
-        seen = iter([None, None, 3])
-        got = sl.join_draft("D", _session_cls=self._session(page),
-                            _slot_fn=lambda d, n: next(seen),
+        claim, wrapper = self.Btn(), self.Btn()
+        seats = [self.Seat("Someone", None, None), self.Seat("Someone"),
+                 self.Seat("CLAIM Team 2", claim, wrapper),
+                 self.Seat("CLAIM Team 2", claim, wrapper)]
+
+        def after_click():
+            seats[2].label = seats[3].label = "awarmwalrus"
+        claim.click = lambda: (setattr(claim, "clicked", True), after_click())
+        got = sl.join_draft("D", _session_cls=self._session(self.Page(seats)),
+                            _slot_fn=lambda d, n: None,
                             _sleep_fn=lambda _s: None)
-        assert got == 3 and btn.clicked
+        assert claim.clicked and not wrapper.clicked
+        assert got == 2
+
+    def test_already_seated_is_detected_from_the_DOM_not_the_api(
+            self, monkeypatch):
+        """draft_order lags by over a minute; a re-run inside that window
+        claimed a SECOND seat."""
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        monkeypatch.setattr(sl, "authenticate", lambda p: True)
+        claim = self.Btn()
+        seats = [self.Seat("awarmwalrus"), self.Seat("awarmwalrus"),
+                 self.Seat("CLAIM Team 2", claim)]
+        got = sl.join_draft("D", _session_cls=self._session(self.Page(seats)),
+                            _slot_fn=lambda d, n: None,   # API still blind
+                            _sleep_fn=lambda _s: None)
+        assert got == 1
+        assert not claim.clicked, "must not claim a second seat"
+
+    def test_the_api_shortcut_still_works_when_it_has_caught_up(self,
+                                                                monkeypatch):
+        monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
+        got = sl.join_draft("D", _slot_fn=lambda d, n: 5,
+                            _sleep_fn=lambda _s: None)
+        assert got == 5
 
     def test_it_can_target_a_named_seat(self, monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
         monkeypatch.setattr(sl, "authenticate", lambda p: True)
         three, four = self.Btn(), self.Btn()
-        page = self.Page([self.Seat("CLAIM Team 3", three),
-                          self.Seat("CLAIM Team 4", four)])
-        seen = iter([None, None, 4])
-        sl.join_draft("D", slot=4, _session_cls=self._session(page),
-                      _slot_fn=lambda d, n: next(seen),
-                      _sleep_fn=lambda _s: None)
+        seats = [self.Seat("CLAIM Team 3", three),
+                 self.Seat("CLAIM Team 3", three),
+                 self.Seat("CLAIM Team 4", four),
+                 self.Seat("CLAIM Team 4", four)]
+
+        def took():
+            seats[2].label = seats[3].label = "awarmwalrus"
+        four.click = lambda: (setattr(four, "clicked", True), took())
+        sl.join_draft("D", slot=4, _session_cls=self._session(self.Page(seats)),
+                      _slot_fn=lambda d, n: None, _sleep_fn=lambda _s: None)
         assert four.clicked and not three.clicked
 
     def test_a_full_draft_refuses_rather_than_clicking_something_else(
             self, monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
         monkeypatch.setattr(sl, "authenticate", lambda p: True)
-        other = self.Btn()
-        page = self.Page([self.Seat("johannhof", other)])
+        page = self.Page([self.Seat("johannhof"), self.Seat("aykutb")])
         try:
             sl.join_draft("D", _session_cls=self._session(page),
-                          _slot_fn=lambda d, n: None,
-                          _sleep_fn=lambda _s: None)
+                          _slot_fn=lambda d, n: None, _sleep_fn=lambda _s: None)
             assert False, "should have refused"
         except RuntimeError as e:
             assert "no free seat" in str(e)
-        assert other.clicked is False
 
     def test_a_click_that_does_not_take_is_reported_as_failure(self,
                                                               monkeypatch):
-        """Verified by the API, never by the click. Trusting a click that did
-        not throw is how a pick was reported successful while the draft room
-        had ignored it (2026-08-15)."""
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
         monkeypatch.setattr(sl, "authenticate", lambda p: True)
-        page = self.Page([self.Seat("CLAIM Team 3", self.Btn())])
+        page = self.Page([self.Seat("CLAIM Team 2", self.Btn())])
         try:
             sl.join_draft("D", _session_cls=self._session(page),
-                          _slot_fn=lambda d, n: None,
-                          _sleep_fn=lambda _s: None)
+                          _slot_fn=lambda d, n: None, _sleep_fn=lambda _s: None)
             assert False, "should have refused"
         except RuntimeError as e:
-            assert "still does not list" in str(e)
+            assert "did not take" in str(e)
 
     def test_writes_off_means_no_seat_is_claimed(self, monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: False)

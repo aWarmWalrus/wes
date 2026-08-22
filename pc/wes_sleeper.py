@@ -760,53 +760,32 @@ def join_draft(draft_id, username=None, slot=None, _session_cls=None,
                _slot_fn=None, _sleep_fn=None):
     """Claim a free seat in a draft someone else created. Returns the slot.
 
-    **NOT PROVEN AGAINST A LIVE DRAFT — see the caveat below.** Use the Sleeper
-    app to join, then point the loop at the draft id.
+    THE BUG, AND WHY IT TOOK TWO INVESTIGATIONS (2026-08-21)
 
-    Our own mocks were joined implicitly by creating them, so this gesture was
-    never exercised until asked to join a stranger's board. An empty seat
-    renders as a `.draft-user-header` whose button reads "CLAIM Team N";
-    occupied seats carry the owner's display name instead.
+    An empty seat renders as a `.draft-user-header` containing a
+    `.header-button` wrapper, which contains `.claim-text` ("CLAIM") and
+    `.header-text` ("Team 3"). **The onclick is on `.claim-text`. The wrapper
+    has none.**
 
-    WHAT ACTUALLY HAPPENED WHEN TRIED (2026-08-21, draft 1396622287322509312).
-    Six gestures, all clean, all inert: the inner button, the header, a JS
-    click bypassing hit-testing, the second of the two overlapping duplicates,
-    a real mouse click at its centre, and a Playwright text selector. The seat
-    stayed unclaimed and `draft_order` never listed us. A human claimed the
-    adjacent seat from the app minutes later without trouble.
+    Eleven gestures were aimed at the wrapper across two sessions -- Playwright
+    click, the header itself, a JS click bypassing hit-testing, the second of
+    the two overlapping duplicates, a real mouse click at its centre, a text
+    selector, a dispatched pointer sequence, a dispatched touch sequence,
+    focus+Enter. Every one was correctly ignored by an element with no handler,
+    and each null result sent me looking for a more exotic cause: an overlay,
+    React Native Web's responder system, a websocket transport, an
+    authorisation state that only real logins get. All wrong.
 
-    RULED OUT ON A SECOND INVESTIGATION (2026-08-21), so nobody repeats it:
+    What found it in seconds was reading `el.onclick` across the seat's
+    descendants instead of theorising about why the click "did not land". The
+    lesson is cheap and I paid full price for it: when a click does nothing,
+    ask the DOM which element is listening before asking why the event failed.
 
-    * **Not the gesture.** Playwright click, real mouse down/up at the
-      element's centre, a dispatched pointer sequence, a dispatched touch
-      sequence, focus+Enter. Five more gestures, zero effect each.
-    * **Not the transport I was watching.** The first pass concluded "fires no
-      POST", which was true but incomplete: Sleeper is a realtime app on
-      `wss://gateway.sleeper.com`. Re-run watching WEBSOCKET frames too —
-      creating a mock flies 21 frames out and 38 back, and the CLAIM click
-      flies ZERO on both wires. The handler really does not run.
-    * **Not an overlay or the duplicate rows.** Both duplicates are visible and
-      the hidden consent modal is not in the way.
-    * **NOT "we are not a participant"** — the standing theory, and it is
-      wrong. In a mock WE created, seats still read CLAIM and clicking them is
-      equally inert.
-
-    THE FACT THAT REFRAMES IT: `draft_order` is **null in a mock we created
-    ourselves**, and fills only when the draft STARTS. So in a solo mock the
-    web client never claims a seat into `draft_order` at all, and those CLAIM
-    controls are plausibly invite placeholders with nothing wired behind them —
-    which explains an inert control exactly.
-
-    In the friend's draft `draft_order` DID fill pre-draft as three humans
-    joined, so it works for them. The open question is WHICH CLIENT they used.
-    If that was the phone app, this may not be a bug at all but a control that
-    does not function on web, and the automation path is a dead end.
-
-    STOP CLICKING. The next useful step is information, not another gesture.
-
-    The function stays because its FAILURE mode is right: it verifies against
-    `draft_order` and refuses rather than reporting a seat we cannot see. That
-    is what stopped this being recorded as a successful join.
+    THE SECOND HALF: `draft_order` is EVENTUALLY consistent. The seat renders
+    as ours immediately, the API can still say nothing for some seconds. The
+    original 20s verification window reported failure on a claim that had
+    actually succeeded -- so even after the click was fixed, this would have
+    looked broken.
 
     ALREADY IN IT IS A SUCCESS, NOT AN ERROR. Re-running must not claim a
     second seat, so the existing slot is checked first and returned unchanged.
@@ -833,11 +812,32 @@ def join_draft(draft_id, username=None, slot=None, _session_cls=None,
                   wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(9000)
 
+        def _labels():
+            return [" ".join((h.inner_text() or "").split())
+                    for h in page.query_selector_all(".draft-user-header")]
+
+        # ALREADY SEATED? ASK THE DOM, NOT THE API. The cheap check above uses
+        # `draft_order`, which lags the claim by over a minute — so a re-run
+        # inside that window sailed past it and claimed a SECOND seat. That is
+        # the one outcome this function exists to prevent, and the first fix
+        # for the lag reintroduced it at the other end.
+        held = [i for i, t in enumerate(_labels()) if t.lower() == name.lower()]
+        if held:
+            return held[0] // 2 + 1
+
         seat = None
         for h in page.query_selector_all(".draft-user-header"):
             txt = " ".join((h.inner_text() or "").split()).upper()
             if txt.startswith(want):
-                seat = h.query_selector(".header-button")
+                # THE HANDLER IS ON `.claim-text`, NOT on the `.header-button`
+                # wrapper. That single fact is the whole bug: eleven gestures
+                # across two investigations were all aimed at the wrapper,
+                # which has no onclick, so every one of them was correctly
+                # ignored. Reading `el.onclick` on the seat's descendants
+                # found it in seconds after hours of clicking harder.
+                seat = (h.query_selector(".claim-text")
+                        or h.query_selector(".header-text")
+                        or h.query_selector(".header-button"))
                 if seat:
                     break
         if seat is None:
@@ -848,17 +848,29 @@ def join_draft(draft_id, username=None, slot=None, _session_cls=None,
 
         # Poll the API rather than the DOM. The seat is ours when Sleeper says
         # so, and only then.
+        #
+        # PATIENTLY, though: `draft_order` is EVENTUALLY consistent. The seat
+        # renders as ours immediately and the API can still say nothing for
+        # some seconds afterwards — which is the second half of this bug. The
+        # original 20s window reported failure on a claim that had in fact
+        # succeeded, and a false failure here invites a human to claim a
+        # second seat.
+        # THE DOM IS THE AUTHORITY FOR "did the click land", and the API is
+        # not. Measured: a claim that renders instantly took over 73 seconds to
+        # appear in `draft_order`, so an API-only check reported failure on a
+        # seat we already held — and a false failure here invites a second
+        # claim, which is the one outcome worth avoiding.
         for _ in range(10):
-            sleep(2)
-            got = slot_fn(draft_id, name)
-            if got:
-                return got
-    raise RuntimeError(
-        f"clicked a free seat in draft {draft_id} but draft_order still does "
-        f"not list {name}. This is the KNOWN limitation, not a transient "
-        f"failure: the web CLAIM control fires nothing on either wire (see "
-        f"join_draft's docstring). JOIN IN THE SLEEPER APP, then re-run — "
-        f"everything after joining works.")
+            page.wait_for_timeout(1500)
+            mine = [i for i, t in enumerate(_labels())
+                    if t.lower() == name.lower()]
+            if mine:
+                # Seats render as an adjacent PAIR per team, so the team number
+                # is the index halved and one-based.
+                return mine[0] // 2 + 1
+        raise RuntimeError(
+            f"clicked the free seat in draft {draft_id} but no seat shows "
+            f"{name} — the claim did not take")
 
 
 # The chat lives behind a tab in the draft room and has NO public endpoint —
