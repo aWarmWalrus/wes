@@ -1668,7 +1668,17 @@ def submit_pick(draft_id, player_key, player_name, _session_cls=None,
     # A false "did it work?" is worse here than a slow yes: it invites a human
     # into a live draft to fix something that is not broken, and the obvious
     # fix (pick again) drafts twice.
-    for attempt in range(6):
+    # TWELVE attempts, not six. Sleeper commits a pick in about fifteen
+    # seconds, and six attempts at 2.5s gave up at almost exactly that -- so a
+    # pick that WORKED was reported as failed, the loop stood down, and
+    # cpu_autopick took a turn we had already won. Measured by hand at the
+    # moment of a live click: two POSTs fired and the pick appeared at ~15s
+    # (2026-08-22).
+    #
+    # Waiting longer is cheap (30s against a 300-600s clock) and no longer
+    # risky: verification requires the pick's draft_slot to be OURS, so a
+    # patient check cannot be satisfied by somebody else's pick.
+    for attempt in range(12):
         if attempt:
             (_sleep_fn or time.sleep)(2.5)
         picks = (_picks_fn or _draft_picks_uncached)(draft_id) or []

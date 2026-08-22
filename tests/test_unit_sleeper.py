@@ -647,7 +647,11 @@ class TestVerificationIsPolled:
             assert False, "should have raised"
         except RuntimeError:
             pass
-        assert calls["n"] == 6      # bounded, not infinite
+        # Bounded, not infinite -- but generous. Six attempts gave up at ~15s,
+        # which is almost exactly how long Sleeper takes to commit, so a pick
+        # that HAD worked was reported failed and the loop stood down
+        # (2026-08-22, measured at the moment of a live click).
+        assert calls["n"] == 12
 
 
 class TestProjectionJoin:
