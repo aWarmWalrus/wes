@@ -133,7 +133,8 @@ class TestRails:
         monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
                             lambda d: set())
         monkeypatch.setattr(wes_sleeper, "draft_picks",
-                            lambda d: [{"pick_no": 1, "draft_slot": 1}])
+                            lambda d: [{"pick_no": 1, "draft_slot": 1,
+                                        "player_id": CAND["player_key"]}])
         calls = []
 
         def boom(*a):
@@ -536,3 +537,33 @@ class TestUnknownIsNotOff:
         assert cleared == [], "must not act on a state it could not read"
         assert any("UNKNOWN" in m for m in said), "must say so"
         assert got == 0.0, "must retry next cycle, not wait another interval"
+
+
+class TestLandedLateChecksTheirPlayer:
+    """"Our pick number was filled by our slot" is NOT "we got our player".
+
+    Conflating them reported drafting Bijan Robinson while he went to another
+    manager at the next pick and our own turn had been taken by autopick with
+    somebody else (2026-08-22). It bypassed the slot-scoped verification
+    standing right beside it."""
+
+    def test_somebody_elses_player_in_our_slot_is_not_success(self,
+                                                              monkeypatch):
+        monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
+        # Our pick number, our slot -- but autopick chose a different player.
+        monkeypatch.setattr(wes_sleeper, "draft_picks",
+                            lambda d: [{"pick_no": 1, "draft_slot": 1,
+                                        "player_id": "SOMEONE-ELSE"}])
+        made = []
+
+        def boom(*a):
+            made.append(a)
+            raise RuntimeError("click did nothing")
+        out = loop.run("D", "L", 1, _state_fn=_states([_state(0), _state(3)]),
+                       _board_fn=_board(),
+                       _decide_fn=lambda c, **kw: _decision(CAND, "why",
+                                                            "model"),
+                       _submit_fn=boom, _sleep_fn=lambda _s: None)
+        assert "made 0 pick(s)" in out,             "must not count another player in our slot as our pick"

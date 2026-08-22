@@ -468,13 +468,23 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         acted_on.add(pick_no)          # marked BEFORE the attempt, deliberately
 
         def _already_ours():
-            """Did our pick land after all? The only honest way to tell a
-            failed click from a slow one."""
+            """Did OUR CHOSEN PLAYER land after all?
+
+            THE PLAYER, not merely the slot. The first version asked only
+            whether our pick number had been filled by our slot -- so when a
+            click failed and autopick filled the turn with somebody else, it
+            answered yes, the retry broke out as success, and the log printed
+            the name we had WANTED. That reported drafting Bijan Robinson while
+            he went to another manager and our pick was Jahmyr Gibbs
+            (2026-08-22). It bypassed the slot-scoped verification standing
+            right next to it."""
             try:
                 for pk in (wes_sleeper.draft_picks(draft_id) or []):
-                    if pk.get("pick_no") == pick_no:
-                        return int(pk.get("draft_slot") or -1) == int(
-                            _slot_holder["slot"] or -2)
+                    if pk.get("pick_no") != pick_no:
+                        continue
+                    return (str(pk.get("player_id")) == str(pick["player_key"])
+                            and int(pk.get("draft_slot") or -1) == int(
+                                _slot_holder["slot"] or -2))
             except Exception:  # noqa: BLE001
                 pass
             return False
