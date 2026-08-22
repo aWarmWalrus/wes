@@ -299,6 +299,30 @@ def replacement_levels(players, targets, flex, flex_pos, teams):
     return out
 
 
+def must_fill(unfilled, picks_left):
+    """Positions the roster can no longer AFFORD to skip, or () if none.
+
+    A soft need bump cannot finish a roster. K and DEF carry `urgency` 0.25
+    precisely so nobody drafts a kicker in round 7, and replacement level at
+    those positions is nearly flat -- so their VOR is low BY CONSTRUCTION and
+    a skill player always scores better. The model duly took a running back
+    with its last pick and finished a 15-round draft with no kicker and no
+    defense, saying so in its own reasoning: "a high-upside WR is preferable
+    over a kicker" (2026-08-22, full mock, 15 of 15 picks made).
+
+    No prompt fixes that, because on value the model is RIGHT every time. The
+    engine has to stop offering the choice: once the picks remaining are all
+    spoken for by slots still empty, this pick MUST fill one of them.
+
+    `picks_left` counts THIS pick. Returns the positions still unfilled when
+    there is no slack left, else () -- caller keeps the full board.
+    """
+    gaps = {pos: n for pos, n in (unfilled or {}).items() if n > 0}
+    if not gaps or picks_left is None:
+        return ()
+    return tuple(sorted(gaps)) if picks_left <= sum(gaps.values()) else ()
+
+
 # --- roster construction constraints (#039) ---------------------------------
 # PURE. Value over replacement says who is BEST; these say who FITS. A board
 # that only knows value will happily hand you three Bengals and four players on

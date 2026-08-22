@@ -1837,3 +1837,83 @@ class _Grid:
 
     def inner_text(self):
         return "row"
+
+
+class TestMustFillClosesTheBoard:
+    """The engine has to stop OFFERING the running back.
+
+    A 15-round mock finished WR6/RB7/TE1/QB1 with no kicker and no defense, the
+    model correctly noting each time that a skill player had more value -- so
+    the fix belongs in the choice set, not the prompt (2026-08-22).
+    """
+
+    ROUNDS = 4
+
+    @staticmethod
+    def _get(path):
+        if "/league/" in path:
+            return {"scoring_settings": {"rec": 1},
+                    "roster_positions": ["RB", "K", "BN"]}
+        if "/picks" in path:
+            return []
+        if "/draft/" in path:
+            return {"status": "drafting",
+                    "settings": {"teams": 2,
+                                 "rounds": TestMustFillClosesTheBoard.ROUNDS},
+                    "slot_to_roster_id": {"1": 1, "2": 2},
+                    "type": "snake"}
+        return {}
+
+    def _board(self, mine_positions):
+        """`mine_positions` is what we already hold, one pick per entry."""
+        idx = {"1": {"name": "Backfield", "positions": ["RB"], "team": "KC",
+                     "roster_status": "Active"},
+               "2": {"name": "Bootleg", "positions": ["K"], "team": "SF",
+                     "roster_status": "Active"}}
+        for i, pos in enumerate(mine_positions):
+            idx[f"h{i}"] = {"name": f"Held{i}", "positions": [pos],
+                            "team": "NYJ", "roster_status": "Active"}
+        pool = [{"name": v["name"], "positions": v["positions"],
+                 "team": v["team"], "gp": 17.0,
+                 # The kicker is deliberately the WORSE player, which is the
+                 # whole difficulty: on value it should never be chosen.
+                 "cats": {"Rec": 5.0 if v["positions"] == ["K"] else 90.0}}
+                for v in idx.values()]
+        picks = [{"pick_no": i + 1, "draft_slot": 1, "player_id": f"h{i}",
+                  "metadata": {"position": pos}}
+                 for i, pos in enumerate(mine_positions)]
+        out = sl.draft_candidates(
+            "L", "D", 1, limit=8, _index_fn=lambda: idx, _pool_fn=lambda: pool,
+            _picks=picks, _get_fn=lambda p, **k: self._get(p))
+        assert not isinstance(out, str), out
+        return out
+
+    def test_with_picks_to_spare_the_kicker_does_not_crowd_the_board(self):
+        out = self._board([])
+        assert out["must_fill"] == []
+        assert "Backfield" in {c["name"] for c in out["candidates"]}
+
+    def test_on_the_last_pick_only_the_empty_slot_is_offered(self):
+        """Three of four picks spent, RB filled, K still empty."""
+        out = self._board(["RB", "RB", "RB"])
+        assert out["must_fill"] == ["K"]
+        assert {c["name"] for c in out["candidates"]} == {"Bootleg"}
+
+    def test_the_constraint_is_named_for_the_model(self):
+        out = self._board(["RB", "RB", "RB"])
+        assert "K" in out["must_fill"]
+
+    def test_it_never_returns_an_empty_board(self):
+        """A draft pick is MANDATORY. If the pool cannot fill the slot, an
+        incomplete roster still beats forfeiting the pick."""
+        idx = {"1": {"name": "Backfield", "positions": ["RB"], "team": "KC",
+                     "roster_status": "Active"}}
+        pool = [{"name": "Backfield", "positions": ["RB"], "team": "KC",
+                 "gp": 17.0, "cats": {"Rec": 90.0}}]
+        picks = [{"pick_no": i + 1, "draft_slot": 1, "player_id": f"h{i}",
+                  "metadata": {"position": "RB"}} for i in range(3)]
+        out = sl.draft_candidates(
+            "L", "D", 1, limit=8, _index_fn=lambda: idx, _pool_fn=lambda: pool,
+            _picks=picks, _get_fn=lambda p, **k: self._get(p))
+        assert not isinstance(out, str), out
+        assert out["candidates"], "must still offer somebody"

@@ -1365,6 +1365,21 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     # narrowed the options to one position; it is the engine deciding, with a
     # model rubber-stamping. So: the best few overall, PLUS the best available
     # at every position, so roster construction is actually on the table.
+    unfilled = {pos: max(0, n - have.get(pos, 0))
+                for pos, n in targets.items()
+                if max(0, n - have.get(pos, 0)) > 0}
+    # ROSTER COMPLETION IS A CONSTRAINT, NOT A PREFERENCE. Computed here rather
+    # than after the shortlist, because it has to narrow what the shortlist is
+    # drawn FROM. When every remaining pick is spoken for by a slot still
+    # empty, the choice set is those slots -- see wes_draft.must_fill for why
+    # no prompt can do this job.
+    forced = wes_draft.must_fill(unfilled, rounds - len(mine))
+    if forced:
+        only = [c for c in board if (c["positions"] or [None])[0] in forced]
+        # NEVER leave zero candidates. A draft pick is mandatory; if the pool
+        # cannot fill the slot, an incomplete roster beats no pick at all.
+        board = only or board
+
     best_overall = board[:max(1, limit - 3)]
     seen = {id(c) for c in best_overall}
     per_pos = []
@@ -1390,9 +1405,6 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
     # costs least, which is what makes it worth trying at all.
     tied = _annotate_close_calls(board, index, _xwalk)
 
-    unfilled = {pos: max(0, n - have.get(pos, 0))
-                for pos, n in targets.items()
-                if max(0, n - have.get(pos, 0)) > 0}
     # POSITIONAL RUNS, from picks we already hold. The prompt has told the model
     # to "consider positional runs" since the first version while handing it no
     # picks to see one in — the identical omission as the bye weeks, still live
@@ -1446,6 +1458,9 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
         # same words (2026-08-15). Naming the phase gives the model something to
         # reason WITH after need runs out.
         "phase": "starters" if unfilled else "depth",
+        # Named so the model is told it was constrained, rather than quietly
+        # handed a board with no kickers on it and left to infer why.
+        "must_fill": list(forced),
         "candidates": board,
     }
 

@@ -348,3 +348,36 @@ class TestRosterFit:
         mine = [{"team": "CIN"}, {"team": "CIN"}]
         _, _, why = draft.roster_fit({"team": "CIN"}, mine, {"CIN": 10})
         assert why and all(isinstance(r, str) for r in why)
+
+
+class TestMustFill:
+    """The constraint that finishes a roster.
+
+    A 15-round mock ended WR6/RB7/TE1/QB1 -- no kicker, no defense -- with the
+    model correctly observing each time that a skill player had the better
+    value. K and DEF have low VOR by construction, so no amount of prompting
+    reverses it; the choice set has to close instead (2026-08-22).
+    """
+
+    def test_slack_means_no_constraint(self):
+        assert draft.must_fill({"K": 1, "DEF": 1}, 6) == ()
+
+    def test_the_last_picks_are_spoken_for(self):
+        assert draft.must_fill({"K": 1, "DEF": 1}, 2) == ("DEF", "K")
+
+    def test_the_final_pick_of_a_single_gap(self):
+        assert draft.must_fill({"K": 1}, 1) == ("K",)
+
+    def test_more_gaps_than_picks_still_constrains(self):
+        """Overcommitted: the roster cannot be completed, but every remaining
+        pick should still go at a hole rather than a twelfth running back."""
+        assert draft.must_fill({"K": 1, "DEF": 1, "TE": 1}, 2) == (
+            "DEF", "K", "TE")
+
+    def test_a_full_roster_constrains_nothing(self):
+        assert draft.must_fill({}, 1) == ()
+        assert draft.must_fill({"K": 0}, 1) == ()
+
+    def test_unknown_picks_left_does_not_invent_a_constraint(self):
+        """None is UNKNOWN. Guessing here would force a kicker in round 2."""
+        assert draft.must_fill({"K": 1}, None) == ()

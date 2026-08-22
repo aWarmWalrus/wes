@@ -1199,3 +1199,31 @@ coincidental. Our own mocks were drafted by a session built after the room
 opened, against a freshly rendered list; the owner's rooms had us holding a
 page across the transition, which is exactly when the re-render detaches the
 handle.
+
+## A finished draft with no kicker and no defense (2026-08-22)
+
+The first clean 15-of-15 in someone else's room ended:
+
+    WR 6, RB 7, TE 1, QB 1     -- no K, no DEF
+
+`need Kx1, DEFx1` was logged from round 12 through the final pick, and the
+model took a running back every time. Its own reasoning on pick 85: "a
+high-upside WR with a solid market rank is preferable over a kicker".
+
+It was right on value, every time, and that is the point. K and DEF have low
+VOR BY CONSTRUCTION -- replacement level at those positions is nearly flat, so
+the first kicker is barely better than the twelfth, and `urgency` is
+deliberately 0.25 there to stop round-7 kickers. Nothing in that arrangement
+ever becomes urgent, so a soft bump cannot finish a roster, and neither can the
+prompt nudge added earlier ("no K or DEF before round 12 unless high VOR") --
+it only sets a floor, never a ceiling.
+
+Fixed in the ENGINE, per the standing rule that the engine constrains the
+choice set and the model chooses within it: `wes_draft.must_fill(unfilled,
+picks_left)` returns the positions with no slack left, and `draft_candidates`
+filters the board to them BEFORE the shortlist is drawn -- so a kicker is not
+merely bumped, it is the only thing on offer. Never returns an empty board: a
+pick is mandatory, and an incomplete roster beats a forfeited pick.
+
+`must_fill` is also reported in the payload, so the model is told it was
+constrained rather than handed a boardless of kickers and left to infer why.
