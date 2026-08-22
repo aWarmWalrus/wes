@@ -404,6 +404,12 @@ class TestAutopickGuard:
         def peek(self):
             return "page"
 
+        def refresh(self):
+            # The guard must RELOAD before reading: a page opened before
+            # autopick engaged reports a stale OFF forever.
+            self.refreshed = getattr(self, "refreshed", 0) + 1
+            return "page"
+
     def _patch(self, monkeypatch, br):
         monkeypatch.setattr(loop.wes_sleeper, "autopick_on", lambda p: br.on)
 
@@ -457,3 +463,24 @@ class TestAutopickGuard:
         said = []
         loop._keep_autopick_off(br, 0.0, 1000.0, said.append)
         assert any("autopick check failed" in m for m in said)
+
+
+class TestAutopickGuardReadsFreshState:
+    def test_it_reloads_before_reading(self, monkeypatch):
+        """A check that cannot observe the thing it guards is worse than no
+        check, because it reassures. The stale-DOM version reported nothing
+        while autopick took all nine of our picks (2026-08-22)."""
+        br = TestAutopickGuard.FakeBrowser(on=True)
+        monkeypatch.setattr(loop.wes_sleeper, "autopick_on", lambda p: br.on)
+        monkeypatch.setattr(loop.wes_sleeper, "set_autopick",
+                            lambda p, on=False: setattr(br, "on", on) or on)
+        loop._keep_autopick_off(br, 0.0, 1000.0, lambda m: None)
+        assert getattr(br, "refreshed", 0) == 1
+
+    def test_nothing_built_yet_means_nothing_to_check(self, monkeypatch):
+        class NotBuilt(TestAutopickGuard.FakeBrowser):
+            def peek(self):
+                return None
+        br = NotBuilt(on=True)
+        loop._keep_autopick_off(br, 0.0, 1000.0, lambda m: None)
+        assert getattr(br, "refreshed", 0) == 0

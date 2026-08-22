@@ -85,7 +85,20 @@ def preflight(league_id=LEAGUE, username=USERNAME, draft_id=None,
             # draft itself, and NOT having one is a hard fail — an unjoined
             # draft would leave us watching a seat that is not ours, which once
             # produced a run of zero picks.
-            roster_id = wes_sleeper.slot_in_draft(draft_id, username)
+            # RETRY: draft_order is eventually consistent and lags a claim
+            # by up to a minute (measured at 73s). join_draft already verifies
+            # against the DOM for exactly this reason; the pre-flight was left
+            # asking the slow source and refused to start on a seat we had
+            # just successfully claimed (2026-08-22).
+            roster_id = None
+            for attempt in range(12):
+                roster_id = wes_sleeper.slot_in_draft(draft_id, username)
+                if roster_id is not None:
+                    break
+                if attempt == 0:
+                    lines.append("  [ .. ] seat: not in draft_order yet, "
+                                 "waiting for it to catch up")
+                time.sleep(8)
             check("seat", roster_id is not None,
                   f"{username} holds slot {roster_id}" if roster_id
                   else f"{username} has NOT joined draft {draft_id} - join it "

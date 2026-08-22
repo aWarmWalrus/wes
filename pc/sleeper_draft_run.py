@@ -157,13 +157,15 @@ def _keep_autopick_off(browser, last_checked, now, log):
     if browser is None or now - last_checked < AUTOPICK_CHECK_S:
         return last_checked
     try:
-        # PEEK, never build. If no page exists yet then no pick has been
-        # attempted, so autopick cannot have engaged -- and launching Chrome
-        # on a poll cycle would make the cheapest check the most expensive
-        # thing in the loop.
-        page = browser.peek()
-        if page is None:
-            return last_checked
+        # RELOAD BEFORE READING. The toggle's DOM state is whatever it was
+        # when the page loaded: a session opened before autopick engaged shows
+        # OFF forever, which is exactly what happened -- the guard ran, saw a
+        # stale OFF, reported nothing, and autopick took every one of our
+        # turns (2026-08-22, second live draft). A check that cannot observe
+        # the thing it guards is worse than no check, because it reassures.
+        if browser.peek() is None:
+            return last_checked          # nothing built yet, nothing to check
+        page = browser.refresh()
         if wes_sleeper.autopick_on(page):
             got = wes_sleeper.set_autopick(page, False)
             log(f"AUTO-PICK had switched itself ON — turned it "
@@ -295,6 +297,21 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     chat = _banter if _banter is not None else wes_banter.Banter(
         draft_id, mode=banter_mode, browser=browser,
         min_gap_s=wes_banter.MIN_GAP_S if banter_gap is None else banter_gap)
+
+    # WARM IT NOW. Building on first use cost pick 2 of a live draft: five CPU
+    # teams picked within seconds of the start, and we were still launching
+    # Chrome when our turn came and went. A session built during the quiet
+    # period costs nothing and is the difference between being ready and
+    # being late.
+    # `_submit_fn is None` means we are really drafting, not under test. An
+    # injected submit is the existing signal for that (see the wrapper above),
+    # and without this the suite launches a real Chrome per test -- 23s became
+    # 215s, which is how the last one of these got noticed.
+    if browser is not None and _submit_fn is None and _state_fn is None:
+        try:
+            browser.page()
+        except Exception as e:  # noqa: BLE001 — falls back to per-call
+            _log(f"browser: could not pre-warm ({e})")
 
     started = now()
     acted_on = set()
