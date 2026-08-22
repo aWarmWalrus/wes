@@ -1509,6 +1509,45 @@ def set_autopick(page, on=False, _tries=6):
     return autopick_on(page)
 
 
+# The player list is a ReactVirtualized grid: ~98,000px of content in a 371px
+# viewport, with roughly 59 rows rendered at a time. Anyone outside that window
+# is absent from the DOM entirely, and no amount of querySelector will find him.
+#
+# Programmatic scrollTop does NOT move a virtualised list -- measured, it stays
+# put. A real wheel event does, and that is what a human uses anyway.
+SCROLL_STEPS = 40
+SCROLL_PX = 1500
+
+
+def _scroll_to_row(page, find_fn, steps=SCROLL_STEPS):
+    """Wheel down the player list until `find_fn()` matches, or we run out.
+
+    Returns the row or None. Stops early when the window stops moving, which
+    means we have hit the bottom and he is genuinely not in the list -- as
+    opposed to merely not drawn yet, a distinction this module has paid for
+    repeatedly."""
+    lst = page.query_selector(".ReactVirtualized__Grid")
+    if lst is None:
+        return None
+    box = lst.bounding_box()
+    if not box:
+        return None
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    last_marker = None
+    for _ in range(steps):
+        page.mouse.wheel(0, SCROLL_PX)
+        page.wait_for_timeout(350)
+        row = find_fn()
+        if row is not None:
+            return row
+        first = page.query_selector(".player-rank-item2")
+        marker = (first.inner_text() or "")[:40] if first else None
+        if marker is not None and marker == last_marker:
+            return None                    # bottomed out
+        last_marker = marker
+    return None
+
+
 def _click_pick(page, player_name, want):
     """Find the player's ROW and click its draft control.
 
@@ -1538,18 +1577,15 @@ def _click_pick(page, player_name, want):
 
     row = _find_row()
     if row is None:
-        # THE LIST IS WINDOWED — roughly 59 rows render at a time, ordered
-        # by Sleeper's own ranking. A player we rate highly can sit far
-        # outside that window and be perfectly available while simply not
-        # drawn: a kicker failed seven times in one draft for exactly this,
-        # never having been taken at all (2026-08-15). The search box is how
-        # a human reaches him, so use it before concluding anything.
-        box = page.query_selector("input[placeholder*='Find player']")
-        if box is not None:
-            box.click()
-            box.fill(player_name)
-            page.wait_for_timeout(2500)
-            row = _find_row()
+        # OUTSIDE THE RENDERED WINDOW: scroll to him rather than search.
+        # The search box looks like the answer and is not -- measured
+        # live, "Amon-Ra St. Brown" returns ZERO rows and "Amon-Ra"
+        # returns Montana Lemonious-Craig, a different and undraftable
+        # player whose row is disabled. Clicking that fires no request,
+        # verification fails, and the loop reports "clicked X but it
+        # never appeared" -- which cost most of a draft while I blamed
+        # the button, the session and the socket in turn (2026-08-22).
+        row = _scroll_to_row(page, _find_row)
     if row is None:
         # TWO CAUSES, and only one of them means "pick someone else". If the
         # list is empty the draft room never rendered and we know NOTHING

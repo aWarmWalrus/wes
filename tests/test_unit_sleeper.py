@@ -487,6 +487,11 @@ class TestSubmitPick:
         def __init__(self, name, btn):
             self.name, self.btn = name, btn
 
+        def inner_text(self):
+            # The scroller reads the first row's text to tell "still moving"
+            # from "bottomed out".
+            return self.name
+
         def query_selector(self, sel):
             if "name-wrapper" in sel:
                 return type("N", (), {"inner_text": lambda _s: self.name})()
@@ -716,6 +721,19 @@ class TestProjectionJoin:
                 "slot_to_roster_id": {"1": 1}, "season": "2026"}
 
 
+class _Mouse:
+    """Enough of page.mouse for the scroll path."""
+
+    def __init__(self, page):
+        self.page = page
+
+    def move(self, *a, **k):
+        pass
+
+    def wheel(self, _dx, _dy):
+        self.page.scrolled += 1
+
+
 class TestWindowedList:
     """Sleeper renders ~59 player rows at a time, ordered by ITS ranking. A
     player we rate highly can sit far outside that window and be perfectly
@@ -734,11 +752,16 @@ class TestWindowedList:
             self.query = text
 
     class Page:
-        """Rows appear only AFTER the search box is filled — the windowing,
-        modelled."""
+        """Rows appear only after SCROLLING — the virtualised window, modelled.
 
-        def __init__(self, box, row_factory):
+        The search box is deliberately absent: it returns the wrong player on
+        the real site, so nothing may depend on it again."""
+
+        def __init__(self, box, row_factory, rows_after=1):
             self.box, self._rows = box, row_factory
+            self.scrolled = 0
+            self.rows_after = rows_after
+            self.mouse = _Mouse(self)
 
         def goto(self, *a, **k):
             pass
@@ -746,21 +769,30 @@ class TestWindowedList:
         def wait_for_timeout(self, _ms):
             pass
 
+        def wait_for_selector(self, *a, **k):
+            return True
+
         def evaluate(self, *a, **k):
             return True
 
         def query_selector_all(self, _sel):
-            return self._rows() if self.box.query else []
+            return self._rows() if self.scrolled >= self.rows_after else []
 
         def query_selector(self, sel):
-            return self.box if "Find player" in sel else None
+            if "ReactVirtualized" in sel:
+                return _Grid()
+            if sel == ".player-rank-item2":
+                got = self.query_selector_all(sel)
+                return got[0] if got else None
+            return None
 
-    def test_it_searches_before_declaring_a_player_unavailable(self, monkeypatch):
+    def test_it_SCROLLS_before_declaring_a_player_unavailable(self, monkeypatch):
         monkeypatch.setattr(sl, "LIVE_WRITES_OK", lambda: True)
         monkeypatch.setattr(sl, "authenticate", lambda p: True)
         btn = TestSubmitPick.FakeBtn("draft-button")
         box = self.Box()
-        page = self.Page(box, lambda: [TestSubmitPick.FakeRow("Deep Guy", btn)])
+        page = self.Page(box,
+                         lambda: [TestSubmitPick.FakeRow("Deep Guy", btn)])
 
         class S:
             def __enter__(_s):
@@ -772,7 +804,7 @@ class TestWindowedList:
                             _picks_fn=lambda d: [{"player_id": "42"}],
                             _sleep_fn=lambda _s: None)
         assert ok is True
-        assert box.query == "Deep Guy"       # it actually searched
+        assert page.scrolled > 0             # it actually scrolled
         assert btn.clicked
 
     def test_the_error_now_distinguishes_gone_from_merely_unrendered(self,
@@ -1794,3 +1826,14 @@ class TestDisabledButtonIsNotAVeto:
                             _sleep_fn=lambda _s: None, slot=2)
         assert ok is True
         assert btn.clicked, "must attempt rather than stand down"
+
+
+
+class _Grid:
+    """The ReactVirtualized container the scroller aims at."""
+
+    def bounding_box(self):
+        return {"x": 0, "y": 0, "width": 900, "height": 370}
+
+    def inner_text(self):
+        return "row"
