@@ -1280,19 +1280,29 @@ lines and is now mostly re-exports plus `draft_candidates`.
 Fifteen test classes moved with the code, retargeted at the package and given
 neutral fixture identities. WES kept 1065 tests; the package has 79.
 
-### CI IS RED UNTIL THE PACKAGE IS PUBLISHED
+### Published PRIVATE, and the one thing CI still needs
 
-`wes_sleeper` top-level-imports `sleeperdraft`, and CI checks out only this
-repo, so `requirements-dev.txt` cannot satisfy it. The fix is one commented
-line in that file, ready to uncomment the moment the package has a remote:
+https://github.com/aWarmWalrus/sleeperdraft — private, branch `master` (to
+match this repo). `requirements-dev.txt` installs it by git URL, verified by
+installing into a clean venv from the remote and importing it.
 
-    sleeperdraft @ git+https://github.com/aWarmWalrus/sleeperdraft@main
+CI NEEDS ONE SECRET, AND DOES NOT HAVE IT YET. The checkout's automatic
+GITHUB_TOKEN is scoped to the WES repository alone, so pip cannot clone a
+SECOND private repo with it. `.github/workflows/ci.yml` rewrites the git URL
+prefix using `secrets.SLEEPERDRAFT_TOKEN` (a PAT with `repo` scope), which
+keeps the token out of `requirements-dev.txt` where it would be committed. The
+step fails LOUDLY with an actionable message when the secret is missing rather
+than letting the install quietly skip a dependency the whole suite imports.
 
-Nothing has been pushed anywhere. Publishing is a decision with a terms-of-
-service question attached -- this authenticates a real session and drives a
-draft room, and Sleeper's terms may prohibit automated play -- so it waits for
-the owner. A private repo shared with named people is a much smaller surface
-than a public one.
+    Settings -> Secrets and variables -> Actions -> New repository secret
+    name: SLEEPERDRAFT_TOKEN
+
+Making the package public would delete the secret, the URL rewrite and that
+workflow step in one go.
+
+Locally it is an editable install (`pip install -e ..\sleeperdraft`), so edits
+to the package are live in WES with no reinstall — confirmed: WES resolves to
+the clone, and `wes_sleeper.submit_pick is sleeperdraft.submit_pick`.
 
 ### Next: the MCP server
 
