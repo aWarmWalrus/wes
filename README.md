@@ -69,6 +69,7 @@ The launchers set environment (voice, model, feature flags) and then exec Python
 | `run_exporters.ps1` | `WES Exporters` | Prometheus exporters |
 | `run_fantasy_gm.ps1` | `WES Fantasy GM` | the fantasy GM cycle (4 triggers/week) |
 | `run_nightly_eval.ps1` | `WES Nightly Eval` | nightly quality eval |
+| `run_snapshot.ps1` | `WES Snapshot` | daily rebuild of the local fantasy board (05:40) |
 | `run_sleeper_draft.ps1` | — (run by hand) | Sleeper draft day — pre-flight, wait, draft |
 | `wes-dev.ps1` | — | the dev helper above |
 | `wes-models.ps1` | — | VRAM/model manager (via `wes-dev models`) |
