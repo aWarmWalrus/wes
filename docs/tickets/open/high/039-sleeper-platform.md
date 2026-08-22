@@ -1259,3 +1259,46 @@ Replayed against the live model, the same exchange now owns the pick and
 counters with the opponent's actual player rather than disowning its own. Asked
 "who do you have so far?" it answers with its real roster and needles the right
 manager by name.
+
+## The DOM layer is its own repo now (2026-08-22)
+
+`C:\Users\awarm\sleeperdraft`, package `sleeperdraft` 0.1.0, MIT, 79 tests. It
+holds everything that drives the draft room -- session and token injection,
+claiming a seat, clicking a pick, chat, the AUTO-PICK toggle, the held browser
+-- plus the public API reads and the snake arithmetic those need. It depends on
+nothing but Playwright, and has no projections and no opinions.
+
+WES CONSUMES IT, it does not vendor it: `pip install -e ..\sleeperdraft` into
+the PC venv, and `wes_sleeper.submit_pick is sleeperdraft.submit_pick` is True
+-- the same function object, not a wrapper. Two copies of a DOM adapter would
+drift in exactly the place that costs a draft.
+
+What stayed here is what is genuinely ours: Sleeper scoring mapped to our stat
+keys, player identity, and the valued board. wes_sleeper went 1854 -> 1074
+lines and is now mostly re-exports plus `draft_candidates`.
+
+Fifteen test classes moved with the code, retargeted at the package and given
+neutral fixture identities. WES kept 1065 tests; the package has 79.
+
+### CI IS RED UNTIL THE PACKAGE IS PUBLISHED
+
+`wes_sleeper` top-level-imports `sleeperdraft`, and CI checks out only this
+repo, so `requirements-dev.txt` cannot satisfy it. The fix is one commented
+line in that file, ready to uncomment the moment the package has a remote:
+
+    sleeperdraft @ git+https://github.com/aWarmWalrus/sleeperdraft@main
+
+Nothing has been pushed anywhere. Publishing is a decision with a terms-of-
+service question attached -- this authenticates a real session and drives a
+draft room, and Sleeper's terms may prohibit automated play -- so it waits for
+the owner. A private repo shared with named people is a much smaller surface
+than a public one.
+
+### Next: the MCP server
+
+The remaining design question is concurrency. `Session._live` deliberately
+refuses a second concurrent session, and Playwright's sync API allows one
+instance per thread, so a long-lived server needs ONE Playwright-owning worker
+thread with a job queue and a `Browser` held per draft id -- not a lock. The
+`Browser` docstring says this rather than claiming a thread-safety it does not
+have.
