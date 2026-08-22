@@ -48,6 +48,12 @@ POLL_NEAR_S = 5.0
 POLL_FAR_S = 20.0
 NEAR_PICKS = 2
 
+# How many times to attempt a pick while the clock is still ours. The failures
+# seen live are transient -- a button that reads disabled and then does not, a
+# commit that takes fifteen seconds -- and one attempt then standing down hands
+# the turn to autopick, which then takes every later turn as well.
+SUBMIT_TRIES = 3
+
 
 def _log(msg):
     print(f"[draft] {time.strftime('%H:%M:%S')} {msg}", flush=True)
@@ -460,8 +466,51 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             continue
 
         acted_on.add(pick_no)          # marked BEFORE the attempt, deliberately
+
+        def _already_ours():
+            """Did our pick land after all? The only honest way to tell a
+            failed click from a slow one."""
+            try:
+                for pk in (wes_sleeper.draft_picks(draft_id) or []):
+                    if pk.get("pick_no") == pick_no:
+                        return int(pk.get("draft_slot") or -1) == int(
+                            _slot_holder["slot"] or -2)
+            except Exception:  # noqa: BLE001
+                pass
+            return False
+
+        def _still_ours():
+            """Is the clock still on us? If it has moved on, stop trying."""
+            st = turn_fn(draft_id, roster_id)
+            return (not isinstance(st, str)
+                    and st.get("picks_until_turn") == 0
+                    and st.get("picks_made", -1) + 1 == pick_no)
+
         try:
-            submit(draft_id, pick["player_key"], pick["name"])
+            # RETRY WHILE THE CLOCK IS OURS. One attempt then stand down was
+            # right when a failed verification might mean a pick had silently
+            # landed -- retrying would have risked a double pick. It cannot
+            # now: verification requires the pick's slot to be OURS, so a
+            # second attempt after a genuine miss is safe, and _already_ours()
+            # catches the case where the first one worked late.
+            #
+            # This matters because the failures are TRANSIENT: a button that
+            # reads disabled for twenty seconds and then is not, a commit that
+            # takes fifteen seconds, a room mid-render. Standing down on the
+            # first of those hands the pick to autopick -- which then takes
+            # every later turn too (2026-08-22).
+            for attempt in range(SUBMIT_TRIES):
+                try:
+                    submit(draft_id, pick["player_key"], pick["name"])
+                    break
+                except Exception as e:  # noqa: BLE001
+                    if _already_ours():
+                        _log(f"pick {pick_no}: landed after all (slow commit)")
+                        break
+                    if attempt == SUBMIT_TRIES - 1 or not _still_ours():
+                        raise
+                    _log(f"pick {pick_no}: attempt {attempt + 1} failed "
+                         f"({str(e)[:70]}); clock is still ours, retrying")
             t_click = now()
             made.append(pick["name"])
             _log(f"pick {pick_no}: TIMING turn->click {t_click - t_turn:.1f}s "

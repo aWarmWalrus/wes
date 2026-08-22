@@ -95,22 +95,55 @@ class TestRails:
                  _sleep_fn=lambda _s: None)
         assert len(calls) == 1
 
-    def test_a_failed_submit_is_NOT_retried(self, monkeypatch):
-        """submit_pick already polled ~15s before giving up, so a retry is a
-        coin flip on whether the first landed late — and that coin flip is a
-        double pick. cpu_autopick covers the miss."""
+    def test_it_stops_retrying_once_the_clock_has_moved_on(self, monkeypatch):
+        """This used to assert ONE attempt, ever. That was right while a failed
+        verification might mean a pick had landed silently -- retrying would
+        have risked a double pick.
+
+        It is not right any more, and the old rule cost real picks: the live
+        failures are TRANSIENT (a button reading disabled for twenty seconds, a
+        commit taking fifteen), and standing down on the first one hands the
+        turn to autopick, which then takes every later turn too (2026-08-22).
+
+        Verification now requires the pick's slot to be OURS, so a retry is
+        safe. What must still hold is that we stop the moment the clock is not
+        ours -- which is what this pins."""
         monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
         monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
                             lambda d: set())
+        monkeypatch.setattr(wes_sleeper, "draft_picks", lambda d: [])
         calls = []
 
         def boom(*a):
             calls.append(a)
             raise RuntimeError("click failed")
-        loop.run("D", "L", 1, _state_fn=_states([_state(0), _state(0)]),
-                 _board_fn=_board(), _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
+        # _state(0) once, then the clock moves on: the retry check sees it is
+        # no longer our pick and gives up.
+        loop.run("D", "L", 1, _state_fn=_states([_state(0), _state(3),
+                                                 _state(3)]),
+                 _board_fn=_board(),
+                 _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
                  _submit_fn=boom, _sleep_fn=lambda _s: None)
-        assert len(calls) == 1
+        assert len(calls) == 1, "must not keep clicking after our turn passes"
+
+    def test_a_pick_that_landed_late_is_not_clicked_again(self, monkeypatch):
+        """The double-pick guard, in its new form: if the first attempt
+        actually worked and only the verification was slow, stop."""
+        monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
+        monkeypatch.setattr(wes_sleeper, "draft_picks",
+                            lambda d: [{"pick_no": 1, "draft_slot": 1}])
+        calls = []
+
+        def boom(*a):
+            calls.append(a)
+            raise RuntimeError("verification timed out")
+        loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
+                 _board_fn=_board(),
+                 _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
+                 _submit_fn=boom, _sleep_fn=lambda _s: None)
+        assert len(calls) == 1, "our pick was already there; do not click again"
 
     def test_rechecks_availability_immediately_before_submitting(self, monkeypatch):
         """The board was true a moment ago; a moment is enough for someone to
