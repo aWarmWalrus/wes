@@ -1314,3 +1314,57 @@ instance per thread, so a long-lived server needs ONE Playwright-owning worker
 thread with a job queue and a `Browser` held per draft id -- not a lock. The
 `Browser` docstring says this rather than claiming a thread-safety it does not
 have.
+
+## Clean run: 15/15 with a legal roster (2026-08-22, draft 1397032038116106240)
+
+Six teams, fifteen rounds, no pick timer, a room we did not create, against a
+live human. **Zero failed attempts. Mean 19.3s turn->click, max 22.8s.**
+
+    r1  Puka Nacua WR          r6  Drake Maye QB        r11 Rico Dowdle RB
+    r2  Amon-Ra St. Brown WR   r7  Travis Etienne RB    r12 Tony Pollard RB
+    r3  Saquon Barkley RB      r8  DeVonta Smith WR     r13 Rome Odunze WR
+    r4  Kenneth Walker RB      r9  Quinshon Judkins RB  r14 Ka'imi Fairbairn K
+    r5  Brock Bowers TE        r10 Jadarian Price RB    r15 Houston Texans DEF
+
+Three things were under test and all three held.
+
+**The package split.** Every click went through the installed `sleeperdraft`.
+No behaviour change, no retries.
+
+**`must_fill`.** It kept the slack it was supposed to and closed the board when
+it ran out, and the model's own words are the evidence. Round 12, one pick of
+slack, allowed to prefer a skill player: "a high VOR skill player like Tony
+Pollard is significantly more valuable than a kicker or defense" -- the exact
+sentence that ended the previous draft kickerless, here correct. Round 14,
+slack zero: "Fairbairn has the highest VOR among available KICKERS." It stopped
+comparing a kicker against running backs because the running backs were gone
+from the board.
+
+**Banter ownership.** Challenged on Puka, DeVonta and Judkins in turn, it
+defended each as its own and cited real injury data ("even if he's dealing with
+that hamstring"). The previous run disowned its own first-round pick.
+
+Also, unplanned and reassuring: at 17:31 a recycled session came up partially
+rendered -- the side panel had not mounted, so neither the AUTO-PICK toggle nor
+the CHAT tab existed. The guard logged UNKNOWN and retried instead of reading a
+missing control as "off", chat failed without touching the draft, and pick 36
+landed clean twenty-six minutes later. That is the 2026-08-22 outage branch
+working in the wild.
+
+### Three banter gaps this run exposed (picks unaffected)
+
+Found by the owner's trash talk, which probed harder than any test does.
+
+1. **It cannot name other managers' players.** `rosters_by_slot` carries
+   position COUNTS only, so "who is my first pick?" got deflected. The names
+   are already in `draft_picks` and are being discarded. Counts do work --
+   "you only have 4 receivers" was true and landed.
+2. **It does not know its own remaining holes.** Told "you don't even have a
+   DEF yet", it could not give the true and better answer -- "round 14, that is
+   the plan" -- because `still_unfilled` is computed for the board and never
+   passed to banter. Two lines.
+3. **It loses track of which player is being discussed.** Asked about Judkins,
+   it answered about DeVonta. Nothing in the context marks which pick a message
+   refers to.
+
+None of these can cost a pick. All three are in `_banter_context`.
