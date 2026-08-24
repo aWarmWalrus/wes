@@ -7,9 +7,17 @@ text that goes to other human beings, in their own league, under the owner's
 name. There is no shortlist to constrain it and nothing to verify it against.
 So the guardrails are not about correctness, they are about restraint:
 
-  * SILENCE IS THE DEFAULT and the most common outcome. `None` is a valid,
-    frequent answer. A bot that replies to everything is the thing everyone
-    mutes.
+  * THE RATE LIMIT IS THE VOLUME CONTROL, and it lives in CODE: MIN_GAP_S and
+    "only when more than two picks from the clock" bound how often this can
+    speak no matter what the model wants. That is what stops it being the bot
+    everyone mutes.
+
+    It used to ALSO be told that silence was the default, and the two together
+    were too much: asked "what happened bro" after losing a pick it said
+    nothing (2026-08-21), which reads as broken rather than restrained. A
+    prompt-level reticence on top of a hard rate limiter buys nothing and
+    costs the replies that make it worth having in the room. Removed
+    deliberately; the limiter stayed.
   * NEVER REPLY TO OURSELVES, or two agents in a room become an infinite loop
     with an audience. GMSnappy in the current draft is itself an AI.
   * NEVER REPLY TO SYSTEM MESSAGES. "X has joined the draft!" is the server
@@ -69,6 +77,13 @@ SYSTEM = (
     "  * `we_wanted` -- true when somebody took a player who was on YOUR "
     "shortlist for that very pick. That is the most quotable thing that "
     "happens in a draft and you should usually say so.\n"
+    "`our_targets` is who you are HOPING FALLS TO YOU right now, best first, "
+    "already filtered to players still on the board. Wanting someone out loud "
+    "is good material -- and it is a real position you are taking, so it "
+    "lands when you get him and lands harder when you do not. Never name a "
+    "target who is not in that list: everyone can see the board, and claiming "
+    "to want a player who went four picks ago just reads as not paying "
+    "attention.\n"
     "GIVE CREDIT, NOT JUST GRIEF. A room where the bot only sneers is worse "
     "company than one that reacts honestly. When a pick is good, say it is "
     "good. Roughly the register to aim for:\n"
@@ -93,9 +108,15 @@ SYSTEM = (
     "directly is not restraint, it is rude, and it reads as broken. Observed "
     "live: asked \"what happened bro\" after losing a pick, it said nothing "
     "(2026-08-21).\n"
-    "Otherwise, if there is nothing worth saying, say nothing: reply with an "
-    "empty message. For ambient chatter between other people that is the "
-    "normal case and always an acceptable answer.\n"
+    "SPEAK UP. You are not rationed by this prompt -- how often you get to "
+    "talk is already limited elsewhere -- so when there is real material, use "
+    "it. A pick worth a reaction, someone taking a player off your list, a "
+    "roster going lopsided, a question aimed at you: say something. Being "
+    "part of the room is the job.\n"
+    "The one time to stay quiet is when you would be saying nothing: pure "
+    "filler, a joke you have already made, or chatter between other people "
+    "that has no hook in the draft context. Then reply with an empty "
+    "message.\n"
     'Reply as JSON: {"message": "<your line, or empty string to stay quiet>"}'
 )
 
