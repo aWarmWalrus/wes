@@ -108,6 +108,11 @@ SYSTEM = (
     "directly is not restraint, it is rude, and it reads as broken. Observed "
     "live: asked \"what happened bro\" after losing a pick, it said nothing "
     "(2026-08-21).\n"
+    "SOMETIMES NOBODY ASKED. When `unprompted` is true, no one has said "
+    "anything -- you are speaking because a pick in `reacting_to` was worth a "
+    "word: somebody took a player off your list, or made a real reach or "
+    "steal. Remark on THAT pick, do not open with a greeting and do not answer "
+    "a question nobody asked. One line, then let the room move on.\n"
     "SPEAK UP. You are not rationed by this prompt -- how often you get to "
     "talk is already limited elsewhere -- so when there is real material, use "
     "it. A pick worth a reaction, someone taking a player off your list, a "
@@ -207,15 +212,60 @@ def new_messages(messages, seen_texts, me):
     return out
 
 
-def compose(messages, context=None, _post_fn=None):
-    """A line to post, or None to stay quiet. None is the common case."""
-    if not messages:
+# Verdicts worth speaking up about unprompted. "a bit early" and "good value"
+# are real but minor, and a bot that narrates every mild opinion is the running
+# commentary nobody asked for.
+NOTABLE_VERDICTS = ("reach", "steal")
+
+
+def notable_picks(recent_picks, seen_pick_nos):
+    """Picks worth breaking silence for, newest last.
+
+    THE CHAT USED TO BE PURELY REACTIVE -- it could only answer a human, so a
+    draft where nobody typed produced nothing at all no matter what happened on
+    the board. Yesterday's mock: one message across ninety picks. The material
+    that makes this worth having (somebody taking a player off our list, a
+    wild reach) arrives as PICKS, not as messages.
+
+    Deliberately narrow. Only two things qualify:
+
+      * `we_wanted` -- somebody took a player off our shortlist.
+      * a `reach` or `steal` verdict, which already excludes anything below
+        the drafted pool, so a round-14 kicker is not "notable".
+
+    NEVER OUR OWN PICKS. "Happy with that one" after every selection is the
+    fastest way to become noise, and it is the trigger most likely to make
+    somebody mute the bot.
+    """
+    out = []
+    for p in recent_picks or []:
+        if p.get("ours"):
+            continue
+        no = p.get("pick")
+        if no is None or no in seen_pick_nos:
+            continue
+        if p.get("we_wanted") or p.get("verdict") in NOTABLE_VERDICTS:
+            out.append(p)
+    return out
+
+
+def compose(messages, context=None, reacting_to=None, _post_fn=None):
+    """A line to post, or None to stay quiet.
+
+    Fires on a chat message, on a notable PICK, or both. `reacting_to` is the
+    pick that prompted it when nobody said anything -- the model is told
+    plainly that it is speaking unprompted, because "reply to this" and
+    "remark on that" want different lines."""
+    if not messages and not reacting_to:
         return None
     payload = {
         "draft": context or {},
         "recent_chat": [{"from": m.get("author"), "said": m.get("text")}
-                        for m in messages[-8:]],
+                        for m in (messages or [])[-8:]],
     }
+    if reacting_to:
+        payload["reacting_to"] = reacting_to
+        payload["unprompted"] = not messages
     got = _ask(payload, _post_fn=_post_fn)
     if not isinstance(got, dict):
         return None
@@ -251,6 +301,10 @@ class Banter:
         self.mode = mode
         self.min_gap_s = min_gap_s
         self.seen = set()
+        # Pick numbers already considered for an unprompted reaction. Primed
+        # on the first pass like `seen`, so arriving mid-draft does not produce
+        # a burst of commentary about picks that happened before we got here.
+        self.seen_picks = set()
         self.last_sent_at = 0.0
         self._now = _now or time.time
         self.primed = False
@@ -271,14 +325,20 @@ class Banter:
             return "error", f"{type(e).__name__}: {e}"
 
         fresh = new_messages(msgs, self.seen, self.me)
+        board = (context or {}).get("recent_picks") or []
+        picks = notable_picks(board, self.seen_picks)
         # PRIME ON THE FIRST PASS. Everything already in the room when we
         # arrived is history, not something to answer; without this the bot
-        # opens by replying to a conversation that finished an hour ago.
+        # opens by replying to a conversation that finished an hour ago -- and,
+        # now that picks are a trigger too, by remarking on half a draft.
         self.seen.update(m["text"] for m in msgs if m.get("text"))
+        self.seen_picks.update(p.get("pick") for p in board
+                               if p.get("pick") is not None)
         if not self.primed:
             self.primed = True
-            return "quiet", f"primed with {len(self.seen)} existing message(s)"
-        if not fresh:
+            return "quiet", (f"primed with {len(self.seen)} message(s), "
+                             f"{len(self.seen_picks)} pick(s)")
+        if not fresh and not picks:
             return "quiet", "nothing new"
 
         since = self._now() - self.last_sent_at
@@ -288,8 +348,21 @@ class Banter:
         # Carried into the return so the log shows the EXCHANGE. A
         # transcript of only our own lines reads like a bot talking to itself,
         # which is also the failure mode worth spotting early.
-        prompt = " | ".join(f"{m['author']}: {m['text'][:60]}" for m in fresh[-2:])
-        line = compose(msgs, context=context, _post_fn=_post_fn)
+        if fresh:
+            prompt = " | ".join(f"{m['author']}: {m['text'][:60]}"
+                                for m in fresh[-2:])
+        else:
+            prompt = " | ".join(
+                f"pick {p.get('pick')} {p.get('by')} took {p.get('player')}"
+                f"{' (WE WANTED HIM)' if p.get('we_wanted') else ''}"
+                f"{' [' + p['verdict'] + ']' if p.get('verdict') else ''}"
+                for p in picks[-2:])
+        # CHAT WINS when both fired. Somebody spoke to us and answering that
+        # matters more than remarking on the board; the picks are in `context`
+        # either way, so nothing is lost by letting the reply carry them.
+        line = compose(msgs if fresh else None, context=context,
+                       reacting_to=(None if fresh else picks[-1]),
+                       _post_fn=_post_fn)
         if not line:
             return "quiet", f"nothing worth saying (re: {prompt})"
         if self.mode != "auto":
