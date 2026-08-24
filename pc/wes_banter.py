@@ -249,6 +249,21 @@ def notable_picks(recent_picks, seen_pick_nos):
     return out
 
 
+def _worth_most(picks):
+    """The one pick to react to when several qualify at once.
+
+    A SNIPED TARGET OUTRANKS A GOOD VERDICT. Taking the most recent instead
+    picked the wrong one live: pick 42 took a player off our shortlist and pick
+    43 was somebody else's steal, and it remarked on the steal (2026-08-24).
+    The brief already says being sniped is the most quotable thing that
+    happens in a draft; the code was handing it the other one.
+    """
+    if not picks:
+        return None
+    sniped = [p for p in picks if p.get("we_wanted")]
+    return (sniped or picks)[-1]
+
+
 def compose(messages, context=None, reacting_to=None, _post_fn=None):
     """A line to post, or None to stay quiet.
 
@@ -361,7 +376,7 @@ class Banter:
         # matters more than remarking on the board; the picks are in `context`
         # either way, so nothing is lost by letting the reply carry them.
         line = compose(msgs if fresh else None, context=context,
-                       reacting_to=(None if fresh else picks[-1]),
+                       reacting_to=(None if fresh else _worth_most(picks)),
                        _post_fn=_post_fn)
         if not line:
             return "quiet", f"nothing worth saying (re: {prompt})"

@@ -107,6 +107,38 @@ class TestJoinIsOptIn:
         assert ok is False
         assert "FAIL" in "\n".join(lines) and "no free seat" in "\n".join(lines)
 
+    def test_a_fresh_claim_is_trusted_over_a_lagging_draft_order(self, wired):
+        """join_draft verifies against the DOM precisely BECAUSE draft_order
+        lags. Re-deriving the seat from the slow source and failing on it is
+        the mistake join_draft was itself fixed for. Observed live: a claim
+        that had landed was reported as "has NOT joined" and refused to draft
+        (2026-08-24)."""
+        wired.setattr(wes_sleeper, "slot_in_draft", lambda *a, **k: None)
+        ok, lines = day.preflight(
+            league_id="L", username="u", draft_id=ELSEWHERE,
+            _probe_browser=False, join=True, _join_fn=lambda d, u: 4)
+        out = "\n".join(lines)
+        assert "join: claimed slot 4" in out
+        # Scoped to the SEAT line. Asserting no FAIL anywhere would also catch
+        # the later draft fetch, which 404s on this fixture's fake id and has
+        # nothing to do with the behaviour under test.
+        seat = [ln for ln in lines if "seat:" in ln]
+        assert seat and "[ok ]" in seat[0], seat
+        assert "holds slot 4" in seat[0]
+        assert "has NOT joined" not in out
+
+    def test_without_a_claim_the_retry_still_guards_the_seat(self, wired):
+        """The trust above must not become a blanket pass: a run that did NOT
+        join has only draft_order to go on, and an unjoined draft is still a
+        hard fail — watching a seat that is not ours once produced zero picks.
+        """
+        wired.setattr(wes_sleeper, "slot_in_draft", lambda *a, **k: None)
+        ok, lines = day.preflight(
+            league_id="L", username="u", draft_id=ELSEWHERE,
+            _probe_browser=False, join=False)
+        assert ok is False
+        assert "has NOT joined" in "\n".join(lines)
+
     def test_the_seat_check_reads_uncached(self, wired):
         """draft_order lags a claim (13.4s, measured 2026-08-24), so the
         already-seated check has to bypass the cache or a re-run inside the

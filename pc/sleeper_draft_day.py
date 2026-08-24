@@ -96,15 +96,17 @@ def preflight(league_id=LEAGUE, username=USERNAME, draft_id=None,
             # this. Off by default and never implied by --check: joining is a
             # WRITE, and a pre-flight that quietly claims a seat is not a
             # pre-flight.
+            claimed = None
             if join:
                 held = wes_sleeper.slot_in_draft(draft_id, username, max_age=0)
                 if held is not None:
                     lines.append(f"  [ok ] join: already holds slot {held}")
+                    claimed = held
                 else:
                     try:
-                        got = (_join_fn or wes_sleeper.join_draft)(
+                        claimed = (_join_fn or wes_sleeper.join_draft)(
                             draft_id, username)
-                        lines.append(f"  [ok ] join: claimed slot {got}")
+                        lines.append(f"  [ok ] join: claimed slot {claimed}")
                     except Exception as e:  # noqa: BLE001
                         check("join", False, f"{type(e).__name__}: {e}")
                         return ok, lines
@@ -118,18 +120,37 @@ def preflight(league_id=LEAGUE, username=USERNAME, draft_id=None,
             # again at 1s resolution against an uncached read: 13.4s
             # (2026-08-24). The retry window stays generous regardless.
             roster_id = None
-            for attempt in range(12):
-                roster_id = wes_sleeper.slot_in_draft(draft_id, username)
-                if roster_id is not None:
-                    break
-                if attempt == 0:
-                    lines.append("  [ .. ] seat: not in draft_order yet, "
-                                 "waiting for it to catch up")
-                time.sleep(8)
-            check("seat", roster_id is not None,
-                  f"{username} holds slot {roster_id}" if roster_id
-                  else f"{username} has NOT joined draft {draft_id} - join it "
-                       f"first, the seat is claimed on joining")
+            if claimed is not None:
+                # TRUST THE DOM. `join_draft` verifies a claim against the
+                # rendered seat precisely BECAUSE draft_order lags, and it just
+                # told us which slot we hold. Asking the slow source again and
+                # failing on its answer is the same mistake join_draft itself
+                # was fixed for -- reintroduced one layer up. Observed: a claim
+                # that landed (draft_order showed slot 2 shortly after) was
+                # reported as "has NOT joined" and refused to draft
+                # (2026-08-24).
+                roster_id = claimed
+                check("seat", True,
+                      f"{username} holds slot {roster_id} (claim verified "
+                      f"against the draft room; draft_order may lag)")
+            else:
+                for attempt in range(12):
+                    # UNCACHED. slot_in_draft defaults to a 60s cache, so an 8s
+                    # retry loop spent its first minute re-reading one stale
+                    # answer -- the interval looked like the whole cause when
+                    # it was half of it, exactly as with draft_status.
+                    roster_id = wes_sleeper.slot_in_draft(
+                        draft_id, username, max_age=0)
+                    if roster_id is not None:
+                        break
+                    if attempt == 0:
+                        lines.append("  [ .. ] seat: not in draft_order yet, "
+                                     "waiting for it to catch up")
+                    time.sleep(8)
+                check("seat", roster_id is not None,
+                      f"{username} holds slot {roster_id}" if roster_id
+                      else f"{username} has NOT joined draft {draft_id} - "
+                           f"join it first, or pass --join")
         else:
             roster_id = wes_sleeper.find_roster_id(league_id, username)
             check("roster", roster_id is not None,

@@ -120,6 +120,31 @@ class TestTickTriggers:
         assert len(sent) == 1
 
 
+class TestWhichPickItReactsTo:
+    """When several picks qualify at once, only one gets the line."""
+
+    def test_a_sniped_target_outranks_a_mere_steal(self):
+        """Observed live: pick 42 took a player off our shortlist and pick 43
+        was somebody else's steal, and it remarked on the steal (2026-08-24).
+        Taking the most recent handed the model the less interesting one."""
+        got = b._worth_most([_pick(42, we_wanted=True),
+                             _pick(43, verdict="steal")])
+        assert got["pick"] == 42
+
+    def test_otherwise_the_most_recent_wins(self):
+        got = b._worth_most([_pick(1, verdict="reach"),
+                             _pick(2, verdict="steal")])
+        assert got["pick"] == 2
+
+    def test_the_latest_snipe_wins_among_snipes(self):
+        got = b._worth_most([_pick(1, we_wanted=True),
+                             _pick(2, we_wanted=True)])
+        assert got["pick"] == 2
+
+    def test_nothing_to_choose_from_is_None(self):
+        assert b._worth_most([]) is None
+
+
 class TestComposeGuards:
     def test_nothing_to_react_to_is_None(self):
         assert b.compose(None, context={}, reacting_to=None) is None

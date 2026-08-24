@@ -635,14 +635,19 @@ class TestBanterKnowsItsOwnRoster:
         assert by == {"Puka Nacua": "GMBartimusPrime", "Bijan Robinson": "US"}
         assert [r["player"] for r in ctx["our_roster"]] == ["Bijan Robinson"]
 
-    def test_unnameable_managers_do_not_break_the_context(self):
-        """A mock seat whose id will not resolve still gets a pick entry."""
+    def test_unnameable_managers_are_named_by_seat(self):
+        """A CPU seat has no user id in draft_order and so no display name.
+
+        This used to leave `by` as None, and None went to the model AS the
+        manager's name -- "pick 42 None took Colston Loveland" (2026-08-24).
+        Naming the seat is honest and still usable in a sentence; inventing a
+        manager would not be."""
         import wes_sleeper as ws
         orig = ws.slot_names
         try:
             ws.slot_names = lambda d, **k: {}
             ctx = self._ctx()
-            assert ctx["recent_picks"][1]["by"] is None
+            assert ctx["recent_picks"][1]["by"] == "slot 2"
             assert ctx["recent_picks"][0]["by"] == "US", "ours needs no lookup"
         finally:
             ws.slot_names = orig

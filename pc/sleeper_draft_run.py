@@ -266,8 +266,14 @@ def _banter_context(draft_id, league_id, roster_id, state, wait, board_fn,
             rank = info.get("search_rank")
             row = {
                 "pick": p.get("pick_no"), "slot": p.get("draft_slot"),
+                # A CPU seat has no user id in draft_order, so it has no
+                # display name -- and `None` reached the model as the manager's
+                # name, giving "pick 42 None took Colston Loveland"
+                # (2026-08-24). Naming the seat is honest and still usable;
+                # inventing a manager would not be.
                 "by": ("US" if p.get("draft_slot") == roster_id
-                       else names.get(p.get("draft_slot"))),
+                       else (names.get(p.get("draft_slot"))
+                             or f"slot {p.get('draft_slot')}")),
                 "ours": p.get("draft_slot") == roster_id,
                 "player": " ".join(filter(None, [
                     (p.get("metadata") or {}).get("first_name"),
