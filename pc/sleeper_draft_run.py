@@ -198,7 +198,8 @@ def _shut(browser, log):
     browser.close()
 
 
-def _banter_context(draft_id, league_id, roster_id, state, wait, board_fn):
+def _banter_context(draft_id, league_id, roster_id, state, wait, board_fn,
+                    wanted=None):
     """What the room actually looks like, for trash talk that lands.
 
     Banter had `{round, picks_made, picks_until_our_turn}` and nothing about
@@ -229,16 +230,52 @@ def _banter_context(draft_id, league_id, roster_id, state, wait, board_fn):
             names = wes_sleeper.slot_names(draft_id)
         except Exception:  # noqa: BLE001
             pass
-        ctx["recent_picks"] = [
-            {"pick": p.get("pick_no"), "slot": p.get("draft_slot"),
-             "by": ("US" if p.get("draft_slot") == roster_id
-                    else names.get(p.get("draft_slot"))),
-             "ours": p.get("draft_slot") == roster_id,
-             "player": " ".join(filter(None, [
-                 (p.get("metadata") or {}).get("first_name"),
-                 (p.get("metadata") or {}).get("last_name")])),
-             "position": (p.get("metadata") or {}).get("position")}
-            for p in picks[-6:]]
+        # HOW GOOD WAS IT. Roster shapes gave the model one joke -- "five RBs
+        # and no TE" -- and it told that joke every time. A draft room is a
+        # series of individual picks, and having an opinion about a PICK needs
+        # what the pick was worth: where the player was ranked, how far from
+        # consensus he went, and whether we wanted him ourselves.
+        teams = rounds = 0
+        try:
+            settings = ((wes_sleeper.draft(draft_id) or {})
+                        .get("settings") or {})
+            teams = int(settings.get("teams") or 0)
+            # `rounds` bounds where consensus rank still means anything -- see
+            # pick_verdict. Without it a round-14 kicker reads as a reach.
+            rounds = int(settings.get("rounds") or 0)
+        except Exception:  # noqa: BLE001
+            pass
+        wanted = wanted or {}
+        recent = []
+        for p in picks[-6:]:
+            pid = str(p.get("player_id"))
+            info = idx.get(pid) or {}
+            rank = info.get("search_rank")
+            row = {
+                "pick": p.get("pick_no"), "slot": p.get("draft_slot"),
+                "by": ("US" if p.get("draft_slot") == roster_id
+                       else names.get(p.get("draft_slot"))),
+                "ours": p.get("draft_slot") == roster_id,
+                "player": " ".join(filter(None, [
+                    (p.get("metadata") or {}).get("first_name"),
+                    (p.get("metadata") or {}).get("last_name")])),
+                "position": (p.get("metadata") or {}).get("position"),
+                "round": p.get("round"),
+            }
+            v = wes_banter.pick_verdict(p.get("pick_no"), rank, teams, rounds)
+            if v:
+                row.update(v)
+            # SNIPED. A player who was on our shortlist for this very pick and
+            # went to somebody else is the single most quotable thing that
+            # happens in a draft, and we already know it -- no need to make the
+            # model infer it from a board it cannot see. Never flagged on our
+            # OWN picks: "that's who I wanted" about a player we just took
+            # would read as a bot that has lost track of itself.
+            if not row["ours"] and pid in wanted:
+                row["we_wanted"] = True
+                row["our_rank_for_him"] = wanted[pid]
+            recent.append(row)
+        ctx["recent_picks"] = recent
         # EVERY team's shape, so it can needle the right person.
         rosters = {}
         for p in picks:
@@ -357,6 +394,10 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     made = []
     last_wait = None
     last_autopick_check = 0.0
+    # Players we shortlisted and did not get, by id -> our ranking of them.
+    # Accumulated across the draft so a sniped target is still quotable a
+    # couple of picks later, which is when the chat usually gets to it.
+    wanted = {}
 
     while True:
         if now() - started > max_seconds:
@@ -399,7 +440,8 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             if wait > NEAR_PICKS:
                 _t0 = now()
                 act, detail = chat.tick(context=_banter_context(
-                    draft_id, league_id, roster_id, state, wait, board_fn))
+                    draft_id, league_id, roster_id, state, wait, board_fn,
+                    wanted=wanted))
                 _took = now() - _t0
                 # Log the QUIET decisions too when there was actually
                 # something to answer. "nothing worth saying (re: ...)" is the
@@ -429,6 +471,15 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         board = board_fn(league_id, draft_id, roster_id)
         t_board = now()
         cands = [] if isinstance(board, str) else (board.get("candidates") or [])
+        # REMEMBER WHO WE WANTED. The shortlist is built here, used once, and
+        # thrown away -- so when somebody takes one of these two picks later,
+        # nothing downstream knows it mattered to us. Kept by player id with
+        # our own ordering, so the chat can say "that's exactly who I wanted"
+        # and mean it. Bounded to the shortlist, which is already small.
+        for i, c in enumerate(cands):
+            key = str(c.get("player_key"))
+            if key and key not in wanted:
+                wanted[key] = i + 1
         if not cands:
             _log(f"pick {pick_no}: no candidates — standing down, cpu_autopick "
                  f"will take it")

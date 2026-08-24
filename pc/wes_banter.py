@@ -56,6 +56,28 @@ SYSTEM = (
     "describes your own walking wounded. Cite something true from those "
     "rather than inventing a jab -- a specific line about a real pick beats "
     "any amount of generic swagger, and a made-up claim is just confusing.\n"
+    "TALK ABOUT PLAYERS, NOT JUST SHAPES. \"Five RBs and no TE\" is one joke "
+    "and it gets old by round four. The room is a series of individual "
+    "PICKS, and each one in `recent_picks` carries what you need to have an "
+    "opinion about it:\n"
+    "  * `verdict` -- how the pick compares to consensus, ALREADY WORKED OUT "
+    "for you: \"reach\", \"a bit early\", \"about right\", \"good value\" or "
+    "\"steal\". `rounds_early` is how many rounds ahead of consensus it went "
+    "(negative means it fell to them). `market_rank` is where the player was "
+    "ranked overall. TRUST THESE NUMBERS, do not recompute them -- and do not "
+    "call something a reach when the verdict says it was value.\n"
+    "  * `we_wanted` -- true when somebody took a player who was on YOUR "
+    "shortlist for that very pick. That is the most quotable thing that "
+    "happens in a draft and you should usually say so.\n"
+    "GIVE CREDIT, NOT JUST GRIEF. A room where the bot only sneers is worse "
+    "company than one that reacts honestly. When a pick is good, say it is "
+    "good. Roughly the register to aim for:\n"
+    "  * good value / steal -> \"good pick, I'd have taken him there too\"\n"
+    "  * `we_wanted` -> \"aw man, that's exactly who I wanted\"\n"
+    "  * reach -> \"I don't know about him in the first, feels like a reach\"\n"
+    "  * about right -> usually not worth a line at all; stay quiet\n"
+    "Those are the SHAPE of a reaction, not scripts -- use the real player's "
+    "name and the real round, and vary the wording.\n"
     "KNOW WHAT YOU DRAFTED. Anything marked `ours`, or listed in "
     "`our_roster`, is YOUR pick -- own it, defend it, joke about it, but "
     "never disown it. Told \"you're the one that took Puka you dumb dumb\", "
@@ -76,6 +98,51 @@ SYSTEM = (
     "normal case and always an acceptable answer.\n"
     'Reply as JSON: {"message": "<your line, or empty string to stay quiet>"}'
 )
+
+
+def pick_verdict(pick_no, market_rank, teams, rounds=None):
+    """How a pick compares to consensus: a verdict dict, or None.
+
+    COMPUTED HERE, NOT ASKED OF THE MODEL, for the same reason pick ownership
+    is a fact rather than a puzzle: "is pick 14 earlier than consensus rank 40,
+    and by how much" is arithmetic, and a 12b model handed arithmetic in a
+    trash-talk prompt will confidently get it backwards and call a steal a
+    reach. The model's job is to phrase the fact, not to derive it.
+
+    Measured in ROUNDS rather than picks, because "eight picks early" means
+    something completely different in a 6-team league than a 12-team one --
+    a round is the unit managers actually think in.
+
+    Positive `rounds_early` means taken sooner than consensus (a reach);
+    negative means it fell (value). `None` when we have no consensus rank for
+    the player, which is common for deep bench flyers and is not a verdict.
+
+    NO VERDICT BELOW THE DRAFTED POOL. Consensus rank stops meaning anything
+    past the number of players this draft will actually take: everyone down
+    there is undrafted-tier and nobody's rank reflects where they really go.
+    Without this, Ka'imi Fairbairn at pick 83 -- market rank ~200, and a
+    perfectly normal round-14 kicker -- came out as a "reach, 19.5 rounds
+    early", which is the sort of confident nonsense that makes a bot worth
+    muting. Kickers and defences are the common case; deep bench flyers are
+    the same problem.
+    """
+    if not pick_no or not market_rank or not teams:
+        return None
+    if rounds and market_rank > teams * rounds:
+        return None
+    rounds_early = (market_rank - pick_no) / float(teams)
+    if rounds_early >= 1.5:
+        verdict = "reach"
+    elif rounds_early >= 0.5:
+        verdict = "a bit early"
+    elif rounds_early <= -1.5:
+        verdict = "steal"
+    elif rounds_early <= -0.5:
+        verdict = "good value"
+    else:
+        verdict = "about right"
+    return {"verdict": verdict, "rounds_early": round(rounds_early, 1),
+            "market_rank": market_rank}
 
 
 def _ask(payload, _post_fn=None):
