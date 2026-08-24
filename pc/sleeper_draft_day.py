@@ -46,7 +46,7 @@ SNAPSHOT_MAX_AGE_S = 36 * 3600
 
 
 def preflight(league_id=LEAGUE, username=USERNAME, draft_id=None,
-              _probe_browser=True):
+              _probe_browser=True, join=False, _join_fn=None):
     """Everything that must be true before the clock matters.
 
     Returns (ok, lines). Never raises: a pre-flight that dies on its first
@@ -90,11 +90,33 @@ def preflight(league_id=LEAGUE, username=USERNAME, draft_id=None,
             # draft itself, and NOT having one is a hard fail — an unjoined
             # draft would leave us watching a seat that is not ours, which once
             # produced a run of zero picks.
-            # RETRY: draft_order is eventually consistent and lags a claim
-            # by up to a minute (measured at 73s). join_draft already verifies
-            # against the DOM for exactly this reason; the pre-flight was left
-            # asking the slow source and refused to start on a seat we had
-            # just successfully claimed (2026-08-22).
+            # CLAIM THE SEAT FIRST if asked. `wes_sleeper.join_draft` has been
+            # wired up since the migration and nothing ever called it, so the
+            # only way into a mock was to claim the seat by hand and then run
+            # this. Off by default and never implied by --check: joining is a
+            # WRITE, and a pre-flight that quietly claims a seat is not a
+            # pre-flight.
+            if join:
+                held = wes_sleeper.slot_in_draft(draft_id, username, max_age=0)
+                if held is not None:
+                    lines.append(f"  [ok ] join: already holds slot {held}")
+                else:
+                    try:
+                        got = (_join_fn or wes_sleeper.join_draft)(
+                            draft_id, username)
+                        lines.append(f"  [ok ] join: claimed slot {got}")
+                    except Exception as e:  # noqa: BLE001
+                        check("join", False, f"{type(e).__name__}: {e}")
+                        return ok, lines
+
+            # RETRY: draft_order is eventually consistent and lags a claim.
+            # join_draft already verifies against the DOM for exactly this
+            # reason; the pre-flight was left asking the slow source and refused
+            # to start on a seat we had just successfully claimed (2026-08-22).
+            # The lag was once recorded here as "up to a minute, measured at
+            # 73s" -- that reading was taken through a 60s cache. Measured
+            # again at 1s resolution against an uncached read: 13.4s
+            # (2026-08-24). The retry window stays generous regardless.
             roster_id = None
             for attempt in range(12):
                 roster_id = wes_sleeper.slot_in_draft(draft_id, username)
@@ -194,6 +216,11 @@ def main():
     ap.add_argument("--wait-hours", type=float, default=8.0,
                     help="how long to wait for the room to open")
     ap.add_argument("--no-browser-probe", action="store_true")
+    ap.add_argument("--join", action="store_true",
+                    help="claim a free seat in --draft first if we do not "
+                         "already hold one. Off by default because it is a "
+                         "WRITE; --check honours it too, so `--check --join` "
+                         "is the way to get seated and verified in one go.")
     ap.add_argument("--banter", choices=("off", "propose", "auto"),
                     default="off")
     ap.add_argument("--banter-gap", type=float, default=None)
@@ -211,7 +238,7 @@ def main():
         meta = wes_snapshot.build()
         print(f"  rebuilt snapshot: {meta['counts']}")
     ok, lines = preflight(a.league, a.username, draft_id=a.draft,
-                          _probe_browser=not a.no_browser_probe)
+                          _probe_browser=not a.no_browser_probe, join=a.join)
     print("\n".join(lines))
     if not ok:
         print("\nPRE-FLIGHT FAILED — not drafting. Fix the above and re-run.")

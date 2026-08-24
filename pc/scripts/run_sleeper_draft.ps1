@@ -18,7 +18,7 @@
 # Scoring still comes from -League, since a mock has no scoring of its own.
 [CmdletBinding()]
 param([switch]$Check, [double]$WaitHours = 8.0, [string]$DraftId,
-      [string]$League, [switch]$RebuildSnapshot,
+      [string]$League, [switch]$RebuildSnapshot, [switch]$Join,
       [ValidateSet('off','propose','auto')][string]$Banter = 'off',
       [double]$BanterGap = 0)
 
@@ -39,6 +39,9 @@ if (-not $env:WES_SLEEPER_TOKEN) {
 $args = @("$repo\pc\sleeper_draft_day.py", "--wait-hours", "$WaitHours")
 if ($Check) { $args += "--check" }
 if ($DraftId) { $args += @("--draft", $DraftId) }
+# -Join claims a free seat in -DraftId first. A WRITE, so it is opt-in; pair it
+# with -Check to get seated and verified without then drafting.
+if ($Join) { $args += "--join" }
 if ($League) { $args += @("--league", $League) }
 if ($RebuildSnapshot) { $args += "--rebuild-snapshot" }
 if ($Banter -ne "off") { $args += @("--banter", $Banter) }
