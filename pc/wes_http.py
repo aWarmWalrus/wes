@@ -66,8 +66,22 @@ def cache_size():
         return len(_cache)
 
 
-def _cached(key, ttl, produce, now, cacheable=None):
+def _cached(key, max_age, produce, now, cacheable=None):
     """Return a cached value or produce one.
+
+    `max_age` is how old a stored copy THIS caller will accept, in seconds; 0
+    always produces. The cache holds WHEN a value was fetched rather than when
+    it expires, so two callers wanting different freshness of the same key
+    cannot decide it for one another.
+
+    THAT ORDERING WAS A REAL BUG, and a silent one. The read used to compare
+    against an expiry chosen by whoever fetched first and never consulted the
+    current caller, so `ttl=0` meant "do not STORE this response" while still
+    happily RETURNING a stored one. Every "must be current" read in
+    `wes_sleeper` passes 0 — the availability check immediately before a pick,
+    the pre-start draft status, and the post-write pick verification — and all
+    three could be answered from a copy of the world taken before the write
+    they were checking. Verifying against a cache is not verifying.
 
     `cacheable(value) -> bool` lets the CALLER veto storing a technically-valid
     but useless response. This exists because of a real bug (#035, 2026-07-31):
@@ -77,13 +91,16 @@ def _cached(key, ttl, produce, now, cacheable=None):
     retry re-read the same cached empty body instead of asking ESPN again. The
     visible symptom was a roster recommendation that appeared and vanished
     between runs, and an owner-approved move that turned into a no-op."""
-    hit = _cache.get(key)
-    if hit and hit[0] > now:
-        return hit[1]
+    if max_age > 0:
+        hit = _cache.get(key)
+        if hit and (now - hit[0]) <= max_age:
+            return hit[1]
     value = produce()
-    if ttl > 0 and (cacheable is None or cacheable(value)):
+    # STORED even when max_age is 0: a response fetched just now is the freshest
+    # thing available, and the caller that forced it will not reuse it anyway.
+    if cacheable is None or cacheable(value):
         with _lock:
-            _cache[key] = (now + ttl, value)
+            _cache[key] = (now, value)
     return value
 
 
@@ -113,13 +130,22 @@ def _fetch(url, headers, timeout, retries):
 
 
 def get_json(url, ttl=DEFAULT_TTL, timeout=DEFAULT_TIMEOUT, retries=1,
-             ua=UA, _now=None, _fetch_fn=None, cacheable=None, headers=None):
+             ua=UA, _now=None, _fetch_fn=None, cacheable=None, headers=None,
+             max_age=None):
     """Fetch and parse JSON, cached per URL. Raises on failure — the layer above
     owns how that becomes a sentence.
+
+    `ttl` and `max_age` are the same number under two names: how old a stored
+    copy may be before this call refuses it. `max_age` exists because
+    `sleeperdraft` is routed through this client via `fetch.use_host` and calls
+    it with that keyword — it is the package's name for the idea, and accepting
+    both is cheaper than a shim that would have to be kept in step. When both
+    are given, `max_age` wins.
 
     `cacheable(payload) -> bool` optionally vetoes caching a response the caller
     considers useless (e.g. a 200 with no data). Without it, a transient empty
     answer is remembered for the whole TTL and every retry re-reads it."""
+    ttl = ttl if max_age is None else max_age
     now = _now if _now is not None else time.time()
     fetch = _fetch_fn or _fetch
 

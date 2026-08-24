@@ -73,6 +73,74 @@ class TestCaching:
         wes_http.get_json("u", ttl=0, _fetch_fn=fake, _now=1.0)
         assert len(calls) == 2
 
+    def test_ttl_zero_ignores_a_WARM_entry(self):
+        """The case the test above does not cover, and the bug that hid there.
+
+        `test_ttl_zero_disables_caching` only ever calls with ttl=0, so no entry
+        is ever written and there is nothing to be wrongly served — it passed
+        before this was fixed and after. The real question is what ttl=0 does
+        when SOMEONE ELSE has warmed the URL, and the answer used to be "return
+        their copy": the read compared against an expiry chosen by whoever
+        fetched first and never consulted the current caller, so ttl=0 meant
+        "do not STORE" and never "do not USE".
+
+        Every must-be-current read in wes_sleeper passes 0 — the availability
+        check immediately before a pick, the pre-start draft status, and the
+        post-write pick verification. All three could be answered from a copy of
+        the world taken before the write they were checking."""
+        calls = []
+
+        def fake(url, headers, timeout, retries):
+            calls.append(url)
+            return b'{"v": 1}'
+        wes_http.get_json("u", ttl=900, _fetch_fn=fake, _now=100.0)   # warm it
+        assert len(calls) == 1
+        wes_http.get_json("u", ttl=0, _fetch_fn=fake, _now=100.0)     # must refetch
+        assert len(calls) == 2, "ttl=0 was served from another caller's cache"
+
+    def test_a_forced_read_is_still_stored_for_others(self):
+        """A response fetched just now is the freshest thing available, so
+        keeping it can only help the next caller — and the caller that forced it
+        will not reuse it anyway."""
+        calls = []
+
+        def fake(url, headers, timeout, retries):
+            calls.append(url)
+            return b'{"v": 1}'
+        wes_http.get_json("u", ttl=0, _fetch_fn=fake, _now=100.0)
+        wes_http.get_json("u", ttl=900, _fetch_fn=fake, _now=100.0)
+        assert len(calls) == 1
+
+    def test_freshness_is_judged_by_age_not_by_the_writer(self):
+        """Two callers wanting different freshness of one URL must not decide
+        it for each other."""
+        calls = []
+
+        def fake(url, headers, timeout, retries):
+            calls.append(url)
+            return b'{"v": 1}'
+        wes_http.get_json("u", ttl=3, _fetch_fn=fake, _now=100.0)
+        # 10s later: a caller tolerating 15s accepts it, one tolerating 3s does not
+        wes_http.get_json("u", ttl=15, _fetch_fn=fake, _now=110.0)
+        assert len(calls) == 1
+        wes_http.get_json("u", ttl=3, _fetch_fn=fake, _now=110.0)
+        assert len(calls) == 2
+
+    def test_max_age_is_accepted_as_an_alias_for_ttl(self):
+        """`sleeperdraft` is routed through this client via fetch.use_host and
+        calls it with max_age=, which is its name for the same idea. A
+        TypeError here means every Sleeper read fails at once."""
+        calls = []
+
+        def fake(url, headers, timeout, retries):
+            calls.append(url)
+            return b'{"v": 1}'
+        wes_http.get_json("u", max_age=900, _fetch_fn=fake, _now=100.0)
+        wes_http.get_json("u", max_age=900, _fetch_fn=fake, _now=100.0)
+        assert len(calls) == 1
+        wes_http.get_json("u", max_age=0, _fetch_fn=fake, _now=100.0)
+        assert len(calls) == 2
+
     def test_clear_cache_forces_a_refetch(self):
         calls = []
 

@@ -80,9 +80,16 @@ PROFILE_DIR = _sd_config.PROFILE_DIR = os.environ.get(
 HEADLESS = _sd_config.HEADLESS
 BROWSER_CHANNEL = _sd_config.BROWSER_CHANNEL
 TOKEN_KEY = _sd_config.TOKEN_KEY
-LEAGUE_TTL = _sd_config.LEAGUE_TTL
-PLAYERS_TTL = _sd_config.PLAYERS_TTL
 _read_token = _sd_config.read_token
+
+# OURS, NOT THE PACKAGE'S. These used to be read from sleeperdraft.config; as
+# of 0.2.0 the package states freshness per call instead, and moved its own
+# defaults next to the reads they govern. That is right for it — and these two
+# were never its business anyway. They govern the endpoints WES reads and the
+# package does not: the league, and the 14MB player dump (Sleeper's docs ask
+# for no more than one pull a day).
+LEAGUE_TTL = float(900)
+PLAYERS_TTL = float(6 * 3600)
 
 # WHO WES IS ON SLEEPER. The package defaults to no account at all, because it
 # has no business knowing whose it is; WES has exactly one owner, so the default
