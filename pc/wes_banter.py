@@ -249,6 +249,23 @@ def notable_picks(recent_picks, seen_pick_nos):
     return out
 
 
+def _describe_pick(p):
+    """One pick, for the log line that records WHY we spoke.
+
+    OUR OWN RANK IS PART OF IT. It told the room a sniped player was "right at
+    the top of my list" and nothing in the transcript could confirm or deny
+    that (2026-08-24). A claim about our own board should be checkable
+    afterwards, and the number is already in hand.
+    """
+    out = f"pick {p.get('pick')} {p.get('by')} took {p.get('player')}"
+    if p.get("we_wanted"):
+        rank = p.get("our_rank_for_him")
+        out += f" (WE WANTED HIM{f' #{rank}' if rank else ''})"
+    if p.get("verdict"):
+        out += f" [{p['verdict']}]"
+    return out
+
+
 def _worth_most(picks):
     """The one pick to react to when several qualify at once.
 
@@ -367,11 +384,7 @@ class Banter:
             prompt = " | ".join(f"{m['author']}: {m['text'][:60]}"
                                 for m in fresh[-2:])
         else:
-            prompt = " | ".join(
-                f"pick {p.get('pick')} {p.get('by')} took {p.get('player')}"
-                f"{' (WE WANTED HIM)' if p.get('we_wanted') else ''}"
-                f"{' [' + p['verdict'] + ']' if p.get('verdict') else ''}"
-                for p in picks[-2:])
+            prompt = " | ".join(_describe_pick(p) for p in picks[-2:])
         # CHAT WINS when both fired. Somebody spoke to us and answering that
         # matters more than remarking on the board; the picks are in `context`
         # either way, so nothing is lost by letting the reply carry them.

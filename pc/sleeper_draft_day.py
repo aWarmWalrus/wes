@@ -273,11 +273,22 @@ def main():
         # `roster_id` and `slot` coincide for a mock (slot_to_roster_id is the
         # identity map), which is what the loop needs.
         draft_id = a.draft
-        roster_id = wes_sleeper.slot_in_draft(draft_id, a.username)
+        # UNCACHED, and the same lag trap as the pre-flight. This read used the
+        # 60s default, so a seat claimed moments ago -- possibly by --join, two
+        # function calls earlier -- was still invisible here and the run gave
+        # up on a seat it held. Fixing only the pre-flight copy left this one
+        # to fail on the first real --join run (2026-08-24).
+        roster_id = wes_sleeper.slot_in_draft(draft_id, a.username, max_age=0)
+        if roster_id is None and a.join:
+            # draft_order has still not caught up. `join_draft` is idempotent
+            # and answers from the DOM -- it returns the slot we already hold
+            # rather than claiming a second one, which is a property it
+            # guarantees and is tested for.
+            roster_id = wes_sleeper.join_draft(draft_id, a.username)
         if roster_id is None:
-            print(f"you have no seat in draft {draft_id} - JOIN it first "
-                  f"(the seat is claimed on joining, and draft_order is empty "
-                  f"until then)")
+            print(f"you have no seat in draft {draft_id} - JOIN it first, or "
+                  f"pass --join (the seat is claimed on joining, and "
+                  f"draft_order is empty until then)")
             return 1
     else:
         lg = wes_sleeper.league(a.league) or {}

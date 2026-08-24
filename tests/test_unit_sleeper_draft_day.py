@@ -52,6 +52,60 @@ def _lines(monkeypatch, **kw):
     return "\n".join(lines)
 
 
+class TestTheRunPathResolvesTheSeatToo:
+    """The pre-flight is not the only place that asks "which seat are we".
+
+    main() re-derives roster_id after the pre-flight passes, and that copy had
+    the same lag trap: a cached 60s read of draft_order. Fixing only the
+    pre-flight left this one to fail on the first real --join run, where the
+    seat is seconds old by construction (2026-08-24). It had no test, which is
+    why the fix missed it.
+    """
+
+    def _run_main(self, monkeypatch, argv, slot_answer, join_answer=None):
+        calls = {"join": 0, "max_ages": []}
+
+        def slot_in_draft(_d, _u, **kw):
+            calls["max_ages"].append(kw.get("max_age"))
+            return slot_answer
+
+        def join_draft(_d, _u=None):
+            calls["join"] += 1
+            return join_answer
+
+        monkeypatch.setattr(day, "preflight", lambda *a, **k: (True, []))
+        monkeypatch.setattr(wes_sleeper, "slot_in_draft", slot_in_draft)
+        monkeypatch.setattr(wes_sleeper, "join_draft", join_draft)
+        # Never actually wait for or run a draft.
+        monkeypatch.setattr(wes_sleeper, "draft_status_fresh",
+                            lambda _d: "complete")
+        monkeypatch.setattr(sys, "argv", argv)
+        return day.main(), calls
+
+    def test_the_run_path_reads_the_seat_uncached(self, monkeypatch):
+        _rc, calls = self._run_main(
+            monkeypatch, ["x", "--draft", "D", "--username", "u"], 3)
+        assert calls["max_ages"] == [0], "run path polled a cached draft_order"
+
+    def test_a_lagging_draft_order_falls_back_to_the_idempotent_join(
+            self, monkeypatch):
+        """join_draft answers from the DOM and returns the slot we already
+        hold rather than claiming a second one — a property it guarantees."""
+        rc, calls = self._run_main(
+            monkeypatch, ["x", "--draft", "D", "--username", "u", "--join"],
+            None, join_answer=4)
+        assert calls["join"] == 1
+        assert rc == 0, "should have proceeded on the DOM-verified seat"
+
+    def test_without_join_a_missing_seat_still_stops_the_run(self, monkeypatch):
+        """The fallback must not become a blanket pass: drafting into a seat
+        we do not hold once produced a run of zero picks."""
+        rc, calls = self._run_main(
+            monkeypatch, ["x", "--draft", "D", "--username", "u"], None)
+        assert calls["join"] == 0
+        assert rc == 1
+
+
 class TestJoinIsOptIn:
     def test_it_does_not_claim_a_seat_unless_asked(self, wired):
         """The default path must not write. A pre-flight that quietly claims a

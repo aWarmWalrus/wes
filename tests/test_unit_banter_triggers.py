@@ -120,6 +120,26 @@ class TestTickTriggers:
         assert len(sent) == 1
 
 
+class TestTheLogSaysWhyItSpoke:
+    """The transcript has to carry enough to check the line afterwards."""
+
+    def test_it_records_our_own_rank_for_a_sniped_player(self):
+        """It told the room a sniped player was "right at the top of my list"
+        and the transcript could neither confirm nor deny it (2026-08-24)."""
+        got = b._describe_pick(_pick(9, we_wanted=True, our_rank_for_him=1,
+                                     verdict="good value"))
+        assert "WE WANTED HIM #1" in got
+        assert "good value" in got
+
+    def test_a_snipe_without_a_rank_still_reads(self):
+        got = b._describe_pick(_pick(9, we_wanted=True))
+        assert "WE WANTED HIM)" in got
+
+    def test_an_ordinary_pick_is_just_the_facts(self):
+        got = b._describe_pick(_pick(9, verdict="reach"))
+        assert "WE WANTED" not in got and "[reach]" in got
+
+
 class TestWhichPickItReactsTo:
     """When several picks qualify at once, only one gets the line."""
 
