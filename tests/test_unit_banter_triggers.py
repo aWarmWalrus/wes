@@ -156,10 +156,26 @@ class TestWhichPickItReactsTo:
                              _pick(2, verdict="steal")])
         assert got["pick"] == 2
 
-    def test_the_latest_snipe_wins_among_snipes(self):
+    def test_our_ranking_decides_among_snipes_not_recency(self):
+        """Losing the player we had third is a bigger loss than losing the one
+        we had fifth. Reacting to the fifth while the third goes unmentioned
+        reads as not really having had a board — observed live once the rank
+        was in the log: picks 32 and 33 took our #3 and our #5, and it mourned
+        the #5 (2026-08-25)."""
+        got = b._worth_most([_pick(32, we_wanted=True, our_rank_for_him=3),
+                             _pick(33, we_wanted=True, our_rank_for_him=5)])
+        assert got["pick"] == 32
+
+    def test_a_ranked_snipe_beats_an_unranked_one(self):
         got = b._worth_most([_pick(1, we_wanted=True),
-                             _pick(2, we_wanted=True)])
+                             _pick(2, we_wanted=True, our_rank_for_him=9)])
         assert got["pick"] == 2
+
+    def test_an_unranked_snipe_still_beats_a_verdict(self):
+        """We know we wanted him, we just cannot say how much."""
+        got = b._worth_most([_pick(1, we_wanted=True),
+                             _pick(2, verdict="steal")])
+        assert got["pick"] == 1
 
     def test_nothing_to_choose_from_is_None(self):
         assert b._worth_most([]) is None

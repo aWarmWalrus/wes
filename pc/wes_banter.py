@@ -288,11 +288,23 @@ def _worth_most(picks):
     43 was somebody else's steal, and it remarked on the steal (2026-08-24).
     The brief already says being sniped is the most quotable thing that
     happens in a draft; the code was handing it the other one.
+
+    AND AMONG SNIPES, OUR RANKING DECIDES -- not recency. Losing the player we
+    had third is a bigger loss than losing the one we had fifth, and reacting
+    to the fifth while the third goes unmentioned reads as not really having
+    had a board. Observed once the rank was visible in the log: picks 32 and 33
+    took our #3 and our #5, and it mourned the #5 (2026-08-25).
+
+    A snipe with no rank recorded sorts last among snipes but still beats a
+    verdict: we know we wanted him, we just cannot say how much.
     """
     if not picks:
         return None
     sniped = [p for p in picks if p.get("we_wanted")]
-    return (sniped or picks)[-1]
+    if sniped:
+        return min(sniped,
+                   key=lambda p: (p.get("our_rank_for_him") or 10 ** 6))
+    return picks[-1]
 
 
 def compose(messages, context=None, reacting_to=None, _post_fn=None):
