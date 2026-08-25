@@ -75,3 +75,16 @@ class TestTheBriefTellsItToUseThisMaterial:
 
     def test_it_is_told_not_to_recompute_the_verdict(self):
         assert "do not recompute" in b.SYSTEM.lower()
+
+    def test_it_is_told_its_own_picks_carry_a_verdict_too(self):
+        """Accused of reaching with the consensus #4 at 1.01, it apologised
+        for a pick that was half a round early while holding the rank that
+        said so (2026-08-25). The verdict is a defence, not only a weapon."""
+        low = b.SYSTEM.lower()
+        assert "your own picks carry a verdict" in low
+        assert "defence" in low or "defense" in low
+
+    def test_it_is_told_to_own_an_injury_flag_on_its_own_player(self):
+        """The documented 2026-08-22 failure -- denying the questionable tag
+        on its own first-rounder -- recurred softened on 2026-08-25."""
+        assert "lead by owning it" in b.SYSTEM.lower()
