@@ -397,6 +397,39 @@ CLOSE_GAP = 0.75
 CLOSE_CALL_NOTES = os.environ.get("WES_CLOSE_CALL_NOTES", "0") == "1"
 
 
+def consensus_within_close_calls(board, gap=CLOSE_GAP):
+    """Re-order runs of indistinguishable candidates by MARKET RANK.
+
+    `adj_value` is a real number and a noisy one. In a shallow league
+    replacement level sits high, so VOR barely separates elite players: at pick
+    1 of a 6-team mock the top four came out 10.22 / 10.20 / 9.80 / 9.47, a
+    spread this module ALREADY calls too close to separate (CLOSE_GAP). Ordered
+    by that alone, the board put Puka Nacua -- consensus 4, and listed
+    questionable -- second, and the model took him first overall (2026-08-25).
+
+    Nothing was wrong with the arithmetic. The problem is that when our own
+    numbers cannot tell four players apart, we still handed the model an order,
+    and an order is read as a ranking. So inside a cluster our model cannot
+    separate, defer to the market: it is the aggregate of a lot of people who
+    also thought about it, and it is the honest answer to "we do not know".
+
+    Clusters are taken from the top down, the same shape `_annotate_close_calls`
+    uses, so the window means one thing in this module. Players with no market
+    rank sort last WITHIN their cluster -- unranked is not ranked-last overall,
+    and their adj_value still decides which cluster they are in.
+    """
+    out, rest = [], list(board or [])
+    while rest:
+        top = rest[0].get("adj_value") or 0.0
+        n = 0
+        while n < len(rest) and top - (rest[n].get("adj_value") or 0.0) <= gap:
+            n += 1
+        cluster, rest = rest[:n], rest[n:]
+        cluster.sort(key=lambda c: (c.get("market_rank") or 10 ** 6))
+        out.extend(cluster)
+    return out
+
+
 def _annotate_close_calls(board, index, xwalk, gap=CLOSE_GAP, _now=None):
     """Attach `notes` to the candidates that are too close to separate.
 
@@ -966,6 +999,10 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
             seen.add(id(pick))
     board = sorted(best_overall + per_pos,
                    key=lambda x: x["adj_value"], reverse=True)
+    # CONSENSUS BREAKS OUR OWN TIES. The order above is what the model reads as
+    # a ranking, and adj_value cannot actually separate the top of a shallow
+    # board -- see consensus_within_close_calls for the pick that exposed it.
+    board = consensus_within_close_calls(board)
 
     # CLOSE CALLS GET DETAIL, and only close calls. Enriching every row made
     # the local model measurably worse (see the frozen note in
