@@ -84,6 +84,15 @@ class TestTheBriefTellsItToUseThisMaterial:
         assert "your own picks carry a verdict" in low
         assert "defence" in low or "defense" in low
 
+    def test_it_is_told_never_to_claim_a_player_it_did_not_draft(self):
+        """The ownership paragraph guarded only one direction -- never DISOWN
+        your own pick -- so nothing stopped the mirror error. It told the owner
+        "you just let Jayden Daniels and Tony Pollard slip by us" when Daniels
+        had gone to slot 5 and Pollard to slot 2 (2026-08-25)."""
+        low = b.SYSTEM.lower()
+        assert "never claim a player you did not draft" in low
+        assert "ours: false" in low
+
     def test_it_is_told_to_own_an_injury_flag_on_its_own_player(self):
         """The documented 2026-08-22 failure -- denying the questionable tag
         on its own first-rounder -- recurred softened on 2026-08-25."""
