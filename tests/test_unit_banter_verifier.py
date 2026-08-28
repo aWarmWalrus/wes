@@ -53,6 +53,27 @@ class TestItCatchesTheRealFabrications:
         why = b.unverifiable("Tyreek Hill is going to wreck your season.", ctx)
         assert why and "Tyreek Hill" in why
 
+    def test_an_invented_pick_number_with_any_preposition(self):
+        """'Lamar Jackson just fell to pick 23' — he went at 26 (2026-08-28).
+        The rule was right; only 'at' was matched, so the phrasing walked past
+        it. A check that fires on one wording is a check you cannot rely on."""
+        ctx = _ctx(picks=[_pick(26, "Lamar Jackson", rnd=7)])
+        for line in ("Lamar Jackson just fell to pick 23 - a steal.",
+                     "Lamar Jackson at 23 was a steal.",
+                     "Lamar Jackson at pick 23 was a steal.",
+                     "They got Lamar Jackson with the 23rd.",
+                     "Lamar Jackson to 23 is robbery."):
+            assert b.unverifiable(line, ctx), f"missed: {line}"
+
+    def test_projections_and_rates_are_not_pick_numbers(self):
+        """A draft room says '255.2 points' and '3.0 YPRR' constantly. None of
+        those are pick claims and none may trip the rule."""
+        ctx = _ctx(picks=[_pick(26, "Lamar Jackson", rnd=7)])
+        for line in ("Lamar Jackson with 255 points projected is fine.",
+                     "Lamar Jackson at 23% target share, sure.",
+                     "Lamar Jackson to 300 yards a game, apparently."):
+            assert b.unverifiable(line, ctx) is None, f"false positive: {line}"
+
     def test_a_wrong_round(self):
         ctx = _ctx(picks=[_pick(43, "Joe Burrow", rnd=8)])
         why = b.unverifiable("Joe Burrow in the 3rd is an absolute steal.",

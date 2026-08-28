@@ -285,8 +285,19 @@ _CLAIM_VERB = (r"\b(?:we|i)\s+(?:got|have|took|drafted|grabbed|landed|"
 # a player we want and do not have. Wanting is not having, and the whole value
 # of this check is that it only rejects things that are actually false.
 _CLAIM_POSS = r"\b(?:my|our)\s+$"
-# "at 53" / "at pick 53" -- an overall pick number.
-_AT_PICK = re.compile(r"\bat\s+(?:pick\s+)?(\d{1,3})\b", re.I)
+# An overall pick number: "at 53", "at pick 53", "fell to pick 53", "with the
+# 53rd". MORE THAN ONE PREPOSITION, because "at" alone was too narrow and let a
+# real fabrication through: "Lamar Jackson just fell TO pick 23" -- he went at
+# 26 (2026-08-28). The rule was right and only the phrasing escaped it, which
+# is the cheapest kind of miss to fix and the easiest to not notice.
+#
+# The negative lookahead keeps it off projections and rates -- "255.2 points",
+# "3.0 YPRR", "23% target share" are numbers a draft room says constantly and
+# none of them are pick numbers.
+_AT_PICK = re.compile(
+    r"\b(?:at|to|with)\s+(?:the\s+)?(?:pick\s+)?(\d{1,3})(?:st|nd|rd|th)?\b"
+    r"(?!\s*(?:%|percent|point|pt|yard|yd|target|catch|rec|snap|carr))",
+    re.I)
 # "in the 8th" / "in the 8th round" -- a round.
 _IN_ROUND = re.compile(r"\bin\s+the\s+(\d{1,2})(?:st|nd|rd|th)\b", re.I)
 
