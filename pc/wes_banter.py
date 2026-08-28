@@ -34,6 +34,7 @@ is fine. The failure that matters is volume, not quality.
 """
 import json
 import os
+import re
 import time
 import urllib.request
 
@@ -272,6 +273,160 @@ def notable_picks(recent_picks, seen_pick_nos):
     return out
 
 
+# Claiming a player. Two forms, with deliberately different reach.
+#
+# A POSSESSION VERB may sit a little away from the name -- "we took a flyer on
+# Bowers" -- because the verb itself is unambiguous.
+_CLAIM_VERB = (r"\b(?:we|i)\s+(?:got|have|took|drafted|grabbed|landed|"
+               r"snagged|picked)\b")
+# A BARE POSSESSIVE must be flush against it: "my Bowers". Given any window at
+# all it fires on "keeping my eyes peeled for Brock Bowers" and "Bowers is high
+# on my radar" -- both measured against the live model, both honest lines about
+# a player we want and do not have. Wanting is not having, and the whole value
+# of this check is that it only rejects things that are actually false.
+_CLAIM_POSS = r"\b(?:my|our)\s+$"
+# "at 53" / "at pick 53" -- an overall pick number.
+_AT_PICK = re.compile(r"\bat\s+(?:pick\s+)?(\d{1,3})\b", re.I)
+# "in the 8th" / "in the 8th round" -- a round.
+_IN_ROUND = re.compile(r"\bin\s+the\s+(\d{1,2})(?:st|nd|rd|th)\b", re.I)
+
+
+_TOKENS_CACHE = {"v": None}
+
+
+def _name_tokens():
+    """Every word that appears in a real NFL player's name, lowercased.
+
+    The authority for "is this a player reference at all". Loaded from the
+    snapshot we already hold for the draft, once per process.
+
+    ABSTAINS ON FAILURE, returning an empty set, and the caller then skips the
+    invented-name rule entirely rather than guessing. A missing snapshot must
+    not silence a bot that is behaving -- the other two rules do not need it,
+    and blocking good lines because a file is absent is the failure mode this
+    check exists to avoid in the first place."""
+    if _TOKENS_CACHE["v"] is None:
+        toks = set()
+        try:
+            import wes_snapshot
+            for info in (wes_snapshot.players() or {}).values():
+                for w in (info.get("name") or "").split():
+                    w = w.strip(".,'’-").lower()
+                    if len(w) > 2:
+                        toks.add(w)
+        except Exception:  # noqa: BLE001 — see above: abstain, never block
+            toks = set()
+        _TOKENS_CACHE["v"] = toks
+    return _TOKENS_CACHE["v"]
+
+
+def _known_players(context):
+    """Everyone the line is allowed to talk about: name -> the facts we hold.
+
+    Sourced only from the payload the model was given. If a player is not in
+    there, the model did not read him anywhere -- it produced him."""
+    known = {}
+    for p in (context or {}).get("recent_picks") or []:
+        if p.get("player"):
+            known[p["player"]] = {"pick": p.get("pick"),
+                                  "round": p.get("round"),
+                                  "ours": bool(p.get("ours"))}
+    for r in (context or {}).get("our_roster") or []:
+        if r.get("player"):
+            known.setdefault(r["player"], {}).update(
+                {"round": r.get("round"), "ours": True})
+    for t in (context or {}).get("our_targets") or []:
+        if t.get("name"):
+            known.setdefault(t["name"], {}).setdefault("ours", False)
+    return known
+
+
+def unverifiable(line, context):
+    """Why this line must not be posted, or None if it is safe.
+
+    THE GUARDRAILS THAT HOLD HERE ARE CODE, NOT PROSE. Three separate
+    paragraphs were added to the brief telling the model not to invent things
+    -- about ownership, about its own picks, about the pick it was handed --
+    and each failure recurred afterwards. Meanwhile every rule enforced in
+    code has held. So the last word on what reaches the room is a check, not
+    an instruction.
+
+    Deliberately narrow, because a false reject costs a good line and silence
+    is cheap but pointless. Only CHECKABLE claims are checked:
+
+      * a player nobody mentioned -- "Brock Bowers" when he is in no pick, no
+        roster and no target list.
+      * a pick number or round that contradicts the one we hold. "that Brock
+        Bowers steal at 7" -- he went at 39 (2026-08-26).
+      * claiming a player who is somebody else's: "you just let Jayden Daniels
+        and Tony Pollard slip by us", when both were on other teams
+        (2026-08-25).
+
+    What it does NOT catch, and is not meant to: "I really wanted Hurts" is
+    unfalsifiable, and remarking on a real pick that was not the one we
+    triggered on is wrong-but-true. Those stay a prompt problem.
+    """
+    if not line:
+        return None
+    known = _known_players(context)
+
+    # A NAME THE PAYLOAD NEVER CONTAINED. Capitalised runs of 2+ words are the
+    # shape of a player name; single capitalised words are left alone because
+    # sentences start with them and teams, cities and nicknames are not worth
+    # the false rejects.
+    # A PLAYER THE PAYLOAD NEVER CONTAINED. Decided against the real player
+    # universe rather than against English, because guessing which capitalised
+    # words are names is what made the first cut unusable: it rejected
+    # "Snagging Burrow in the 8th" (a sentence-start verb plus a surname whose
+    # player WAS in context) and "My WR corps is solid" (a pronoun plus a
+    # position acronym). Both were good lines, measured against the live model.
+    #
+    # So: a candidate only counts as a player reference when one of its words
+    # is a real NFL name token. "Snagging"/"My"/"WR" are not, and never trip
+    # it; "Tyreek"/"Hill" are, and must then resolve to somebody in context.
+    #
+    # NO SENTENCE-START EXEMPTION either. An earlier cut skipped candidates
+    # that opened the line, which is exactly where a player name usually goes
+    # -- it let "Tyreek Hill is going to wreck your season" straight through.
+    universe = _name_tokens()
+    known_tokens = {w.lower() for name in known for w in name.split()}
+    for cand in re.findall(r"\b[A-Z][\w.'’-]+(?:\s+[A-Z][\w.'’-]+)+", line):
+        words = [w.strip(".,'’-").lower() for w in cand.split()]
+        if universe and not any(w in universe for w in words):
+            continue          # not a player reference at all
+        if not universe:
+            continue          # no snapshot: this rule abstains, see _name_tokens
+        if any(w in known_tokens for w in words):
+            continue          # resolves to somebody the payload mentioned
+        return f"names {cand!r}, who is not in the draft context"
+
+    for name, facts in known.items():
+        if name not in line:
+            continue
+        # A PICK NUMBER WE CAN CHECK.
+        for m in _AT_PICK.finditer(line):
+            claimed = int(m.group(1))
+            actual = facts.get("pick")
+            if actual and claimed != actual:
+                return (f"says {name} went at {claimed}; he went at {actual}")
+        for m in _IN_ROUND.finditer(line):
+            claimed, actual = int(m.group(1)), facts.get("round")
+            if actual and claimed != actual:
+                return (f"says {name} went in round {claimed}; it was round "
+                        f"{actual}")
+        # CLAIMING SOMEBODY ELSE'S PLAYER. Only when the possessive sits right
+        # against the name -- "my Bowers", "we took Bowers" -- so that "a huge
+        # target for us" and other honest first-person framing still passes.
+        if not facts.get("ours"):
+            verb = re.compile(_CLAIM_VERB + r"[^.,;!?]{0,24}" +
+                              re.escape(name), re.I)
+            poss = re.compile(_CLAIM_POSS, re.I)
+            before = line[:line.index(name)]
+            if verb.search(line) or poss.search(before):
+                return f"claims {name}, who is not on our roster"
+    return None
+
+
 def _describe_pick(p):
     """One pick, for the log line that records WHY we spoke.
 
@@ -380,7 +535,7 @@ class Banter:
         """One pass. Returns (action, detail) for logging.
 
         action is one of: "quiet", "rate_limited", "would_say", "said",
-        "send_failed", "error"."""
+        "dropped", "send_failed", "error"."""
         if self.mode == "off":
             return "quiet", "banter is off"
         try:
@@ -428,6 +583,14 @@ class Banter:
                        _post_fn=_post_fn)
         if not line:
             return "quiet", f"nothing worth saying (re: {prompt})"
+        # THE LAST WORD IS A CHECK, NOT AN INSTRUCTION. Three paragraphs were
+        # added to the brief telling the model not to invent things and each
+        # failure recurred; every rule enforced in code has held. Dropped lines
+        # are logged with the reason, so "made something up" never looks like
+        # "had nothing to say".
+        why = unverifiable(line, context)
+        if why:
+            return "dropped", f"{line}   <- UNVERIFIABLE: {why}"
         if self.mode != "auto":
             self.last_sent_at = self._now()   # propose mode is rate-limited too
             return "would_say", f"{line}   <- re: {prompt}"
