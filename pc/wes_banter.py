@@ -25,9 +25,13 @@ So the guardrails are not about correctness, they are about restraint:
   * ONE REPLY PER MESSAGE, and a hard floor between messages. The rate limit
     is enforced in CODE, not requested in the prompt — a small model asked to
     "be brief and occasional" is not a rate limiter.
-  * OFF UNLESS ASKED. `propose` is the default: it composes and logs without
-    posting, so the owner can read what it WOULD have said before letting it
-    speak. Posting to other people is not a thing to switch on by accident.
+  * IT POSTS BY DEFAULT NOW (owner's call, 2026-08-28). This used to default
+    to `propose` -- compose, log, say nothing -- on the reasoning that posting
+    to other people should never be switched on by accident. What changed is
+    that the accident is now much harder: the verifier rejects a line making a
+    checkable false claim BEFORE it is sent, and four live mocks have shown
+    what the thing actually says. `propose` is still there and is still the
+    right mode for a room of strangers.
 
 The reply is a suggestion from a 12b model, so it will sometimes be flat. Flat
 is fine. The failure that matters is volume, not quality.
@@ -42,9 +46,15 @@ OLLAMA_URL = os.environ.get("WES_OLLAMA_URL", "http://127.0.0.1:11434")
 MODEL = os.environ.get("WES_BANTER_MODEL",
                        os.environ.get("WES_ESCALATE_MODEL", "gemma4:12b"))
 
-# Floor between messages, in seconds. Deliberately long: a draft runs for an
-# hour or two and a handful of well-timed lines is the whole brief.
-MIN_GAP_S = 180.0
+# Floor between messages, in seconds. THE ONLY VOLUME CONTROL, now that the
+# prompt no longer asks for restraint -- picks arrive far faster than chat, so
+# nothing else stands between the room and a running commentary.
+#
+# 60s, down from 180s (owner's call, 2026-08-28). Measured across four live
+# mocks at 180s: 3-5 messages a draft, gaps of 200-340s, and the notable-pick
+# filter -- not this floor -- was usually the binding constraint. So the floor
+# had headroom. It is still the backstop if that filter ever loosens.
+MIN_GAP_S = 60.0
 
 # Cap on what we will post. Sleeper chat is a one-line medium and a paragraph
 # from a bot reads as spam regardless of content.

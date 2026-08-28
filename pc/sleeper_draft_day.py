@@ -243,7 +243,11 @@ def main():
                          "WRITE; --check honours it too, so `--check --join` "
                          "is the way to get seated and verified in one go.")
     ap.add_argument("--banter", choices=("off", "propose", "auto"),
-                    default="off")
+                    default="auto",
+                    help="chat in the draft room. Default 'auto' (posts); "
+                         "'propose' composes and logs without posting, which "
+                         "is the right mode for a room of strangers; 'off' is "
+                         "silent.")
     ap.add_argument("--banter-gap", type=float, default=None)
     ap.add_argument("--rebuild-snapshot", action="store_true",
                     help="rebuild the local board first (~5s). The staleness "

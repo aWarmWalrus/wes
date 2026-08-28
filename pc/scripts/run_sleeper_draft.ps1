@@ -19,8 +19,10 @@
 [CmdletBinding()]
 param([switch]$Check, [double]$WaitHours = 8.0, [string]$DraftId,
       [string]$League, [switch]$RebuildSnapshot, [switch]$Join,
-      [ValidateSet('off','propose','auto')][string]$Banter = 'off',
+      [ValidateSet('off','propose','auto')][string]$Banter = 'auto',
       [double]$BanterGap = 0)
+# -Banter defaults to 'auto' (posts, 2026-08-28). Use -Banter propose in a room
+# of strangers: it composes and logs without sending anything.
 
 $base = "C:\Users\awarm\wes-pc"
 $repo = if ($env:WES_REPO) { $env:WES_REPO } else { "C:\Users\awarm\wes" }
@@ -35,6 +37,15 @@ if (-not $env:WES_SLEEPER_TOKEN) {
     $env:WES_SLEEPER_TOKEN = [Environment]::GetEnvironmentVariable(
         'WES_SLEEPER_TOKEN', 'User')
 }
+# THE ACCOUNT TOO, for the same reason and a sharper one: the token and the
+# username have to match. A shell opened before WES_SLEEPER_USER was set would
+# take the built-in default while the token in the environment belongs to a
+# different account -- writes land as one person, seat lookups key on another,
+# and nothing says so.
+if (-not $env:WES_SLEEPER_USER) {
+    $env:WES_SLEEPER_USER = [Environment]::GetEnvironmentVariable(
+        'WES_SLEEPER_USER', 'User')
+}
 
 $args = @("$repo\pc\sleeper_draft_day.py", "--wait-hours", "$WaitHours")
 if ($Check) { $args += "--check" }
@@ -44,7 +55,11 @@ if ($DraftId) { $args += @("--draft", $DraftId) }
 if ($Join) { $args += "--join" }
 if ($League) { $args += @("--league", $League) }
 if ($RebuildSnapshot) { $args += "--rebuild-snapshot" }
-if ($Banter -ne "off") { $args += @("--banter", $Banter) }
+# ALWAYS PASS IT, including "off". This used to send the flag only when banter
+# was on, which was harmless while the script also defaulted to off -- and
+# became a trap the moment the script default became auto: -Banter off would
+# have sent nothing and silently produced a posting bot.
+$args += @("--banter", $Banter)
 if ($BanterGap -gt 0) { $args += @("--banter-gap", "$BanterGap") }
 
 # UTF-8 END TO END. Tee-Object writes UTF-16LE, which put a NUL between every

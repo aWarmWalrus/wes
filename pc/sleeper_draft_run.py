@@ -699,10 +699,12 @@ def main():
                          "two picks from the clock, so the poll cadence caps "
                          "it too.")
     ap.add_argument("--banter", choices=("off", "propose", "auto"),
-                    default="off",
-                    help="chat in the draft room. 'propose' composes and logs "
-                         "without posting; 'auto' posts. Off by default -- "
-                         "messages go to real people under the owner's name.")
+                    default="auto",
+                    help="chat in the draft room. Default 'auto' (posts); "
+                         "'propose' composes and logs without posting, which "
+                         "is the right mode for a room of strangers since "
+                         "messages go under the owner's name; 'off' is "
+                         "silent.")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     _log(f"watching draft {a.draft_id} for roster {a.roster_id} "
