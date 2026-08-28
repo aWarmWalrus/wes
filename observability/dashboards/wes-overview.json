@@ -4,121 +4,651 @@
   "title": "WES Overview",
   "timezone": "browser",
   "refresh": "10s",
-  "time": { "from": "now-1h", "to": "now" },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "panels": [
-    { "type": "row", "title": "PC (DESKTOP-R2PFF9T.local) — inference host", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }, "id": 100 },
     {
-      "type": "timeseries", "title": "PC CPU utilization", "id": 1,
-      "gridPos": { "x": 0, "y": 1, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prom" },
-      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
-      "targets": [ { "refId": "A", "expr": "100 * (1 - avg(rate(windows_cpu_time_total{mode=\"idle\"}[1m])))", "legendFormat": "cpu" } ]
+      "type": "row",
+      "title": "PC (DESKTOP-R2PFF9T.local) — inference host",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "id": 100
     },
     {
-      "type": "timeseries", "title": "PC RAM used", "id": 2,
-      "gridPos": { "x": 8, "y": 1, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prom" },
-      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
-      "targets": [ { "refId": "A", "expr": "100 * (1 - windows_memory_physical_free_bytes / windows_memory_physical_total_bytes)", "legendFormat": "ram" } ]
-    },
-    {
-      "type": "timeseries", "title": "GPU utilization (5060 Ti)", "id": 3,
-      "gridPos": { "x": 16, "y": 1, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prom" },
-      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
-      "targets": [ { "refId": "A", "expr": "100 * nvidia_smi_utilization_gpu_ratio", "legendFormat": "gpu" } ]
-    },
-    {
-      "type": "timeseries", "title": "VRAM (models resident)", "id": 4,
-      "gridPos": { "x": 0, "y": 9, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prom" },
-      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 } },
+      "type": "timeseries",
+      "title": "PC CPU utilization",
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
       "targets": [
-        { "refId": "A", "expr": "nvidia_smi_memory_used_bytes", "legendFormat": "used" },
-        { "refId": "B", "expr": "nvidia_smi_memory_total_bytes", "legendFormat": "total" }
+        {
+          "refId": "A",
+          "expr": "100 * (1 - avg(rate(windows_cpu_time_total{mode=\"idle\"}[1m])))",
+          "legendFormat": "cpu"
+        }
       ]
     },
     {
-      "type": "timeseries", "title": "GPU temperature / power", "id": 5,
-      "gridPos": { "x": 12, "y": 9, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prom" },
-      "fieldConfig": { "defaults": { "unit": "celsius" } },
+      "type": "timeseries",
+      "title": "PC RAM used",
+      "id": 2,
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
       "targets": [
-        { "refId": "A", "expr": "nvidia_smi_temperature_gpu", "legendFormat": "temp °C" },
-        { "refId": "B", "expr": "nvidia_smi_power_draw_watts", "legendFormat": "power W" }
+        {
+          "refId": "A",
+          "expr": "100 * (1 - windows_memory_physical_free_bytes / windows_memory_physical_total_bytes)",
+          "legendFormat": "ram"
+        }
       ]
     },
-    { "type": "row", "title": "Raspberry Pi 5 (10.0.0.79) — voice client", "gridPos": { "x": 0, "y": 17, "w": 24, "h": 1 }, "id": 101 },
     {
-      "type": "timeseries", "title": "Pi CPU utilization", "id": 6,
-      "gridPos": { "x": 0, "y": 18, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prom" },
-      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
-      "targets": [ { "refId": "A", "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])))", "legendFormat": "cpu" } ]
+      "type": "timeseries",
+      "title": "GPU utilization (5060 Ti)",
+      "id": 3,
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * nvidia_smi_utilization_gpu_ratio",
+          "legendFormat": "gpu"
+        }
+      ]
     },
     {
-      "type": "timeseries", "title": "Pi RAM used", "id": 7,
-      "gridPos": { "x": 8, "y": 18, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prom" },
-      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
-      "targets": [ { "refId": "A", "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "ram" } ]
+      "type": "timeseries",
+      "title": "VRAM (models resident)",
+      "id": 4,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nvidia_smi_memory_used_bytes",
+          "legendFormat": "used"
+        },
+        {
+          "refId": "B",
+          "expr": "nvidia_smi_memory_total_bytes",
+          "legendFormat": "total"
+        }
+      ]
     },
     {
-      "type": "timeseries", "title": "Pi temperature", "id": 8,
-      "gridPos": { "x": 16, "y": 18, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prom" },
-      "fieldConfig": { "defaults": { "unit": "celsius" } },
-      "targets": [ { "refId": "A", "expr": "node_thermal_zone_temp", "legendFormat": "{{zone}} {{type}}" } ]
+      "type": "timeseries",
+      "title": "GPU temperature / power",
+      "id": 5,
+      "gridPos": {
+        "x": 12,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nvidia_smi_temperature_gpu",
+          "legendFormat": "temp °C"
+        },
+        {
+          "refId": "B",
+          "expr": "nvidia_smi_power_draw_watts",
+          "legendFormat": "power W"
+        }
+      ]
     },
-    { "type": "row", "title": "WES tokens (wes_server /metrics — counters reset on server restart; increase() handles it)", "gridPos": { "x": 0, "y": 26, "w": 24, "h": 1 }, "id": 102 },
     {
-      "type": "timeseries", "title": "Token rate by model / call source", "id": 9,
-      "gridPos": { "x": 0, "y": 27, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prom" },
-      "fieldConfig": { "defaults": { "unit": "short", "min": 0 } },
-      "targets": [ { "refId": "A", "expr": "sum by (model, source, direction) (rate(wes_llm_tokens_total[5m]))", "legendFormat": "{{model}} {{source}} {{direction}}" } ]
+      "type": "row",
+      "title": "Raspberry Pi 5 (10.0.0.79) — voice client",
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 1
+      },
+      "id": 101
     },
     {
-      "type": "stat", "title": "Tokens in visible range (by model)", "id": 10,
-      "gridPos": { "x": 12, "y": 27, "w": 6, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prom" },
-      "fieldConfig": { "defaults": { "unit": "short" } },
-      "targets": [ { "refId": "A", "expr": "sum by (model) (increase(wes_llm_tokens_total[$__range]))", "legendFormat": "{{model}}" } ]
+      "type": "timeseries",
+      "title": "Pi CPU utilization",
+      "id": 6,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])))",
+          "legendFormat": "cpu"
+        }
+      ]
     },
     {
-      "type": "stat", "title": "Est. $ saved vs Haiku (range)", "id": 11,
+      "type": "timeseries",
+      "title": "Pi RAM used",
+      "id": 7,
+      "gridPos": {
+        "x": 8,
+        "y": 18,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
+          "legendFormat": "ram"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Pi temperature",
+      "id": 8,
+      "gridPos": {
+        "x": 16,
+        "y": 18,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "node_thermal_zone_temp",
+          "legendFormat": "{{zone}} {{type}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "WES tokens (wes_server /metrics — counters reset on server restart; increase() handles it)",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 1
+      },
+      "id": 102
+    },
+    {
+      "type": "timeseries",
+      "title": "Token rate by model / call source",
+      "id": 9,
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (model, source, direction) (rate(wes_llm_tokens_total[5m]))",
+          "legendFormat": "{{model}} {{source}} {{direction}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Tokens in visible range (by model)",
+      "id": 10,
+      "gridPos": {
+        "x": 12,
+        "y": 27,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (model) (increase(wes_llm_tokens_total[$__range]))",
+          "legendFormat": "{{model}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Est. $ saved vs Haiku (range)",
+      "id": 11,
       "description": "Local tokens priced at claude-haiku-4-5 rates ($1/MTok in, $5/MTok out, cached 2026-06-24 — keep in sync with wes_server.py). All-time totals: GET /usage.",
-      "gridPos": { "x": 18, "y": 27, "w": 6, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prom" },
-      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4 } },
-      "targets": [ { "refId": "A", "expr": "(sum(increase(wes_llm_tokens_total{direction=\"in\",source!=\"claude\"}[$__range])) * 1.0 + sum(increase(wes_llm_tokens_total{direction=\"out\",source!=\"claude\"}[$__range])) * 5.0) / 1e6", "legendFormat": "saved" } ]
+      "gridPos": {
+        "x": 18,
+        "y": 27,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(increase(wes_llm_tokens_total{direction=\"in\",source!=\"claude\"}[$__range])) * 1.0 + sum(increase(wes_llm_tokens_total{direction=\"out\",source!=\"claude\"}[$__range])) * 5.0) / 1e6",
+          "legendFormat": "saved"
+        }
+      ]
     },
-    { "type": "row", "title": "Recent turns (GET /turns — rolling window of the last 2000 exchanges)", "gridPos": { "x": 0, "y": 35, "w": 24, "h": 1 }, "id": 103 },
     {
-      "type": "table", "title": "Last 15 turns (newest first)", "id": 12,
-      "gridPos": { "x": 0, "y": 36, "w": 24, "h": 11 },
-      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
-      "fieldConfig": { "defaults": { "custom": { "filterable": true } }, "overrides": [
-        { "matcher": { "id": "byName", "options": "reply" }, "properties": [ { "id": "custom.width", "value": 560 } ] },
-        { "matcher": { "id": "byName", "options": "query" }, "properties": [ { "id": "custom.width", "value": 320 } ] }
-      ] },
-      "options": { "cellHeight": "sm" },
-      "targets": [ {
-        "refId": "A",
-        "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
-        "type": "json", "source": "url", "format": "table", "parser": "backend",
-        "url": "http://DESKTOP-R2PFF9T.local:8080/turns?n=15",
-        "url_options": { "method": "GET", "data": "" },
-        "root_selector": "turns",
-        "columns": [
-          { "selector": "ts", "text": "time", "type": "string" },
-          { "selector": "channel", "text": "channel", "type": "string" },
-          { "selector": "transcript", "text": "query", "type": "string" },
-          { "selector": "reply", "text": "reply", "type": "string" },
-          { "selector": "tools", "text": "tools", "type": "string" },
-          { "selector": "escalated", "text": "escalated", "type": "boolean" }
+      "type": "row",
+      "title": "Recent turns (GET /turns — rolling window of the last 2000 exchanges)",
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 24,
+        "h": 1
+      },
+      "id": 103
+    },
+    {
+      "type": "table",
+      "title": "Last 15 turns (newest first)",
+      "id": 12,
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 11
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "infinity"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reply"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 560
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "query"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 320
+              }
+            ]
+          }
         ]
-      } ]
+      },
+      "options": {
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "http://DESKTOP-R2PFF9T.local:8080/turns?n=15",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "turns",
+          "columns": [
+            {
+              "selector": "ts",
+              "text": "time",
+              "type": "string"
+            },
+            {
+              "selector": "channel",
+              "text": "channel",
+              "type": "string"
+            },
+            {
+              "selector": "transcript",
+              "text": "query",
+              "type": "string"
+            },
+            {
+              "selector": "reply",
+              "text": "reply",
+              "type": "string"
+            },
+            {
+              "selector": "tools",
+              "text": "tools",
+              "type": "string"
+            },
+            {
+              "selector": "escalated",
+              "text": "escalated",
+              "type": "boolean"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 104,
+      "collapsed": false,
+      "title": "Draft agent (GET /draft_turns — every model call, both sides; kind= draft.pick / draft.explain / draft.banter / draft.banter.dropped)",
+      "gridPos": {
+        "x": 0,
+        "y": 47,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "id": 13,
+      "title": "Last 15 draft agent calls (newest first)",
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 24,
+        "h": 12
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "infinity"
+      },
+      "description": "The full payload the agent was given and its raw reply. These are NOT conversation turns -- nobody said them to WES -- which is why they have their own endpoint and table. `error` on a draft.banter.dropped row is the reason the verifier refused to post the line.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "payload sent"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 520
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "model reply"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 460
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "secs"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 70
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "kind"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 160
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "error / drop reason"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 260
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "http://DESKTOP-R2PFF9T.local:8080/draft_turns?n=15",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "turns",
+          "columns": [
+            {
+              "selector": "ts",
+              "text": "time",
+              "type": "string"
+            },
+            {
+              "selector": "channel",
+              "text": "kind",
+              "type": "string"
+            },
+            {
+              "selector": "seconds",
+              "text": "secs",
+              "type": "number"
+            },
+            {
+              "selector": "model",
+              "text": "model",
+              "type": "string"
+            },
+            {
+              "selector": "transcript",
+              "text": "payload sent",
+              "type": "string"
+            },
+            {
+              "selector": "reply",
+              "text": "model reply",
+              "type": "string"
+            },
+            {
+              "selector": "error",
+              "text": "error / drop reason",
+              "type": "string"
+            }
+          ]
+        }
+      ]
     }
   ],
   "schemaVersion": 39

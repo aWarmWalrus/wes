@@ -1613,16 +1613,24 @@ def recent_turns(n=20, channel=None):
         out.append(rec)
         if len(out) >= n:
             break
+    return out
+
+
+def recent_draft_turns(n=20, kind=None):
+    """The last n DRAFT model calls, newest first. See `/draft_turns`.
+
+    A SEPARATE READ, not merged into `recent_turns`. Merging them was the first
+    attempt and it was wrong twice over: a conversation turn and a model call
+    are different shapes -- one has tools and escalation, the other has a
+    shortlist, a latency and a verdict -- so one table showed both badly. And
+    it made /turns read a second global path, which promptly broke four
+    turn-log tests by feeding them the owner's real draft log. Two endpoints,
+    two files, no coupling."""
     try:
         import wes_draft_log
-        out += [r for r in wes_draft_log.recent(n)
-                if not channel or r.get("channel") == channel]
-    except Exception:  # noqa: BLE001 — the draft log must never break /turns
-        pass
-    # Newest first across both files. Stable, so each file keeps its own order
-    # when second-resolution timestamps tie -- which they do, often.
-    out.sort(key=lambda r: r.get("ts") or "", reverse=True)
-    return out[:n]
+        return wes_draft_log.recent(n, kind)
+    except Exception:  # noqa: BLE001 — never break the endpoint on a bad file
+        return []
 
 
 # LiveKit-style interruption tag: when the client aborts playback (barge-in),
@@ -2270,6 +2278,23 @@ def turns_route():
     Grafana "Recent turns" table; also handy from curl or the Discord bot."""
     n = max(1, min(request.args.get("n", default=20, type=int), TURNS_MAX))
     return jsonify(turns=recent_turns(n, request.args.get("channel")))
+
+
+@app.route("/draft_turns")
+def draft_turns_route():
+    """Last n DRAFT model calls, newest first: the full payload the agent was
+    given, its raw reply, how long it took, and why a chat line was dropped.
+
+    Its own endpoint and its own dashboard table, deliberately apart from
+    /turns. These are not conversation turns -- nobody said them to WES -- and
+    the interesting columns are different: shortlist in, JSON out, latency,
+    verdict. ?kind= filters to draft.pick / draft.explain / draft.banter /
+    draft.banter.dropped.
+
+    Written by whichever process is drafting, read here. The server never
+    writes this file, so there is one writer and no race with the trim."""
+    n = max(1, min(request.args.get("n", default=20, type=int), TURNS_MAX))
+    return jsonify(turns=recent_draft_turns(n, request.args.get("kind")))
 
 
 @app.route("/metrics")

@@ -97,6 +97,48 @@ class TestItCannotBreakADraft:
         assert len(got) == 1 and got[0]["reply"] == "good"
 
 
+class TestTheEndpointIsSeparateFromTurns:
+    """Its own endpoint and table, deliberately. Merging draft calls into
+    /turns was the first attempt and wrong twice: the two have different
+    shapes, and it made /turns read a second global path — which promptly fed
+    four turn-log tests the owner's real draft log."""
+
+    def test_draft_turns_serves_the_draft_log(self):
+        import wes_server as ws
+        wes_draft_log.log_call("draft.pick", {"shortlist": ["Gibbs"]}, "ok",
+                               1.2, model="gemma4:12b")
+        with ws.app.test_client() as c:
+            got = c.get("/draft_turns").get_json()["turns"]
+        assert len(got) == 1
+        assert got[0]["channel"] == "draft.pick"
+        assert "Gibbs" in got[0]["transcript"]
+
+    def test_turns_does_NOT_include_draft_calls(self):
+        """The coupling that broke four tests must not come back."""
+        import wes_server as ws
+        wes_draft_log.log_call("draft.pick", {"a": 1}, "ok")
+        ws.record_turn("hello", "hi there", channel="voice")
+        with ws.app.test_client() as c:
+            turns = c.get("/turns").get_json()["turns"]
+        assert [t["channel"] for t in turns] == ["voice"]
+
+    def test_it_filters_by_kind(self):
+        import wes_server as ws
+        wes_draft_log.log_call("draft.pick", {}, "a")
+        wes_draft_log.log_call("draft.banter", {}, "b")
+        with ws.app.test_client() as c:
+            got = c.get("/draft_turns?kind=draft.banter").get_json()["turns"]
+        assert len(got) == 1 and got[0]["reply"] == "b"
+
+    def test_a_missing_draft_log_is_an_empty_list_not_a_500(self, monkeypatch,
+                                                            tmp_path):
+        import wes_server as ws
+        monkeypatch.setattr(wes_draft_log, "LOG", str(tmp_path / "gone.jsonl"))
+        with ws.app.test_client() as c:
+            r = c.get("/draft_turns")
+        assert r.status_code == 200 and r.get_json()["turns"] == []
+
+
 class TestTheAgentsActuallyCallIt:
     def test_a_pick_call_is_logged_with_its_payload(self, monkeypatch):
         import wes_draft_agent
