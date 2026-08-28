@@ -494,6 +494,25 @@ def _worth_most(picks):
     return picks[-1]
 
 
+def build_payload(messages, context, reacting_to=None):
+    """Exactly what the model is shown, in one place.
+
+    SHARED WITH THE LOGGER ON PURPOSE. The outcome records used to log the
+    draft `context` alone while the model was actually given context AND the
+    chat -- so a dropped line was filed without the messages that provoked it,
+    which is half its cause. Two constructions of "the payload" is one too
+    many; if it drifts again the log stops describing the call it claims to."""
+    payload = {
+        "draft": context or {},
+        "recent_chat": [{"from": m.get("author"), "said": m.get("text")}
+                        for m in (messages or [])[-8:]],
+    }
+    if reacting_to:
+        payload["reacting_to"] = reacting_to
+        payload["unprompted"] = not messages
+    return payload
+
+
 def compose(messages, context=None, reacting_to=None, _post_fn=None):
     """A line to post, or None to stay quiet.
 
@@ -503,14 +522,7 @@ def compose(messages, context=None, reacting_to=None, _post_fn=None):
     "remark on that" want different lines."""
     if not messages and not reacting_to:
         return None
-    payload = {
-        "draft": context or {},
-        "recent_chat": [{"from": m.get("author"), "said": m.get("text")}
-                        for m in (messages or [])[-8:]],
-    }
-    if reacting_to:
-        payload["reacting_to"] = reacting_to
-        payload["unprompted"] = not messages
+    payload = build_payload(messages, context, reacting_to)
     got = _ask(payload, _post_fn=_post_fn)
     if not isinstance(got, dict):
         return None
@@ -611,12 +623,16 @@ class Banter:
         # failure recurred; every rule enforced in code has held. Dropped lines
         # are logged with the reason, so "made something up" never looks like
         # "had nothing to say".
+        # The payload as the model saw it -- context AND chat -- so the record
+        # describes the call rather than half of it.
+        shown = build_payload(msgs if fresh else None, context,
+                              None if fresh else _worth_most(picks))
         why = unverifiable(line, context)
         if why:
-            return self._outcome("dropped", line, context, prompt, error=why)
+            return self._outcome("dropped", line, shown, prompt, error=why)
         if self.mode != "auto":
             self.last_sent_at = self._now()   # propose mode is rate-limited too
-            return self._outcome("would_say", line, context, prompt)
+            return self._outcome("would_say", line, shown, prompt)
         try:
             ok = (_send_fn(self.draft_id, line) if _send_fn
                   else _default_send(self.draft_id, line, self.browser))
@@ -625,10 +641,10 @@ class Banter:
         # The clock starts whether or not it landed: a failing send that is
         # retried every poll is exactly the flood this exists to prevent.
         self.last_sent_at = self._now()
-        return self._outcome("said" if ok else "send_failed", line, context,
+        return self._outcome("said" if ok else "send_failed", line, shown,
                              prompt)
 
-    def _outcome(self, action, line, context, prompt, error=None):
+    def _outcome(self, action, line, shown, prompt, error=None):
         """Record what became of a composed line, and return (action, detail).
 
         EVERY TERMINAL PATH, not just the drops. The first cut logged only
@@ -647,7 +663,7 @@ class Banter:
                   else f"{line}   <- re: {prompt}")
         try:
             import wes_draft_log
-            wes_draft_log.log_call(f"draft.banter.{action}", context, line,
+            wes_draft_log.log_call(f"draft.banter.{action}", shown, line,
                                    error=error, reacting_to=prompt,
                                    mode=self.mode)
         except Exception:  # noqa: BLE001 — logging must never break a draft

@@ -226,6 +226,37 @@ class TestTheAgentsActuallyCallIt:
         assert "Rico Dowdle" in got[0]["reacting_to"]
         assert got[0]["mode"] == "auto"
 
+    def test_the_outcome_record_carries_the_chat_the_model_saw(self):
+        """The outcome used to log the draft context alone while the model was
+        given context AND chat, so a dropped line was filed without the
+        messages that provoked it -- half its cause missing."""
+        import wes_banter
+        bt = wes_banter.Banter("D", me="us", mode="auto", min_gap_s=0,
+                               _now=lambda: 1000.0)
+        msgs = [{"author": "GMSnappy", "text": "your roster is a mess",
+                 "system": False}]
+        bt.tick(context={"recent_picks": []}, _read_fn=lambda _d: [],
+                _send_fn=lambda _d, ln: True,
+                _post_fn=lambda _b: '{"message": "x"}')            # prime
+        bt.tick(context={"recent_picks": []}, _read_fn=lambda _d: msgs,
+                _send_fn=lambda _d, ln: True,
+                _post_fn=lambda _b: '{"message": "rude."}')
+        rec = wes_draft_log.recent(1, kind="draft.banter.said")[0]
+        payload = json.loads(rec["transcript"])
+        assert "recent_chat" in payload, "chat missing from the outcome record"
+        assert payload["recent_chat"][0]["said"] == "your roster is a mess"
+        assert "draft" in payload
+
+    def test_the_logged_payload_matches_what_compose_sends(self):
+        """One construction of "the payload", shared. If it drifts the log
+        stops describing the call it claims to."""
+        import wes_banter
+        msgs = [{"author": "x", "text": "hi", "system": False}]
+        ctx = {"round": 3}
+        assert wes_banter.build_payload(msgs, ctx) == {
+            "draft": ctx,
+            "recent_chat": [{"from": "x", "said": "hi"}]}
+
     def test_propose_mode_records_that_nothing_was_sent(self):
         import wes_banter
         bt = wes_banter.Banter("D", me="us", mode="propose", min_gap_s=0,
