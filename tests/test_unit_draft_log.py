@@ -155,6 +155,17 @@ class TestTheEndpointIsSeparateFromTurns:
         assert "--- payload sent ---" in rec["detail"]
         assert "--- model reply ---" in rec["detail"]
 
+    def test_the_header_omits_fields_a_record_does_not_have(self):
+        """Outcome records time no call and name no model. A header reading
+        "Nones" is the small ugliness that makes a panel feel untrustworthy."""
+        import wes_server as ws
+        wes_draft_log.log_call("draft.banter.said", {"a": 1}, "nice one",
+                               reacting_to="pick 9 slot 4 took Dowdle")
+        with ws.app.test_client() as c:
+            rec = c.get("/draft_turns?pretty=1").get_json()["turns"][0]
+        assert "None" not in rec["detail"]
+        assert "reacting to: pick 9" in rec["detail"]
+
     def test_pretty_leaves_non_json_alone(self):
         """The reply is raw model output and is not always valid JSON — that
         is exactly the case worth reading, so it must not be dropped."""
@@ -191,6 +202,46 @@ class TestTheAgentsActuallyCallIt:
         rec = wes_draft_log.recent(1)[0]
         assert rec["channel"] == "draft.banter"
         assert "round" in rec["transcript"]
+
+    def test_a_posted_line_is_logged_too(self):
+        """Logging only rejections answered "did it make something up" and left
+        the commoner question -- did this reach the room -- unrecorded. A line
+        composed and rate-limited looked exactly like one that was posted."""
+        import wes_banter
+        bt = wes_banter.Banter("D", me="us", mode="auto", min_gap_s=0,
+                               _now=lambda: 1000.0)
+        ctx = {"recent_picks": [{"pick": 9, "player": "Rico Dowdle",
+                                 "round": 2, "ours": False, "by": "slot 4",
+                                 "we_wanted": True, "our_rank_for_him": 3}]}
+        bt.tick(context={"recent_picks": []}, _read_fn=lambda _d: [],
+                _send_fn=lambda _d, ln: True,
+                _post_fn=lambda _b: '{"message": "x"}')            # prime
+        act, _ = bt.tick(
+            context=ctx, _read_fn=lambda _d: [],
+            _send_fn=lambda _d, ln: True,
+            _post_fn=lambda _b: '{"message": "Aw man, Rico Dowdle."}')
+        assert act == "said"
+        got = wes_draft_log.recent(5, kind="draft.banter.said")
+        assert got and got[0]["reply"] == "Aw man, Rico Dowdle."
+        assert "Rico Dowdle" in got[0]["reacting_to"]
+        assert got[0]["mode"] == "auto"
+
+    def test_propose_mode_records_that_nothing_was_sent(self):
+        import wes_banter
+        bt = wes_banter.Banter("D", me="us", mode="propose", min_gap_s=0,
+                               _now=lambda: 1000.0)
+        sent = []
+        ctx = {"recent_picks": [{"pick": 9, "player": "Rico Dowdle",
+                                 "round": 2, "ours": False, "by": "slot 4",
+                                 "verdict": "steal"}]}
+        bt.tick(context={"recent_picks": []}, _read_fn=lambda _d: [],
+                _post_fn=lambda _b: '{"message": "x"}')            # prime
+        act, _ = bt.tick(
+            context=ctx, _read_fn=lambda _d: [],
+            _send_fn=lambda _d, ln: sent.append(ln) or True,
+            _post_fn=lambda _b: '{"message": "Nice one."}')
+        assert act == "would_say" and sent == []
+        assert wes_draft_log.recent(5, kind="draft.banter.would_say")
 
     def test_a_dropped_line_is_logged_with_the_context_that_made_it(self):
         """The most useful record this produces: a fabrication caught with the

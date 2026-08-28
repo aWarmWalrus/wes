@@ -2311,10 +2311,18 @@ def _pretty_draft_turn(rec):
     rec = dict(rec)
     for key in ("transcript", "reply"):
         rec[key] = _indent_json(rec.get(key))
+    # Only the parts that exist. Outcome records (draft.banter.said and
+    # friends) time no call and name no model, and a header reading "Nones"
+    # is the sort of small ugliness that makes a panel feel untrustworthy.
+    head = " ".join(filter(None, [
+        f"=== {rec.get('channel')}", f" {rec.get('ts')}",
+        f" {rec['seconds']}s" if rec.get("seconds") is not None else "",
+        f" {rec['model']}" if rec.get("model") else "",
+    ]))
     rec["detail"] = "\n".join(filter(None, [
-        f"=== {rec.get('channel')}  {rec.get('ts')}  "
-        f"{rec.get('seconds')}s  {rec.get('model') or ''}".rstrip(),
+        head,
         f"!! {rec['error']}" if rec.get("error") else "",
+        f"reacting to: {rec['reacting_to']}" if rec.get("reacting_to") else "",
         "--- payload sent ---", rec.get("transcript") or "",
         "--- model reply ---", rec.get("reply") or "",
     ]))

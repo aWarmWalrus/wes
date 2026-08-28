@@ -613,17 +613,10 @@ class Banter:
         # "had nothing to say".
         why = unverifiable(line, context)
         if why:
-            # RECORDED, not just returned. A dropped line is the single most
-            # useful record this thing produces -- it is a fabrication caught
-            # with the exact context that produced it still attached, which is
-            # what every earlier one had to be reconstructed by hand.
-            import wes_draft_log
-            wes_draft_log.log_call("draft.banter.dropped", context, line,
-                                   error=why)
-            return "dropped", f"{line}   <- UNVERIFIABLE: {why}"
+            return self._outcome("dropped", line, context, prompt, error=why)
         if self.mode != "auto":
             self.last_sent_at = self._now()   # propose mode is rate-limited too
-            return "would_say", f"{line}   <- re: {prompt}"
+            return self._outcome("would_say", line, context, prompt)
         try:
             ok = (_send_fn(self.draft_id, line) if _send_fn
                   else _default_send(self.draft_id, line, self.browser))
@@ -632,8 +625,34 @@ class Banter:
         # The clock starts whether or not it landed: a failing send that is
         # retried every poll is exactly the flood this exists to prevent.
         self.last_sent_at = self._now()
-        detail = f"{line}   <- re: {prompt}"
-        return ("said", detail) if ok else ("send_failed", detail)
+        return self._outcome("said" if ok else "send_failed", line, context,
+                             prompt)
+
+    def _outcome(self, action, line, context, prompt, error=None):
+        """Record what became of a composed line, and return (action, detail).
+
+        EVERY TERMINAL PATH, not just the drops. The first cut logged only
+        rejections, which answered "did it make something up" and left the more
+        common question -- did this line actually reach the room -- with no
+        record at all. A line that was composed and rate-limited, or composed
+        in propose mode and never sent, looked from the log exactly like a line
+        that was posted.
+
+        The kind carries the action (draft.banter.said / .dropped /
+        .would_say / .send_failed) so one filter separates them. `prompt` is
+        what we were reacting to, which is the other half of judging the line:
+        a dropped fabrication is only diagnosable next to the context that
+        produced it."""
+        detail = (f"{line}   <- UNVERIFIABLE: {error}" if error
+                  else f"{line}   <- re: {prompt}")
+        try:
+            import wes_draft_log
+            wes_draft_log.log_call(f"draft.banter.{action}", context, line,
+                                   error=error, reacting_to=prompt,
+                                   mode=self.mode)
+        except Exception:  # noqa: BLE001 — logging must never break a draft
+            pass
+        return action, detail
 
 
 def _default_read(draft_id, browser=None):
