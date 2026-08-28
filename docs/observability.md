@@ -171,6 +171,50 @@ Division of labor: **Prometheus evaluates, the Discord bot delivers.**
   their streams in `main`, and the alert watcher logs with `!a` (ASCII repr).
   Keep any new console print in the services ASCII-safe.
 
+## "Metrics stopped working" was the server being dead for a week (2026-08-28)
+
+**Symptom:** the dashboard's WES panels were empty. Everything else worked.
+
+**Cause.** `wes_server` was not running — nothing on :8080 at all, no Python
+process. It had died on 2026-08-21 and never came back, so `/metrics` had no
+one to serve it. The Discord bot was down from the same day. The machine had
+**not** rebooted (27 days' uptime), so this was not the #032 boot race.
+
+What separated the survivors from the casualties was one setting:
+
+| Task | RestartCount | Outcome |
+|---|---|---|
+| WES Exporters | 999 | still up after 27 days |
+| WES Server | 3 | dead |
+| WES Discord | 3 | dead |
+
+All three are logon-triggered and equally exposed to whatever transient killed
+them. The two with three retries burned through them and Task Scheduler gave up
+**permanently**; the one with 999 restarted and carried on. `RestartCount` is
+therefore not a tuning knob here, it is the difference between a blip and a
+week-long outage. WES Server is now 999.
+
+> **WES Discord is still at 3.** `Set-ScheduledTask` and `schtasks /change` both
+> return *Access is denied* for that task from a normal shell (Server accepted
+> the identical call), so it needs an elevated prompt:
+> `Get-ScheduledTask 'WES Discord'` → set `.Settings.RestartCount = 999` →
+> `Set-ScheduledTask`. Until then it will die permanently on its fourth crash.
+
+**The deeper problem is that nobody noticed for a week.** The alert rules cover
+`TargetDown` for scrape targets, and `wes_server` IS a scrape target — so a
+`TargetDown` should have fired and been DMed. It was not, because the alert
+watcher lives in `wes_discord.py`, **which was down too**. The watchdog and the
+thing it watches die together, and they died on the same afternoon. Worth
+either moving `alert_watch` somewhere that outlives the bot, or having the Pi
+alert on the bot's absence.
+
+Check both in one line:
+
+```powershell
+Get-ScheduledTask WES* | % { $i=$_|Get-ScheduledTaskInfo
+  "{0,-16} {1,-9} restarts={2}" -f $_.TaskName,$_.State,$_.Settings.RestartCount }
+```
+
 ## Still planned (phase 3b)
 
 - Turn-latency histograms by channel (stt/ttfa/total) on `/metrics`.
