@@ -1588,12 +1588,20 @@ def log_turn(transcript, reply, channel="voice", error=None):
 
 
 def recent_turns(n=20, channel=None):
-    """The last n logged exchanges, newest first, optionally one channel's."""
+    """The last n logged exchanges, newest first, optionally one channel's.
+
+    MERGES THE DRAFT LOG. The draft agents never touch this process -- they
+    POST straight to Ollama -- so their calls live in their own file, written
+    by whichever process is drafting. Two writers on one file would race with
+    the trim above; two readers cannot, so the merge happens on the way out.
+    Their channels are "draft.pick", "draft.explain", "draft.banter" and
+    "draft.banter.dropped": the existing table renders them unchanged, and a
+    channel filter separates them from voice."""
     try:
         with _turns_lock, open(TURNS_LOG, encoding="utf-8") as f:
             lines = f.readlines()
     except OSError:
-        return []
+        lines = []
     out = []
     for line in reversed(lines):
         try:
@@ -1605,7 +1613,16 @@ def recent_turns(n=20, channel=None):
         out.append(rec)
         if len(out) >= n:
             break
-    return out
+    try:
+        import wes_draft_log
+        out += [r for r in wes_draft_log.recent(n)
+                if not channel or r.get("channel") == channel]
+    except Exception:  # noqa: BLE001 — the draft log must never break /turns
+        pass
+    # Newest first across both files. Stable, so each file keeps its own order
+    # when second-resolution timestamps tie -- which they do, often.
+    out.sort(key=lambda r: r.get("ts") or "", reverse=True)
+    return out[:n]
 
 
 # LiveKit-style interruption tag: when the client aborts playback (barge-in),

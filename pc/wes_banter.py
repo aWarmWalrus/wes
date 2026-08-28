@@ -196,12 +196,20 @@ def pick_verdict(pick_no, market_rank, teams, rounds=None):
 
 
 def _ask(payload, _post_fn=None):
+    """One chat call, logged in full.
+
+    The payload matters more here than anywhere: every fabrication this bot has
+    produced was traced by hand afterwards, against an API, because the thing
+    the model was looking at when it said it was never written down."""
+    import wes_draft_log
     body = json.dumps({
         "model": MODEL, "stream": False, "format": "json", "think": False,
         "options": {"temperature": 0.8},   # banter, not arithmetic
         "messages": [{"role": "system", "content": SYSTEM},
                      {"role": "user", "content": json.dumps(payload)}],
     }).encode()
+    raw = None
+    t0 = time.time()
     try:
         if _post_fn is not None:
             raw = _post_fn(body)
@@ -212,8 +220,12 @@ def _ask(payload, _post_fn=None):
             with urllib.request.urlopen(req, timeout=60) as r:
                 raw = json.load(r)["message"]["content"]
         got = json.loads(raw)
+        wes_draft_log.log_call("draft.banter", payload, raw,
+                               time.time() - t0, model=MODEL)
         return got if isinstance(got, dict) else None
-    except Exception:  # noqa: BLE001 — banter must never break a draft
+    except Exception as e:  # noqa: BLE001 — banter must never break a draft
+        wes_draft_log.log_call("draft.banter", payload, raw, time.time() - t0,
+                               error=f"{type(e).__name__}: {e}", model=MODEL)
         return None
 
 
@@ -601,6 +613,13 @@ class Banter:
         # "had nothing to say".
         why = unverifiable(line, context)
         if why:
+            # RECORDED, not just returned. A dropped line is the single most
+            # useful record this thing produces -- it is a fabrication caught
+            # with the exact context that produced it still attached, which is
+            # what every earlier one had to be reconstructed by hand.
+            import wes_draft_log
+            wes_draft_log.log_call("draft.banter.dropped", context, line,
+                                   error=why)
             return "dropped", f"{line}   <- UNVERIFIABLE: {why}"
         if self.mode != "auto":
             self.last_sent_at = self._now()   # propose mode is rate-limited too

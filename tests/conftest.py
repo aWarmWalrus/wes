@@ -45,12 +45,20 @@ def _sandbox_ledgers(tmp_path, monkeypatch):
     the nightly eval writing to the live Yahoo account. A test must not be able
     to reach a real record no matter what it calls, so the sandbox is
     autouse and by path, not by asking each test to remember."""
+    import wes_draft_log as wdl
     import wes_execute as we
     import wes_server as ws
 
     monkeypatch.setattr(we, "LEDGER_FILE", str(tmp_path / "fantasy_ledger.jsonl"))
     monkeypatch.setattr(ws, "USAGE_LOG", str(tmp_path / "usage.csv"))
     monkeypatch.setattr(ws, "TURNS_LOG", str(tmp_path / "turns.jsonl"))
+    # THE DRAFT LOG BELONGS HERE FOR THE SAME REASON. `recent_turns` merges it
+    # into /turns, so sandboxing TURNS_LOG alone stopped being enough the
+    # moment that merge landed: four turn-log tests began reading the owner's
+    # REAL draft_turns.jsonl -- live records from a draft running at the time
+    # -- and failed against production data they never asked for. A second
+    # global path is a second way for a test to reach a real record.
+    monkeypatch.setattr(wdl, "LOG", str(tmp_path / "draft_turns.jsonl"))
     monkeypatch.setattr(ws, "CONV_DIR", str(tmp_path / "conversations"))
     monkeypatch.setattr(ws, "MEMORY_FILE", str(tmp_path / "MEMORY.md"))
     monkeypatch.setattr(ws, "SOUL_FILE", str(tmp_path / "SOUL.md"))

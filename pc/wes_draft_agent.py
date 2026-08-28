@@ -36,9 +36,11 @@ timer and risking a half-submitted pick.
 """
 import json
 import os
+import time
 import urllib.request
 
 import wes_draft
+import wes_draft_log
 import wes_schedule
 import wes_sleeper
 
@@ -134,15 +136,23 @@ def _strip_fence(raw):
     return body.strip()
 
 
-def _ask_model(payload, _post_fn=None, system=None):
+def _ask_model(payload, _post_fn=None, system=None, _kind="draft.pick"):
     """One structured call. Returns the parsed dict, or None on any failure —
-    the caller falls back to the engine, so this must never raise."""
+    the caller falls back to the engine, so this must never raise.
+
+    LOGGED IN FULL, both sides. This call does not go through `wes_server`, so
+    nothing about it reached the turn log or the dashboard: a whole draft left
+    behind one `reason` sentence per pick and no record of the shortlist that
+    produced it. Working out why a pick looked wrong meant rebuilding the board
+    afterwards and guessing. The payload is the question; it is written down."""
     body = json.dumps({
         "model": PICK_MODEL, "stream": False, "format": "json",
         "think": False, "options": {"temperature": 0},
         "messages": [{"role": "system", "content": system or SYSTEM},
                      {"role": "user", "content": json.dumps(payload)}],
     }).encode()
+    raw = None
+    t0 = time.time()
     try:
         if _post_fn is not None:
             raw = _post_fn(body)
@@ -152,8 +162,17 @@ def _ask_model(payload, _post_fn=None, system=None):
                 headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=90) as r:
                 raw = json.load(r)["message"]["content"]
-        return json.loads(_strip_fence(raw))
-    except Exception:  # noqa: BLE001 — a failed model call must fall back, not raise
+        got = json.loads(_strip_fence(raw))
+        wes_draft_log.log_call(_kind, payload, raw, time.time() - t0,
+                               model=PICK_MODEL)
+        return got
+    except Exception as e:  # noqa: BLE001 — a failed call must fall back, not raise
+        # THE FAILURES ARE THE POINT. A model call that returned nothing, or
+        # unparseable JSON, is exactly the turn you want to read afterwards --
+        # and it is the one a summary-only log throws away.
+        wes_draft_log.log_call(_kind, payload, raw, time.time() - t0,
+                               error=f"{type(e).__name__}: {e}",
+                               model=PICK_MODEL)
         return None
 
 
@@ -249,7 +268,8 @@ def explain(candidates, chosen, context=None, _post_fn=None):
                              for c in candidates],
                "player_taken": chosen.get("player_key"),
                "name_taken": chosen.get("name")}
-    got = _ask_model(payload, _post_fn=_post_fn, system=EXPLAIN_SYSTEM)
+    got = _ask_model(payload, _post_fn=_post_fn, system=EXPLAIN_SYSTEM,
+                     _kind="draft.explain")
     if not isinstance(got, dict):
         return [], None, ""
     raw = got.get("considered")
