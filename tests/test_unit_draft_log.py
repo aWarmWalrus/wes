@@ -130,6 +130,40 @@ class TestTheEndpointIsSeparateFromTurns:
             got = c.get("/draft_turns?kind=draft.banter").get_json()["turns"]
         assert len(got) == 1 and got[0]["reply"] == "b"
 
+    def test_pretty_indents_the_payload_for_reading(self):
+        """One line is right for the file and wrong for a person: a shortlist
+        of eight players is unreadable until it is indented."""
+        import wes_server as ws
+        wes_draft_log.log_call("draft.pick",
+                               {"shortlist": [{"name": "Gibbs", "vor": 5.4}]},
+                               '{"candidate": "Gibbs"}', 1.0)
+        with ws.app.test_client() as c:
+            plain = c.get("/draft_turns").get_json()["turns"][0]
+            nice = c.get("/draft_turns?pretty=1").get_json()["turns"][0]
+        assert "\n" not in plain["transcript"], "raw view should stay compact"
+        assert "\n  " in nice["transcript"], "pretty view should be indented"
+        assert '"name": "Gibbs"' in nice["transcript"]
+
+    def test_pretty_adds_a_readable_detail_blob(self):
+        import wes_server as ws
+        wes_draft_log.log_call("draft.banter.dropped", {"recent_picks": []},
+                               "Bowers at 7", error="says Bowers went at 7")
+        with ws.app.test_client() as c:
+            rec = c.get("/draft_turns?pretty=1").get_json()["turns"][0]
+        assert "draft.banter.dropped" in rec["detail"]
+        assert "says Bowers went at 7" in rec["detail"]
+        assert "--- payload sent ---" in rec["detail"]
+        assert "--- model reply ---" in rec["detail"]
+
+    def test_pretty_leaves_non_json_alone(self):
+        """The reply is raw model output and is not always valid JSON — that
+        is exactly the case worth reading, so it must not be dropped."""
+        import wes_server as ws
+        wes_draft_log.log_call("draft.pick", {"a": 1}, "not json at all")
+        with ws.app.test_client() as c:
+            rec = c.get("/draft_turns?pretty=1").get_json()["turns"][0]
+        assert rec["reply"] == "not json at all"
+
     def test_a_missing_draft_log_is_an_empty_list_not_a_500(self, monkeypatch,
                                                             tmp_path):
         import wes_server as ws

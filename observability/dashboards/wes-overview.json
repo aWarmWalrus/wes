@@ -480,7 +480,7 @@
       "type": "row",
       "id": 104,
       "collapsed": false,
-      "title": "Draft agent (GET /draft_turns — every model call, both sides; kind= draft.pick / draft.explain / draft.banter / draft.banter.dropped)",
+      "title": "Draft agent (GET /draft_turns — every model call, both sides. Click a payload or reply cell to read it formatted)",
       "gridPos": {
         "x": 0,
         "y": 47,
@@ -492,46 +492,51 @@
     {
       "type": "table",
       "id": 13,
-      "title": "Last 15 draft agent calls (newest first)",
+      "title": "Draft agent calls (newest first — click payload/reply to expand)",
       "gridPos": {
         "x": 0,
         "y": 48,
         "w": 24,
-        "h": 12
+        "h": 16
       },
       "datasource": {
         "type": "yesoreyeram-infinity-datasource",
         "uid": "infinity"
       },
-      "description": "The full payload the agent was given and its raw reply. These are NOT conversation turns -- nobody said them to WES -- which is why they have their own endpoint and table. `error` on a draft.banter.dropped row is the reason the verifier refused to post the line.",
+      "description": "Every model call the draft agents make, both sides. NOT conversation turns -- nobody said these to WES. `payload sent` is exactly what the model was given, including the shortlist in the order it saw it; click any cell to read it formatted. On a draft.banter.dropped row, `error` is why the verifier refused to post the line.",
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "filterable": true
+            "filterable": true,
+            "align": "left",
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            }
           }
         },
         "overrides": [
           {
             "matcher": {
               "id": "byName",
-              "options": "payload sent"
+              "options": "time"
             },
             "properties": [
               {
                 "id": "custom.width",
-                "value": 520
+                "value": 155
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "model reply"
+              "options": "kind"
             },
             "properties": [
               {
                 "id": "custom.width",
-                "value": 460
+                "value": 165
               }
             ]
           },
@@ -548,18 +553,66 @@
               {
                 "id": "unit",
                 "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 2
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "kind"
+              "options": "model"
             },
             "properties": [
               {
                 "id": "custom.width",
-                "value": 160
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "payload sent"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "json-view"
+                }
+              },
+              {
+                "id": "custom.inspect",
+                "value": true
+              },
+              {
+                "id": "custom.width",
+                "value": 620
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "model reply"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "json-view"
+                }
+              },
+              {
+                "id": "custom.inspect",
+                "value": true
+              },
+              {
+                "id": "custom.width",
+                "value": 480
               }
             ]
           },
@@ -571,12 +624,17 @@
             "properties": [
               {
                 "id": "custom.width",
-                "value": 260
+                "value": 300
+              },
+              {
+                "id": "custom.inspect",
+                "value": true
               },
               {
                 "id": "custom.cellOptions",
                 "value": {
-                  "type": "color-text"
+                  "type": "color-text",
+                  "wrapText": true
                 }
               },
               {
@@ -591,7 +649,11 @@
         ]
       },
       "options": {
-        "cellHeight": "sm"
+        "cellHeight": "lg",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
       },
       "targets": [
         {
@@ -604,7 +666,7 @@
           "source": "url",
           "format": "table",
           "parser": "backend",
-          "url": "http://DESKTOP-R2PFF9T.local:8080/draft_turns?n=15",
+          "url": "http://DESKTOP-R2PFF9T.local:8080/draft_turns?n=25",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -644,6 +706,60 @@
             {
               "selector": "error",
               "text": "error / drop reason",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "logs",
+      "id": 14,
+      "title": "Latest call in full (pretty-printed)",
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 24,
+        "h": 14
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "infinity"
+      },
+      "description": "The most recent draft model calls, formatted. Use the table above to scan, this to read one.",
+      "options": {
+        "showTime": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "logs",
+          "parser": "backend",
+          "url": "http://DESKTOP-R2PFF9T.local:8080/draft_turns?n=5&pretty=1",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "turns",
+          "columns": [
+            {
+              "selector": "ts",
+              "text": "timestamp",
+              "type": "timestamp"
+            },
+            {
+              "selector": "detail",
+              "text": "body",
               "type": "string"
             }
           ]

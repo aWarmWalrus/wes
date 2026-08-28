@@ -2294,7 +2294,41 @@ def draft_turns_route():
     Written by whichever process is drafting, read here. The server never
     writes this file, so there is one writer and no race with the trim."""
     n = max(1, min(request.args.get("n", default=20, type=int), TURNS_MAX))
-    return jsonify(turns=recent_draft_turns(n, request.args.get("kind")))
+    out = recent_draft_turns(n, request.args.get("kind"))
+    if request.args.get("pretty"):
+        out = [_pretty_draft_turn(r) for r in out]
+    return jsonify(turns=out)
+
+
+def _pretty_draft_turn(rec):
+    """Re-indent the JSON in a record, and add a `detail` blob to read.
+
+    The payload is the whole point of the log and it is stored as one line,
+    because JSONL requires that. One line is right for the file and wrong for
+    a person: a shortlist of eight players with a dozen fields each is
+    unreadable until it is indented. Done at SERVE time so the file stays
+    valid and only the view changes."""
+    rec = dict(rec)
+    for key in ("transcript", "reply"):
+        rec[key] = _indent_json(rec.get(key))
+    rec["detail"] = "\n".join(filter(None, [
+        f"=== {rec.get('channel')}  {rec.get('ts')}  "
+        f"{rec.get('seconds')}s  {rec.get('model') or ''}".rstrip(),
+        f"!! {rec['error']}" if rec.get("error") else "",
+        "--- payload sent ---", rec.get("transcript") or "",
+        "--- model reply ---", rec.get("reply") or "",
+    ]))
+    return rec
+
+
+def _indent_json(v):
+    """Pretty-print if it is JSON, leave it alone if it is not."""
+    if not isinstance(v, str) or not v.strip():
+        return v
+    try:
+        return json.dumps(json.loads(v), indent=2, ensure_ascii=False)
+    except ValueError:
+        return v
 
 
 @app.route("/metrics")
