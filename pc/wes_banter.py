@@ -56,6 +56,16 @@ MODEL = os.environ.get("WES_BANTER_MODEL",
 # had headroom. It is still the backstop if that filter ever loosens.
 MIN_GAP_S = 60.0
 
+# ...but a message that NAMES us gets a shorter one. Unprompted commentary and
+# a direct question are different acts: the first is the bot choosing to speak,
+# which is what a floor exists to ration, and the second is somebody waiting
+# for an answer. Rationing the reply is how it comes across as broken rather
+# than restrained -- asked "what happened bro" it once said nothing at all.
+#
+# Still a floor, not an exemption: someone spamming our name cannot turn this
+# into a chat client.
+DIRECT_GAP_S = 30.0
+
 # Cap on what we will post. Sleeper chat is a one-line medium and a paragraph
 # from a bot reads as spam regardless of content.
 MAX_CHARS = 200
@@ -112,31 +122,24 @@ SYSTEM = (
     "name and the real round, and vary the wording.\n"
     "KNOW WHAT YOU DRAFTED. Anything marked `ours`, or listed in "
     "`our_roster`, is YOUR pick -- own it, defend it, joke about it, but "
-    "never disown it. Told \"you're the one that took Puka you dumb dumb\", "
-    "it replied that at least its first-rounder was not a questionable "
-    "gamble -- about Puka Nacua, its own first-round pick, who was listed "
-    "questionable (2026-08-22). Denying your own roster loses the room.\n"
+    "never disown it. Denying your own roster loses the room.\n"
     "AND THE MIRROR OF THAT: NEVER CLAIM A PLAYER YOU DID NOT DRAFT. "
     "`our_roster` is the COMPLETE list of who is yours; a pick with "
     "`ours: false` belongs to the manager in its `by` field and to nobody "
     "else. Being in `recent_picks` means somebody took him, not that you did. "
-    "It told the owner \"you just let Jayden Daniels and Tony Pollard slip by "
-    "us\" when Daniels had gone to slot 5 and Pollard to slot 2 -- two players "
-    "on two other teams, claimed as ours in front of the room (2026-08-25). "
     "Everyone can see the board; a made-up claim is not a joke, it just makes "
     "you look like you are not watching.\n"
-    "THAT MEANS NOT LEADING WITH \"at least MY guy isn't...\" WHEN HE IS. The "
-    "same failure came back softened three days later: \"at least my "
-    "first-rounder isn't a gamble, even if he might be a bit banged up\" -- "
-    "again about Nacua, again listed questionable (2026-08-25). If your own "
-    "player carries an injury flag, lead by owning it. \"Yes he's "
-    "questionable, I took the upside\" is a position; \"at least mine isn't a "
-    "gamble\" about a questionable player is just wrong, and everyone in the "
-    "room can see the tag.\n"
+    "If your own player carries an injury flag, LEAD BY OWNING IT. \"Yes he's "
+    "questionable, I took the upside\" is a position. Denying the tag is not, "
+    "and everyone in the room can see it.\n"
     "Rules: one sentence, under 200 characters. No hashtags. No emoji spam "
     "(one is plenty). Never insult anyone's appearance, intelligence, family, "
     "or anything about who they are — the target is always their FANTASY "
     "TEAM. Keep it the kind of ribbing friends enjoy.\n"
+    "`addressed_to_you` MEANS SOMEBODY IS WAITING. When it is present, those "
+    "messages named you -- answer THEM first and directly, before any "
+    "commentary about the board. A reply that ignores the question and "
+    "remarks on a pick instead reads as not listening.\n"
     "ANSWER WHEN SPOKEN TO. If the last message is a question, or is clearly "
     "aimed at you, reply — even briefly. Ignoring someone who addressed you "
     "directly is not restraint, it is rude, and it reads as broken. Observed "
@@ -237,6 +240,50 @@ def _ask(payload, _post_fn=None):
         wes_draft_log.log_call("draft.banter", payload, raw, time.time() - t0,
                                error=f"{type(e).__name__}: {e}", model=MODEL)
         return None
+
+
+def _name_forms(me):
+    """The ways somebody might write our name, normalised.
+
+    People address each other by DISPLAY name in this room -- the live logs
+    have "GMSnappy,", "aykutb," and "awarmwalrus" -- but nobody types
+    "GMBartimusPrime" twice. They shorten it. So the full name plus THE SINGLE
+    LONGEST camel-case component, which for GMBartimusPrime is "bartimus".
+
+    The longest, not every component over some length. Taking all of them at
+    five-plus characters also accepted "prime", and "prime time baby" and
+    "prime pick right there" are things people say about players -- both would
+    have jumped the queue as if somebody had asked us a question. The longest
+    component is the distinctive one by construction; the others are the
+    prefixes and suffixes half the room shares."""
+    flat = "".join(c for c in (me or "").lower() if c.isalnum())
+    forms = {flat} if flat else set()
+    parts = re.findall(r"[A-Z]?[a-z]+|\d+", me or "")
+    if parts:
+        longest = max(parts, key=len)
+        if len(longest) >= 5:
+            forms.add(longest.lower())
+    return {f for f in forms if f}
+
+
+def addressed_to(messages, me):
+    """The messages that NAME us. Someone talking TO us, not near us.
+
+    A question aimed at the room is not the same as one aimed at you, and
+    answering the second slowly is what reads as broken -- asked "what happened
+    bro" after losing a pick, this said nothing for a whole poll cycle
+    (2026-08-21). Being named is the one signal that is checkable without
+    guessing at intent."""
+    forms = _name_forms(me)
+    if not forms:
+        return []
+    out = []
+    for m in messages or []:
+        flat = "".join(c for c in (m.get("text") or "").lower()
+                       if c.isalnum())
+        if any(f in flat for f in forms):
+            out.append(m)
+    return out
 
 
 def new_messages(messages, seen_texts, me):
@@ -504,7 +551,7 @@ def _worth_most(picks):
     return picks[-1]
 
 
-def build_payload(messages, context, reacting_to=None):
+def build_payload(messages, context, reacting_to=None, direct=None):
     """Exactly what the model is shown, in one place.
 
     SHARED WITH THE LOGGER ON PURPOSE. The outcome records used to log the
@@ -520,10 +567,18 @@ def build_payload(messages, context, reacting_to=None):
     if reacting_to:
         payload["reacting_to"] = reacting_to
         payload["unprompted"] = not messages
+    # NAMED, so the reply should read as an answer rather than a remark. The
+    # model cannot reliably spot this itself -- "GMBartimusPrime" and
+    # "bartimus" and a bare question all look like chat to it -- and it is a
+    # fact we already computed to pick the rate limit.
+    if direct:
+        payload["addressed_to_you"] = [
+            {"from": m.get("author"), "said": m.get("text")} for m in direct]
     return payload
 
 
-def compose(messages, context=None, reacting_to=None, _post_fn=None):
+def compose(messages, context=None, reacting_to=None, _post_fn=None,
+            direct=None):
     """A line to post, or None to stay quiet.
 
     Fires on a chat message, on a notable PICK, or both. `reacting_to` is the
@@ -532,7 +587,7 @@ def compose(messages, context=None, reacting_to=None, _post_fn=None):
     "remark on that" want different lines."""
     if not messages and not reacting_to:
         return None
-    payload = build_payload(messages, context, reacting_to)
+    payload = build_payload(messages, context, reacting_to, direct)
     got = _ask(payload, _post_fn=_post_fn)
     if not isinstance(got, dict):
         return None
@@ -553,7 +608,8 @@ class Banter:
     autonomy, so there is one idea to learn rather than two."""
 
     def __init__(self, draft_id, me=None, mode="propose",
-                 min_gap_s=MIN_GAP_S, _now=None, browser=None):
+                 min_gap_s=MIN_GAP_S, _now=None, browser=None,
+                 direct_gap_s=DIRECT_GAP_S):
         # An optional held-open browser. Reading the chat cost a full launch
         # every poll -- ~9s to fetch a handful of messages -- which is what
         # made the bot feel sluggish in a live room.
@@ -567,6 +623,10 @@ class Banter:
         self.me = me or wes_sleeper.USERNAME
         self.mode = mode
         self.min_gap_s = min_gap_s
+        # Never longer than the general floor: a caller who widens the gap to
+        # quieten the bot down must not accidentally make it chattier when
+        # spoken to.
+        self.direct_gap_s = min(direct_gap_s, min_gap_s)
         self.seen = set()
         # Pick numbers already considered for an unprompted reaction. Primed
         # on the first pass like `seen`, so arriving mid-draft does not produce
@@ -608,9 +668,15 @@ class Banter:
         if not fresh and not picks:
             return "quiet", "nothing new"
 
+        # SPOKEN TO, or merely speaking? A message that names us gets the
+        # shorter floor: somebody is waiting on an answer, and rationing that
+        # is what reads as broken rather than restrained.
+        direct = addressed_to(fresh, self.me)
+        gap = self.direct_gap_s if direct else self.min_gap_s
         since = self._now() - self.last_sent_at
-        if since < self.min_gap_s:
-            return "rate_limited", f"{self.min_gap_s - since:.0f}s to go"
+        if since < gap:
+            return "rate_limited", (f"{gap - since:.0f}s to go"
+                                    f"{' (direct)' if direct else ''}")
 
         # Carried into the return so the log shows the EXCHANGE. A
         # transcript of only our own lines reads like a bot talking to itself,
@@ -618,6 +684,8 @@ class Banter:
         if fresh:
             prompt = " | ".join(f"{m['author']}: {m['text'][:60]}"
                                 for m in fresh[-2:])
+            if direct:
+                prompt = "@us " + prompt
         else:
             prompt = " | ".join(_describe_pick(p) for p in picks[-2:])
         # CHAT WINS when both fired. Somebody spoke to us and answering that
@@ -625,7 +693,7 @@ class Banter:
         # either way, so nothing is lost by letting the reply carry them.
         line = compose(msgs if fresh else None, context=context,
                        reacting_to=(None if fresh else _worth_most(picks)),
-                       _post_fn=_post_fn)
+                       _post_fn=_post_fn, direct=direct)
         if not line:
             return "quiet", f"nothing worth saying (re: {prompt})"
         # THE LAST WORD IS A CHECK, NOT AN INSTRUCTION. Three paragraphs were
@@ -636,7 +704,7 @@ class Banter:
         # The payload as the model saw it -- context AND chat -- so the record
         # describes the call rather than half of it.
         shown = build_payload(msgs if fresh else None, context,
-                              None if fresh else _worth_most(picks))
+                              None if fresh else _worth_most(picks), direct)
         why = unverifiable(line, context)
         if why:
             return self._outcome("dropped", line, shown, prompt, error=why)

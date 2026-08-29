@@ -46,7 +46,16 @@ import wes_sleeper
 # How often to look. Fast when our pick is near, lazy when it is not — a draft
 # can run for hours and there is nothing to do for most of it.
 POLL_NEAR_S = 5.0
-POLL_FAR_S = 20.0
+# 8s, down from 20s. This is the dominant term in how long somebody waits for
+# an answer: a chat read on the held browser is sub-second and the model call
+# is 6-11s, so a 20s poll meant a direct question could sit unseen for longer
+# than everything else combined. The reads themselves are cheap -- draft_turn
+# is cached at 3s and a chat read reuses the open page -- and the near-clock
+# cadence has been 5s all along without trouble.
+POLL_FAR_S = 8.0
+# Chat is not read inside this many picks of our turn. A read must never delay
+# a pick, and that ordering is not up for negotiation -- being slow to answer
+# costs a joke, being slow to pick costs the draft.
 NEAR_PICKS = 2
 
 # How many times to attempt a pick while the clock is still ours. The failures
