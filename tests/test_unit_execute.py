@@ -162,6 +162,85 @@ class TestPlanSwaps:
         assert ex._norm_slot(sim["B"]) == "WR"
         assert ex._norm_slot(sim["C"]) == "QB"
 
+    def test_a_cycle_is_not_decomposed_into_an_ILLEGAL_swap(self):
+        """THE LIVE FAILURE, 2026-08-26 to 2026-08-29, every scheduled run.
+
+        Charles's Pop: Chase WR->BN, Collins W/R/T->WR, Stevenson BN->W/R/T.
+        The planner paired Chase with Stevenson because Stevenson occupied the
+        bench slot Chase wanted -- an exchange that would have put a RB in a WR
+        slot. Yahoo never offers that row, so the write failed with
+
+            no swap target found for "Ja'Marr Chase" -> Rhamondre Stevenson
+            among ['W_R_T', 'BN', 'BN', 'BN']
+
+        and DMed the owner about a possibly-inconsistent lineup each morning.
+        Eligibility comes straight off the scraped roster and was simply never
+        consulted."""
+        moves = [{"name": "Chase", "from_slot": "WR", "to_slot": "BN"},
+                 {"name": "Collins", "from_slot": "W/R/T", "to_slot": "WR"},
+                 {"name": "Stevenson", "from_slot": "BN", "to_slot": "W/R/T"}]
+        current = {"Chase": "WR", "Collins": "W/R/T", "Stevenson": "BN"}
+        # Chase really does come back with an EMPTY eligibility list on a live
+        # read, which is why unknown has to mean "allowed".
+        elig = {"Chase": [], "Collins": ["WR"], "Stevenson": ["RB"]}
+        plan = ex._plan_swaps(moves, current, elig)
+
+        # Every swap must be one Yahoo would actually offer.
+        sim = dict(current)
+        for name, partner, _dom in plan:
+            if partner:
+                assert ex._can_fill(sim[name], elig[partner]), (
+                    f"{partner} cannot legally occupy {sim[name]}")
+                assert ex._can_fill(sim[partner], elig[name]), (
+                    f"{name} cannot legally occupy {sim[partner]}")
+                sim[name], sim[partner] = sim[partner], sim[name]
+            else:
+                sim[name] = next(m["to_slot"] for m in moves
+                                 if m["name"] == name)
+        # ...and the end state is still what the optimizer asked for.
+        assert ex._norm_slot(sim["Chase"]) == "BN"
+        assert ex._norm_slot(sim["Collins"]) == "WR"
+        assert ex._norm_slot(sim["Stevenson"]) == "W/R/T"
+
+    def test_eligibility_is_what_rejects_the_illegal_partner(self):
+        """The case above passes even with eligibility switched off, because
+        the legal partner happens to be considered first -- so it does not
+        actually prove the check works. Here the ILLEGAL partner is considered
+        first (Stevenson before Collins) and swapping with him would land Chase
+        on his target, so progress alone would choose him. Only eligibility
+        rules him out."""
+        moves = [{"name": "Chase", "from_slot": "WR", "to_slot": "BN"},
+                 {"name": "Stevenson", "from_slot": "BN", "to_slot": "W/R/T"},
+                 {"name": "Collins", "from_slot": "W/R/T", "to_slot": "WR"}]
+        current = {"Chase": "WR", "Stevenson": "BN", "Collins": "W/R/T"}
+        elig = {"Chase": ["WR"], "Stevenson": ["RB"], "Collins": ["WR"]}
+
+        first = ex._plan_swaps(moves, current, elig)[0]
+        assert first[1] != "Stevenson", (
+            "planned a RB into a WR slot -- Yahoo will not offer that row")
+
+        # Without eligibility the planner has no way to know, and does pick him
+        # -- which is the bug this guards, stated as an assertion.
+        blind = ex._plan_swaps(moves, current)[0]
+        assert blind[1] == "Stevenson"
+
+    def test_eligibility_is_optional_and_unknown_never_blocks(self):
+        """Called without eligibility -- as the older tests do -- planning must
+        behave exactly as before rather than refusing everything."""
+        moves = [{"name": "A", "from_slot": "BN", "to_slot": "QB"},
+                 {"name": "B", "from_slot": "QB", "to_slot": "BN"}]
+        assert ex._plan_swaps(moves, {"A": "BN", "B": "QB"}) == [("A", "B",
+                                                                 "QB")]
+
+    def test_a_flex_slot_accepts_its_component_positions(self):
+        assert ex._can_fill("W/R/T", ["RB"])
+        assert ex._can_fill("W/R/T", ["TE"])
+        assert not ex._can_fill("W/R/T", ["QB"])
+        assert not ex._can_fill("WR", ["RB"])
+        assert ex._can_fill("BN", ["RB"])      # bench takes anyone
+        assert ex._can_fill("IR", ["QB"])
+        assert ex._can_fill("WR", [])          # unknown means allowed
+
     def test_a_genuinely_impossible_move_is_not_caught_at_planning_time(self):
         """Documented honest limit: _plan_swaps only sees OCCUPIED slots (no
         total-capacity figure), so it can't tell "a real empty slot exists"

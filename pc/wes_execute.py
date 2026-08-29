@@ -634,7 +634,39 @@ def _dom_slot(slot):
     return _norm_slot(slot).replace("/", "_")
 
 
-def _plan_swaps(moves, current_slots):
+# Which positions a slot will accept. Yahoo spells flex slots as "W/R/T"; the
+# single letters are its own abbreviations, so they are mapped explicitly
+# rather than guessed at.
+_SLOT_LETTER = {"Q": "QB", "W": "WR", "R": "RB", "T": "TE", "K": "K",
+                "D": "DEF", "DEF": "DEF", "DST": "DEF"}
+
+
+def _slot_accepts(slot):
+    """The set of positions `slot` can hold, or None for 'anything'."""
+    s = _norm_slot(slot)
+    if s in ("BN", "IR", ""):
+        return None                      # bench and IR take anyone
+    parts = [p for p in s.split("/") if p]
+    out = set()
+    for p in parts:
+        out.add(_SLOT_LETTER.get(p, p))
+    return out or None
+
+
+def _can_fill(slot, positions):
+    """Could a player eligible at `positions` legally sit in `slot`?
+
+    UNKNOWN MEANS YES. Yahoo's roster scrape returns an empty eligibility list
+    for some players -- Ja'Marr Chase came back `eligible=[]` on a live read --
+    so treating "we don't know" as "not allowed" would block legal swaps and
+    be far worse than the bug this exists to fix."""
+    accepts = _slot_accepts(slot)
+    if accepts is None or not positions:
+        return True
+    return any(p in accepts for p in positions)
+
+
+def _plan_swaps(moves, current_slots, eligible=None):
     """PURE planning: turn `moves` (diff_lineup output) into an ordered list of
     swap operations executable via Yahoo's player<->player (or player<->empty)
     swap gesture. No browser, no network — the whole point is that this is
@@ -668,38 +700,76 @@ def _plan_swaps(moves, current_slots):
     an actual empty `swaptarget` row and raises RuntimeError when none exists,
     rather than clicking something incorrect. So the overall system still
     never half-applies silently; it just isn't caught at planning time."""
-    remaining = {m["name"]: dict(m) for m in moves}
+    want_of = {m["name"]: _norm_slot(m["to_slot"]) for m in moves}
+    elig = eligible or {}
     slots = dict(current_slots)
     plan = []
     guard = 0
     limit = len(moves) * 3 + 5
-    while remaining:
+
+    def settled(n):
+        return _norm_slot(slots.get(n, "")) == want_of[n]
+
+    def legal(a, b):
+        """Both halves of the exchange have to be allowed, or Yahoo simply
+        will not offer the row."""
+        return (_can_fill(slots.get(b, ""), elig.get(a))
+                and _can_fill(slots.get(a, ""), elig.get(b)))
+
+    while True:
         guard += 1
         if guard > limit:
             raise ValueError(f"lineup plan did not converge after {limit} "
-                             f"steps; unresolved: {list(remaining)}")
-        name, m = next(iter(remaining.items()))
-        want = _norm_slot(m["to_slot"])
-        if _norm_slot(slots.get(name, "")) == want:
-            del remaining[name]
-            continue
-        # A partner currently sitting in the wanted slot type who ALSO needs to
-        # leave it — one swap satisfies both of you.
-        partner = None
-        for other_name, other_m in remaining.items():
-            if other_name == name:
-                continue
-            if _norm_slot(slots.get(other_name, "")) == want \
-                    and _norm_slot(other_m["to_slot"]) != want:
-                partner = other_name
+                             f"steps; unresolved: "
+                             f"{[n for n in want_of if not settled(n)]}")
+        unresolved = [n for n in want_of if not settled(n)]
+        if not unresolved:
+            return plan
+
+        # A LEGAL SWAP THAT MAKES PROGRESS. The old rule looked only for a
+        # partner already sitting in the slot `name` wants, which is right for
+        # a straight two-player exchange and wrong for a cycle: it paired
+        # Ja'Marr Chase (WR) with Rhamondre Stevenson (BN) because Stevenson
+        # occupied the bench slot Chase wanted -- an exchange that would have
+        # put a RB in a WR slot. Yahoo never offered the row, and the write
+        # failed every morning from 2026-08-26.
+        #
+        # Any partner will do provided the exchange is legal both ways and
+        # lands at least one of the two on its target. The same three moves
+        # then decompose as Chase<->Collins (both WR-eligible) followed by
+        # Chase<->Stevenson (a flex slot takes the RB) -- same end state, two
+        # swaps Yahoo will actually perform.
+        pick = None
+        for a in unresolved:
+            for b in want_of:
+                if b == a or not legal(a, b):
+                    continue
+                a_lands, b_lands = slots.get(b, ""), slots.get(a, "")
+                if (_norm_slot(a_lands) == want_of[a]
+                        or _norm_slot(b_lands) == want_of[b]):
+                    pick = (a, b)
+                    break
+            if pick:
                 break
-        old_slot = slots.get(name, "")
-        plan.append((name, partner, _dom_slot(m["to_slot"])))
-        slots[name] = m["to_slot"]
-        if partner:
-            slots[partner] = old_slot
-        del remaining[name]
-    return plan
+
+        if pick:
+            a, b = pick
+            a_to, b_to = slots.get(b, ""), slots.get(a, "")
+            # `_execute_swap` matches the target row by PARTNER NAME, so the
+            # slot recorded here is only used for the empty-slot case below.
+            # Record where `a` actually lands rather than where it wants to be:
+            # in a cycle those differ, and a misleading label is how the next
+            # person debugging this loses an hour.
+            plan.append((a, b, _dom_slot(a_to)))
+            slots[a], slots[b] = a_to, b_to
+            continue
+
+        # NO PARTNER: aim at an empty slot of the wanted type. See the honest
+        # limit above -- planning cannot prove one exists, and `_execute_swap`
+        # refuses rather than clicking something wrong when it does not.
+        a = unresolved[0]
+        plan.append((a, None, _dom_slot(want_of[a])))
+        slots[a] = want_of[a]
 
 
 def _row_for_select(page, player_key):
@@ -859,8 +929,13 @@ def _submit_lineup(team_key, moves, _session_cls=None, _roster_fn=None):
         raise RuntimeError(f"couldn't read the current roster before writing: {before!r}")
     key_of = {p["name"]: p.get("player_key", "") for p in before}
     current_slots = {p["name"]: p.get("slot", "") for p in before}
+    # WHAT EACH PLAYER MAY LEGALLY OCCUPY. Already on the scraped roster and
+    # previously unused by planning, which is how a swap that put a RB in a WR
+    # slot got planned at all.
+    eligible = {p["name"]: (p.get("eligible") or p.get("positions") or [])
+                for p in before}
 
-    plan = _plan_swaps(moves, current_slots)
+    plan = _plan_swaps(moves, current_slots, eligible)
 
     session_cls = _session_cls or wes_yahoo._Session
     with session_cls() as page:
