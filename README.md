@@ -105,31 +105,47 @@ It runs **headless** — no browser window steals focus while you work. Set
 `WES_SLEEPER_HEADLESS=0` to watch it, which is worth doing if the draft room's
 DOM has changed under us.
 
-**Which Sleeper account** comes from `WES_SLEEPER_USER` (default `awarmwalrus`,
-who holds the real league team). Its token is looked up per account —
-`WES_SLEEPER_TOKEN_<NAME>` first, then the shared `WES_SLEEPER_TOKEN` — so
-adding a bot account never displaces the one that drafts on the day:
+**Which Sleeper account** — `-User <name>`, defaulting to `gmbartimusprime`
+(the bot). The token follows the name: `WES_SLEEPER_TOKEN_<NAME>` first, then
+the shared `WES_SLEEPER_TOKEN`, so adding an account never displaces another.
 
 ```powershell
-$env:WES_SLEEPER_USER = "GMBartimusPrime"   # mocks, as the bot account
+& C:\Users\awarm\wes-pc\run_sleeper_draft.ps1 -User awarmwalrus   # the real team
 ```
 
-The username must match the token. A mismatch fails *quietly*: seat lookups key
-off the display name, so it reads as "not in this draft" rather than as an auth
-error.
+Naming an account switches its **credentials too**, not just the seat — those
+used to move independently, so `-User` on its own drafted with the previous
+account's token and said nothing. A name Sleeper does not know is refused
+before anything writes, because the shared-token fallback means a typo would
+otherwise succeed as somebody else.
 
-**To run it on a mock, or on anyone else's draft:** join the draft first (the
-seat is claimed on joining), then pass its id — the number in the URL
-`sleeper.com/draft/nfl/<id>`:
+**To run it on a mock, or on anyone else's draft:** pass its id — the number in
+the URL `sleeper.com/draft/nfl/<id>` — and `-Join` to claim a free seat:
 
 ```powershell
-& C:\Users\awarm\wes-pc\run_sleeper_draft.ps1 -DraftId 1394956625890017280
+& C:\Users\awarm\wes-pc\run_sleeper_draft.ps1 -Join -DraftId 1394956625890017280
 ```
+
+`-Join` is opt-in because it is a **write** everyone in the room can see. Pair
+it with `-Check` to get seated and verified without then drafting. It is
+idempotent — re-running returns the seat already held rather than claiming a
+second one.
 
 The seat comes from that draft's own `draft_order`, since a mock has no league
 at all. Scoring still comes from `-League` (your real one by default) because a
 mock has no scoring of its own — so a mock values players exactly as the real
 league would. `-RebuildSnapshot` refreshes the board first.
+
+**Chat.** `-Banter` defaults to `auto`, which **posts to the room** under
+whichever account is drafting. `-Banter propose` composes and logs without
+sending — the right mode for a room of strangers; `off` is silent. Volume is
+bounded in code, not by asking the model nicely: 60s between messages, 30s when
+somebody names the bot, and a line making a checkable false claim (a pick
+number that contradicts the board, a player it did not draft) is dropped before
+it is sent and logged with the reason.
+
+Every model call either agent makes — the payload in full and the raw reply —
+lands in `GET /draft_turns` and the dashboard's **Draft agent** table.
 
 Run `-Check` a day ahead too. Every item in it is a failure that has already
 happened once: a missing token stood down on all 15 picks while `cpu_autopick`
