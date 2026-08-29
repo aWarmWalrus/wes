@@ -1627,7 +1627,7 @@ def recent_draft_turns(n=20, kind=None):
     turn-log tests by feeding them the owner's real draft log. Two endpoints,
     two files, no coupling."""
     try:
-        import wes_draft_log
+        from sleeper import draft_log as wes_draft_log
         return wes_draft_log.recent(n, kind)
     except Exception:  # noqa: BLE001 — never break the endpoint on a bad file
         return []

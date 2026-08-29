@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
-import wes_draft_agent as agent  # noqa: E402
+from sleeper import agent as agent  # noqa: E402
 
 CANDS = [
     {"player_key": "1", "name": "Top Guy", "positions": ["RB"], "team": "SF",

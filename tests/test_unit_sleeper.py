@@ -11,10 +11,10 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
 import json  # noqa: E402
-import wes_draft_agent as agent  # noqa: E402
+from sleeper import agent as agent  # noqa: E402
 import wes_nfl  # noqa: E402
 import wes_snapshot as snapshot  # noqa: E402
-import wes_sleeper as sl  # noqa: E402
+from sleeper import data as sl  # noqa: E402
 from sleeperdraft import config as sdconfig  # noqa: E402
 from sleeperdraft import pick as sdpick  # noqa: E402
 from sleeperdraft import session as sdsession  # noqa: E402
@@ -567,8 +567,8 @@ class TestDraftDayPreflight:
     point is to fail them all at 12:30 rather than one of them at 13:00."""
 
     def _clean(self, monkeypatch):
-        import sleeper_draft_day as day
-        import wes_draft_agent
+        from sleeper import draft_day as day
+        from sleeper import agent as wes_draft_agent
         monkeypatch.setattr(sdconfig, "TOKEN", "tok" * 40)
         monkeypatch.setattr(day.wes_execute, "writes_enabled", lambda: True)
         monkeypatch.setattr(day.wes_sleeper, "league", lambda i: {
@@ -619,7 +619,7 @@ class TestDraftDayPreflight:
         """A dead Ollama crashes nothing -- every pick just becomes the
         engine's sort and the draft looks entirely normal."""
         day = self._clean(monkeypatch)
-        import wes_draft_agent
+        from sleeper import agent as wes_draft_agent
         monkeypatch.setattr(wes_draft_agent, "_ask_model",
                             lambda payload, **k: None)
         ok, lines = day.preflight(_probe_browser=False)
@@ -966,11 +966,11 @@ class TestAccountIsASetting:
         two agents in a room an infinite loop with an audience."""
         monkeypatch.setattr(sl, "USERNAME", "GMBartimusPrime")
         monkeypatch.setattr(sdconfig, "USERNAME", "GMBartimusPrime")
-        import wes_banter
+        from sleeper import banter as wes_banter
         assert wes_banter.Banter("D").me == "GMBartimusPrime"
 
     def test_an_explicit_name_still_wins(self):
-        import wes_banter
+        from sleeper import banter as wes_banter
         assert wes_banter.Banter("D", me="someone-else").me == "someone-else"
 
 

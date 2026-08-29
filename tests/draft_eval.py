@@ -38,7 +38,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
-import wes_draft_agent as agent  # noqa: E402
+from sleeper import agent as agent  # noqa: E402
 
 OLLAMA_URL = os.environ.get("WES_OLLAMA_URL", "http://127.0.0.1:11434")
 CLAUDE_MODEL = os.environ.get("WES_REPLAY_CLAUDE", "claude-haiku-4-5-20251001")

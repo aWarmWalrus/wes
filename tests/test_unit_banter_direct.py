@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
-import wes_banter as b  # noqa: E402
+from sleeper import banter as b  # noqa: E402
 
 ME = "GMBartimusPrime"
 

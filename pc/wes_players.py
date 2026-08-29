@@ -144,7 +144,7 @@ def merge_sleeper(canon, sleeper_index):
 
 def build(_nflverse_fn=None, _sleeper_fn=None):
     """Fetch both sources and produce (table, report)."""
-    import wes_sleeper
+    from sleeper import data as wes_sleeper
     text = (_nflverse_fn or _fetch_nflverse)()
     canon = parse_nflverse(list(csv.DictReader(io.StringIO(text))))
     index = (_sleeper_fn or wes_sleeper.players_index)()

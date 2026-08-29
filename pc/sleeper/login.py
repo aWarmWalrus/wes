@@ -23,7 +23,7 @@ unicode escape and will not compile.)
 import sys
 
 sys.path.insert(0, r"C:\Users\awarm\wes\pc")
-import wes_sleeper as sl  # noqa: E402
+from sleeper import data as sl  # noqa: E402
 
 LEAGUE = "1393935116232818688"
 

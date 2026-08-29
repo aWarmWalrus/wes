@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
-import wes_sleeper  # noqa: E402
+from sleeper import data as wes_sleeper  # noqa: E402
 from sleeperdraft import config as sd_config  # noqa: E402
 
 
@@ -88,8 +88,7 @@ class TestUseAccount:
         """Set as the default so a bare draft command runs as the bot rather
         than the owner's real account."""
         import importlib
-        import wes_sleeper as ws
-        src = importlib.util.find_spec("wes_sleeper").origin
+        src = importlib.util.find_spec("sleeper.data").origin
         with open(src, encoding="utf-8") as f:
             body = f.read()
         assert 'os.environ.get("WES_SLEEPER_USER", "gmbartimusprime")' in body

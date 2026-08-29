@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
-import wes_sleeper as sl  # noqa: E402
+from sleeper import data as sl  # noqa: E402
 
 
 def _c(name, adj, mkt=None):

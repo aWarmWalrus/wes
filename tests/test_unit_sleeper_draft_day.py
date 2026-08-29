@@ -13,10 +13,10 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
-import sleeper_draft_day as day  # noqa: E402
-import wes_draft_agent  # noqa: E402
+from sleeper import draft_day as day  # noqa: E402
+from sleeper import agent as wes_draft_agent  # noqa: E402
 import wes_execute  # noqa: E402
-import wes_sleeper  # noqa: E402
+from sleeper import data as wes_sleeper  # noqa: E402
 from sleeperdraft import config as sd_config  # noqa: E402
 
 LEAGUE = {"name": "L", "status": "pre_draft", "draft_id": "OURS"}

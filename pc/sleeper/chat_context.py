@@ -9,8 +9,8 @@ Everything here is best-effort by design: a chat line is never worth breaking a
 draft for, so the whole body sits under one broad except and a failure returns
 the cheap fields rather than raising into the pick path.
 """
-import wes_banter
-import wes_sleeper
+from sleeper import banter as wes_banter
+from sleeper import data as wes_sleeper
 
 
 def build(draft_id, league_id, roster_id, state, wait, board_fn,

@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
-import wes_shortlist  # noqa: E402
+from sleeper import shortlist as wes_shortlist  # noqa: E402
 
 
 def _cand(pid, name, pos="RB", vor=1.0, rank=None):

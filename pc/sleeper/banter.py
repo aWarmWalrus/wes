@@ -214,7 +214,7 @@ def _ask(payload, _post_fn=None):
     The payload matters more here than anywhere: every fabrication this bot has
     produced was traced by hand afterwards, against an API, because the thing
     the model was looking at when it said it was never written down."""
-    import wes_draft_log
+    from sleeper import draft_log as wes_draft_log
     body = json.dumps({
         "model": MODEL, "stream": False, "format": "json", "think": False,
         "options": {"temperature": 0.8},   # banter, not arithmetic
@@ -618,7 +618,7 @@ class Banter:
         # setting rather than a hunt. Getting this wrong is not cosmetic: `me`
         # is how the bot knows not to answer itself, and a mismatch turns two
         # agents in a room into an infinite loop with an audience.
-        import wes_sleeper
+        from sleeper import data as wes_sleeper
         self.draft_id = draft_id
         self.me = me or wes_sleeper.USERNAME
         self.mode = mode
@@ -740,7 +740,7 @@ class Banter:
         detail = (f"{line}   <- UNVERIFIABLE: {error}" if error
                   else f"{line}   <- re: {prompt}")
         try:
-            import wes_draft_log
+            from sleeper import draft_log as wes_draft_log
             wes_draft_log.log_call(f"draft.banter.{action}", shown, line,
                                    error=error, reacting_to=prompt,
                                    mode=self.mode)
@@ -750,10 +750,10 @@ class Banter:
 
 
 def _default_read(draft_id, browser=None):
-    import wes_sleeper
+    from sleeper import data as wes_sleeper
     return wes_sleeper.read_chat(draft_id, browser=browser)
 
 
 def _default_send(draft_id, text, browser=None):
-    import wes_sleeper
+    from sleeper import data as wes_sleeper
     return wes_sleeper.send_chat(draft_id, text, browser=browser)

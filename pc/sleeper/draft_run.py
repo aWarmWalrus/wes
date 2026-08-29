@@ -1,7 +1,10 @@
 r"""The draft loop: watch the clock, decide, pick, verify (ticket #039).
 
     & C:\Users\awarm\wes-pc\.venv\Scripts\python.exe ^
-        C:\Users\awarm\wes\pc\sleeper_draft_run.py <draft_id> <roster_id> [--league <id>]
+        -m sleeper.draft_run <draft_id> <roster_id> [--league <id>]
+
+(with C:\Users\awarm\wes\pc on PYTHONPATH. Normally you want draft_day, which
+pre-flights and waits for the room before handing off to this.)
 
 Poll the public draft API (no auth needed for reads), and when our slot comes up,
 run the agent's decision and submit the pick through the browser.
@@ -35,15 +38,15 @@ import argparse
 import sys
 import time
 
-import draft_chat_context
-import draft_reporting
-import wes_banter
+from sleeper import chat_context as draft_chat_context
+from sleeper import reporting as draft_reporting
+from sleeper import banter as wes_banter
 import wes_browser
 import wes_draft
-import wes_draft_agent
+from sleeper import agent as wes_draft_agent
 import wes_execute
-import wes_shortlist
-import wes_sleeper
+from sleeper import shortlist as wes_shortlist
+from sleeper import data as wes_sleeper
 
 # How often to look. Fast when our pick is near, lazy when it is not — a draft
 # can run for hours and there is nothing to do for most of it.

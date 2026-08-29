@@ -25,8 +25,8 @@ import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
-import wes_draft_agent as agent  # noqa: E402
-import wes_sleeper as sl  # noqa: E402
+from sleeper import agent as agent  # noqa: E402
+from sleeper import data as sl  # noqa: E402
 
 OLLAMA_URL = os.environ.get("WES_OLLAMA_URL", "http://127.0.0.1:11434")
 LOCAL_MODEL = os.environ.get("WES_ESCALATE_MODEL", "gemma4:12b")

@@ -51,7 +51,12 @@ if (-not $env:WES_SLEEPER_USER) {
         'WES_SLEEPER_USER', 'User')
 }
 
-$args = @("$repo\pc\sleeper_draft_day.py", "--wait-hours", "$WaitHours")
+# RUN AS A MODULE, not a script path. The Sleeper code lives in the `sleeper`
+# package now, and `python pc\sleeper\draft_day.py` would put pc\sleeper on
+# sys.path instead of pc -- so `from sleeper import data` would not resolve.
+# -m puts the CWD on the path and imports the package properly.
+$env:PYTHONPATH = "$repo\pc"
+$args = @("-m", "sleeper.draft_day", "--wait-hours", "$WaitHours")
 if ($Check) { $args += "--check" }
 if ($DraftId) { $args += @("--draft", $DraftId) }
 # -Join claims a free seat in -DraftId first. A WRITE, so it is opt-in; pair it

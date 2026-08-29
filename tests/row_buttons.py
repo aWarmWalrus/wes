@@ -10,7 +10,7 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, r"C:\Users\awarm\wes\pc")
 import wes_http  # noqa: E402
-import wes_sleeper as sl  # noqa: E402
+from sleeper import data as sl  # noqa: E402
 
 D = sys.argv[1]
 

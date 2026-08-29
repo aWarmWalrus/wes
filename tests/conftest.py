@@ -45,7 +45,7 @@ def _sandbox_ledgers(tmp_path, monkeypatch):
     the nightly eval writing to the live Yahoo account. A test must not be able
     to reach a real record no matter what it calls, so the sandbox is
     autouse and by path, not by asking each test to remember."""
-    import wes_draft_log as wdl
+    from sleeper import draft_log as wdl
     import wes_execute as we
     import wes_server as ws
 

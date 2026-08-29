@@ -40,9 +40,9 @@ import time
 import urllib.request
 
 import wes_draft
-import wes_draft_log
+from sleeper import draft_log as wes_draft_log
 import wes_schedule
-import wes_sleeper
+from sleeper import data as wes_sleeper
 
 # The judge-style structured-output pattern already used by tests/eval_turns.py:
 # a local model, format=json, temperature 0. Same reasoning as there — a small

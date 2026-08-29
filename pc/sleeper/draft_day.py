@@ -1,9 +1,17 @@
 r"""Draft day: pre-flight, wait for the room to open, then hand off to the loop.
 
-    & C:\Users\awarm\wes-pc\.venv\Scripts\python.exe ^
-        C:\Users\awarm\wes\pc\sleeper_draft_day.py [--check] [--league <id>]
+    & C:\Users\awarm\wes-pc\run_sleeper_draft.ps1 -Check -DraftId <id>
 
-WHY THIS EXISTS RATHER THAN "just run sleeper_draft_run.py"
+or directly, from a shell with C:\Users\awarm\wes\pc on PYTHONPATH:
+
+    & C:\Users\awarm\wes-pc\.venv\Scripts\python.exe ^
+        -m sleeper.draft_day [--check] [--league <id>]
+
+RUN AS A MODULE, not a file path: this lives in the `sleeper` package now, and
+running the file directly would put pc\sleeper on sys.path rather than pc, so
+`from sleeper import data` would not resolve.
+
+WHY THIS EXISTS RATHER THAN "just run the loop"
 Every mock so far was launched from a throwaway script that hard-coded a draft
 id, because a mock CREATES the draft it then joins. A real draft does not work
 that way: the id already exists, the commissioner (or the clock) starts it, and
@@ -31,9 +39,9 @@ import argparse
 import sys
 import time
 
-import sleeper_draft_run
+from sleeper import draft_run as sleeper_draft_run
 import wes_execute
-import wes_sleeper
+from sleeper import data as wes_sleeper
 import wes_snapshot
 from sleeperdraft import config as sd_config
 
@@ -196,7 +204,7 @@ def preflight(league_id=LEAGUE, username=USERNAME, draft_id=None,
     # The model. A dead Ollama does not crash anything — every pick just falls
     # back to the engine's sort and the draft looks fine, which is precisely
     # why it needs checking rather than discovering.
-    import wes_draft_agent
+    from sleeper import agent as wes_draft_agent
     got = wes_draft_agent._ask_model(
         {"context": {"phase": "starters"}, "shortlist": [
             {"player_key": "1", "name": "Test Player", "position": "RB"}]})

@@ -23,7 +23,7 @@ os.environ["WES_YAHOO_LIVE_WRITES"] = "1"
 os.environ.setdefault("WES_SLEEPER_USER", "GMBartimusPrime")
 sys.path.insert(0, r"C:\Users\awarm\wes\pc")
 import wes_http  # noqa: E402
-import wes_sleeper as sl  # noqa: E402
+from sleeper import data as sl  # noqa: E402
 
 D = sys.argv[1]
 SLOT = int(sys.argv[2]) if len(sys.argv) > 2 else 1

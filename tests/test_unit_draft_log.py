@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
-import wes_draft_log  # noqa: E402
+from sleeper import draft_log as wes_draft_log  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -186,7 +186,7 @@ class TestTheEndpointIsSeparateFromTurns:
 
 class TestTheAgentsActuallyCallIt:
     def test_a_pick_call_is_logged_with_its_payload(self, monkeypatch):
-        import wes_draft_agent
+        from sleeper import agent as wes_draft_agent
         monkeypatch.setattr(wes_draft_agent, "wes_draft_log", wes_draft_log)
         wes_draft_agent._ask_model(
             {"shortlist": [{"name": "Bijan Robinson"}]},
@@ -196,7 +196,7 @@ class TestTheAgentsActuallyCallIt:
         assert "Bijan Robinson" in rec["transcript"]
 
     def test_a_banter_call_is_logged(self, monkeypatch):
-        import wes_banter
+        from sleeper import banter as wes_banter
         wes_banter._ask({"draft": {"round": 1}},
                         _post_fn=lambda _b: '{"message": "hi"}')
         rec = wes_draft_log.recent(1)[0]
@@ -207,7 +207,7 @@ class TestTheAgentsActuallyCallIt:
         """Logging only rejections answered "did it make something up" and left
         the commoner question -- did this reach the room -- unrecorded. A line
         composed and rate-limited looked exactly like one that was posted."""
-        import wes_banter
+        from sleeper import banter as wes_banter
         bt = wes_banter.Banter("D", me="us", mode="auto", min_gap_s=0,
                                _now=lambda: 1000.0)
         ctx = {"recent_picks": [{"pick": 9, "player": "Rico Dowdle",
@@ -230,7 +230,7 @@ class TestTheAgentsActuallyCallIt:
         """The outcome used to log the draft context alone while the model was
         given context AND chat, so a dropped line was filed without the
         messages that provoked it -- half its cause missing."""
-        import wes_banter
+        from sleeper import banter as wes_banter
         bt = wes_banter.Banter("D", me="us", mode="auto", min_gap_s=0,
                                _now=lambda: 1000.0)
         msgs = [{"author": "GMSnappy", "text": "your roster is a mess",
@@ -250,7 +250,7 @@ class TestTheAgentsActuallyCallIt:
     def test_the_logged_payload_matches_what_compose_sends(self):
         """One construction of "the payload", shared. If it drifts the log
         stops describing the call it claims to."""
-        import wes_banter
+        from sleeper import banter as wes_banter
         msgs = [{"author": "x", "text": "hi", "system": False}]
         ctx = {"round": 3}
         assert wes_banter.build_payload(msgs, ctx) == {
@@ -258,7 +258,7 @@ class TestTheAgentsActuallyCallIt:
             "recent_chat": [{"from": "x", "said": "hi"}]}
 
     def test_propose_mode_records_that_nothing_was_sent(self):
-        import wes_banter
+        from sleeper import banter as wes_banter
         bt = wes_banter.Banter("D", me="us", mode="propose", min_gap_s=0,
                                _now=lambda: 1000.0)
         sent = []
@@ -277,7 +277,7 @@ class TestTheAgentsActuallyCallIt:
     def test_a_dropped_line_is_logged_with_the_context_that_made_it(self):
         """The most useful record this produces: a fabrication caught with the
         exact payload that produced it still attached."""
-        import wes_banter
+        from sleeper import banter as wes_banter
         bt = wes_banter.Banter("D", me="us", mode="auto", min_gap_s=0,
                                _now=lambda: 1000.0)
         ctx = {"recent_picks": [{"pick": 39, "player": "Brock Bowers",

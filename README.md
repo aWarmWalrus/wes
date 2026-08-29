@@ -245,11 +245,11 @@ is **agentic**, not a ranked list:
 
 | Module | Does |
 |---|---|
-| `pc/wes_sleeper.py` | Sleeper adapter: reads via the JSON API, writes via Playwright |
+| `pc/sleeper/data.py` | Sleeper adapter: reads via the JSON API, writes via Playwright |
 | `pc/wes_draft.py` | pure draft maths — snake slots, value over replacement, roster fit |
 | `pc/wes_draft_agent.py` | builds the shortlist, asks a local model to choose |
-| `pc/sleeper_draft_run.py` | the loop: poll the clock, decide, submit, verify |
-| `pc/sleeper_draft_day.py` | pre-flight, wait for the room, hand off |
+| `pc/sleeper/draft_run.py` | the loop: poll the clock, decide, submit, verify |
+| `pc/sleeper/draft_day.py` | pre-flight, wait for the room, hand off |
 | `pc/wes_snapshot.py` | the local board (players, projections, byes, crosswalk) |
 | `tests/draft_replay.py` | replay a finished draft, compare pick-makers offline |
 

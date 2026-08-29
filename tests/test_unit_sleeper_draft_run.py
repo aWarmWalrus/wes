@@ -10,9 +10,9 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pc"))
 
-import sleeper_draft_run as loop  # noqa: E402
+from sleeper import draft_run as loop  # noqa: E402
 import wes_execute  # noqa: E402
-import wes_sleeper  # noqa: E402
+from sleeper import data as wes_sleeper  # noqa: E402
 
 CAND = {"player_key": "77", "name": "Target Guy", "positions": ["RB"],
         "team": "SF", "vor": 12.0}
@@ -690,7 +690,7 @@ class TestBanterKnowsItsOwnRoster:
         manager's name -- "pick 42 None took Colston Loveland" (2026-08-24).
         Naming the seat is honest and still usable in a sentence; inventing a
         manager would not be."""
-        import wes_sleeper as ws
+        from sleeper import data as ws
         orig = ws.slot_names
         try:
             ws.slot_names = lambda d, **k: {}

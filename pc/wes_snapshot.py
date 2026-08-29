@@ -53,7 +53,7 @@ def build(season=None, _players_fn=None, _proj_fn=None, _byes_fn=None,
     honest absence."""
     import wes_nfl
     import wes_schedule
-    import wes_sleeper
+    from sleeper import data as wes_sleeper
 
     season = season or wes_nfl._default_season()
     now = _now if _now is not None else time.time()
@@ -183,7 +183,7 @@ def players(_fallback_fn=None):
     snap = load()
     if snap and snap.get("players"):
         return snap["players"]
-    import wes_sleeper
+    from sleeper import data as wes_sleeper
     return (_fallback_fn or wes_sleeper.players_index)()
 
 
