@@ -415,7 +415,7 @@ class TestSttBias:
     def test_lexicon_names_present(self):
         p = ws.stt_bias_prompt()
         for word in ("Jarvis", "Hailo", "Hue", "ecobee", "Matcha",
-                     "Charlie", "Cindy", "Kaia", "Ellis", "Brooklyn", "NBA"):
+                     "Charlie", "Cindy", "Brooklyn", "NBA"):
             assert word in p
 
     def test_recent_conversation_is_appended(self):
@@ -430,7 +430,10 @@ class TestSttBias:
         ws.record_turn("x " * 500, "y " * 500)
         p = ws.stt_bias_prompt()
         assert len(p) <= len(ws.STT_LEXICON) + 301
-        assert "Ellis" in p
+        # A word from the END of the lexicon: if truncation ever ate the
+        # lexicon instead of the conversation tail, this is what would go
+        # missing. Was "Ellis" until that name was dropped 2026-08-29.
+        assert "Nets" in p
 
 
 class TestOllamaBackend:
