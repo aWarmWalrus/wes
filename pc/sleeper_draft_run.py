@@ -53,9 +53,10 @@ POLL_NEAR_S = 5.0
 # is cached at 3s and a chat read reuses the open page -- and the near-clock
 # cadence has been 5s all along without trouble.
 POLL_FAR_S = 8.0
-# Chat is not read inside this many picks of our turn. A read must never delay
-# a pick, and that ordering is not up for negotiation -- being slow to answer
-# costs a joke, being slow to pick costs the draft.
+# Within this many picks of our turn, poll faster. It used to ALSO gate the
+# chat -- no reads inside the window at all -- which was right when a read cost
+# a browser launch and merely conservative once the held page made it
+# sub-second. It is now purely a cadence switch.
 NEAR_PICKS = 2
 
 # How many times to attempt a pick while the clock is still ours. The failures
@@ -464,21 +465,29 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             browser, last_autopick_check, now(), _log)
 
         if wait > 0:
-            # Far from the clock is the only safe time to open the chat: a
-            # read takes ~12s of browser, and a pick must never wait behind it.
-            if wait > NEAR_PICKS:
-                _t0 = now()
-                act, detail = chat.tick(context=_banter_context(
-                    draft_id, league_id, roster_id, state, wait, board_fn,
-                    shortlist=shortlist))
-                _took = now() - _t0
-                # Log the QUIET decisions too when there was actually
-                # something to answer. "nothing worth saying (re: ...)" is the
-                # interesting line; suppressing it made an idle chat and a
-                # model declining to speak look identical, which is exactly
-                # the question asked five minutes after switching it on.
-                if act not in ("quiet", "rate_limited") or "(re: " in detail:
-                    _log(f"chat [{act}] ({_took:.1f}s) {detail}")
+            # CHAT AT ANY DISTANCE FROM THE CLOCK. This used to stop inside
+            # NEAR_PICKS on the grounds that "a read takes ~12s of browser" --
+            # true when every read paid a full browser launch, and obsolete
+            # since the held page made a read sub-second. Measured: the quiet
+            # and rate-limited paths return in ~0.00s and 0.05s.
+            #
+            # What is left to spend is the model call, and only when there is
+            # something new AND the floor has passed -- at most once per 30-60s
+            # by construction. Against a 120-600s pick clock that is affordable,
+            # and being unable to answer somebody in the two picks before our
+            # turn is exactly when a draft room is most worth talking in.
+            _t0 = now()
+            act, detail = chat.tick(context=_banter_context(
+                draft_id, league_id, roster_id, state, wait, board_fn,
+                shortlist=shortlist))
+            _took = now() - _t0
+            # Log the QUIET decisions too when there was actually something to
+            # answer. "nothing worth saying (re: ...)" is the interesting line;
+            # suppressing it made an idle chat and a model declining to speak
+            # look identical, which is exactly the question asked five minutes
+            # after switching it on.
+            if act not in ("quiet", "rate_limited") or "(re: " in detail:
+                _log(f"chat [{act}] ({_took:.1f}s) {detail}")
             sleep(POLL_NEAR_S if wait <= NEAR_PICKS else POLL_FAR_S)
             continue
 

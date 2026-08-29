@@ -582,6 +582,54 @@ class TestLandedLateChecksTheirPlayer:
         assert "made 0 pick(s)" in out,             "must not count another player in our slot as our pick"
 
 
+class TestChatRunsAtAnyDistanceFromTheClock:
+    """Chat used to stop inside NEAR_PICKS of our turn, on the grounds that a
+    read cost ~12s of browser. That was true when every read paid a full
+    browser launch and obsolete once the held page made it sub-second —
+    measured, the quiet and rate-limited paths return in ~0.00s and 0.05s.
+
+    Being unable to answer somebody in the two picks before our turn is
+    exactly when a draft room is most worth talking in.
+    """
+
+    class FakeBanter:
+        """Records the waits it was ticked at."""
+
+        def __init__(self):
+            self.waits = []
+            self.browser = None
+
+        def tick(self, context=None, **_kw):
+            self.waits.append(context.get("picks_until_our_turn"))
+            return "quiet", "nothing new"
+
+    def _run(self, monkeypatch, waits):
+        monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d, **k: set())
+        bt = self.FakeBanter()
+        loop.run("D", "L", 1,
+                 _state_fn=_states([_state(w) for w in waits]),
+                 _board_fn=_board(),
+                 _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
+                 _submit_fn=lambda *a: None,
+                 _sleep_fn=lambda _s: None, _banter=bt)
+        return bt
+
+    def test_it_ticks_when_close_to_the_clock(self, monkeypatch):
+        bt = self._run(monkeypatch, [1])
+        assert bt.waits == [1], "chat was skipped one pick from our turn"
+
+    def test_it_ticks_at_every_distance(self, monkeypatch):
+        bt = self._run(monkeypatch, [9, 3, 2, 1])
+        assert bt.waits == [9, 3, 2, 1]
+
+    def test_it_does_not_tick_while_on_the_clock(self, monkeypatch):
+        """Picking still comes first — wait 0 goes straight to the pick path."""
+        bt = self._run(monkeypatch, [0])
+        assert bt.waits == []
+
+
 class TestBanterKnowsItsOwnRoster:
     """Told "you're the one that took Puka you dumb dumb", banter replied that
     at least its first-rounder was not a questionable gamble -- about its own
