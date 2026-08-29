@@ -54,9 +54,19 @@ if (-not $env:WES_SLEEPER_USER) {
 # RUN AS A MODULE, not a script path. The Sleeper code lives in the `sleeper`
 # package now, and `python pc\sleeper\draft_day.py` would put pc\sleeper on
 # sys.path instead of pc -- so `from sleeper import data` would not resolve.
-# -m puts the CWD on the path and imports the package properly.
+#
+# -P IS LOAD-BEARING, not tidiness. Without it, -m puts the CALLER'S WORKING
+# DIRECTORY on sys.path, and from C:\Users\awarm that makes the sleeperdraft
+# REPO FOLDER shadow the installed package: it has no __init__.py at the top
+# level, so Python takes it as a namespace package and every attribute
+# vanishes --
+#     AttributeError: module 'sleeperdraft' has no attribute 'join_draft'
+# which is precisely how this broke when the package move landed. -P drops CWD
+# from sys.path entirely, so the launcher works from any directory; PYTHONPATH
+# supplies `sleeper` and site-packages supplies `sleeperdraft`. (Python 3.11+;
+# the venv is 3.11.5.)
 $env:PYTHONPATH = "$repo\pc"
-$args = @("-m", "sleeper.draft_day", "--wait-hours", "$WaitHours")
+$args = @("-P", "-m", "sleeper.draft_day", "--wait-hours", "$WaitHours")
 if ($Check) { $args += "--check" }
 if ($DraftId) { $args += @("--draft", $DraftId) }
 # -Join claims a free seat in -DraftId first. A WRITE, so it is opt-in; pair it
