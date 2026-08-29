@@ -233,7 +233,12 @@ def main():
                     help="the league whose SCORING to value under. A mock has "
                          "league_id null and no scoring of its own, so this "
                          "stays pointed at the real league even for mocks.")
-    ap.add_argument("--username", default=USERNAME)
+    ap.add_argument("--username", default=USERNAME,
+                    help=f"which Sleeper account to draft as (default "
+                         f"{USERNAME}). Its token is looked up as "
+                         f"WES_SLEEPER_TOKEN_<USERNAME>, falling back to the "
+                         f"shared WES_SLEEPER_TOKEN -- so naming an account "
+                         f"switches the credentials too, not just the seat.")
     ap.add_argument("--wait-hours", type=float, default=8.0,
                     help="how long to wait for the room to open")
     ap.add_argument("--no-browser-probe", action="store_true")
@@ -257,8 +262,29 @@ def main():
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+    # SWITCH THE WHOLE ACCOUNT, before anything reads it. --username used to
+    # move only the name the seat lookups key on while the token stayed
+    # whatever import time resolved, so naming a second account drafted with
+    # the first one's credentials and said nothing.
+    if not wes_sleeper.use_account(a.username):
+        print(f"no Sleeper token for {a.username!r} — set "
+              f"WES_SLEEPER_TOKEN_{''.join(c for c in a.username.upper() if c.isalnum())} "
+              f"(or the shared WES_SLEEPER_TOKEN) and re-run")
+        return 1
+    # THE NAME HAS TO BE REAL. read_token falls back to the SHARED token when
+    # an account has no variable of its own, so a typo does not fail -- it
+    # succeeds with somebody else's credentials under a name that does not
+    # exist. `--username ghostaccount` reported "token: 357 chars"
+    # (2026-08-28). One unauthenticated GET settles it before anything writes.
+    if wes_sleeper.user_id(a.username, max_age=0) is None:
+        print(f"Sleeper has no account called {a.username!r} — check the "
+              f"spelling. (A token was found, but only by falling back to the "
+              f"shared one, which belongs to a different account.)")
+        return 1
+
     print(f"=== WES draft day pre-flight "
-          f"{time.strftime('%Y-%m-%d %H:%M:%S')} ===")
+          f"{time.strftime('%Y-%m-%d %H:%M:%S')} === as {a.username} "
+          f"({wes_sleeper.TOKEN_SOURCE} token)")
     if a.rebuild_snapshot:
         meta = wes_snapshot.build()
         print(f"  rebuilt snapshot: {meta['counts']}")

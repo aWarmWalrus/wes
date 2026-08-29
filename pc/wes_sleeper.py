@@ -95,9 +95,73 @@ PLAYERS_TTL = float(6 * 3600)
 # has no business knowing whose it is; WES has exactly one owner, so the default
 # belongs here. The token is re-read against THIS name so the two cannot drift:
 # mismatching them is a quiet failure where writes land as somebody else.
-USERNAME = os.environ.get("WES_SLEEPER_USER", "awarmwalrus")
+USERNAME = os.environ.get("WES_SLEEPER_USER", "gmbartimusprime")
 _sd_config.USERNAME = USERNAME
 TOKEN = _sd_config.TOKEN = _sd_config.read_token(USERNAME)
+
+
+def use_account(username):
+    """Point every Sleeper write at `username`, TOKEN INCLUDED. Returns
+    whether a token was found for it.
+
+    THE PAIR MOVES TOGETHER OR NOT AT ALL. `--username` used to change only
+    the name the seat lookups key on, while TOKEN stayed whatever was resolved
+    at import -- so naming a second account silently drafted with the first
+    one's credentials. That is the failure this module's own header warns
+    about, made reachable by a flag.
+
+    `read_token` looks for WES_SLEEPER_TOKEN_<USERNAME> before the shared
+    value, so each account can carry its own and adding one never displaces
+    another."""
+    global USERNAME, TOKEN, TOKEN_SOURCE
+    USERNAME = _sd_config.USERNAME = username
+    TOKEN = _sd_config.TOKEN = _sd_config.read_token(username)
+    # WHERE THE TOKEN CAME FROM, because the fallback is a trap worth seeing.
+    # `read_token` drops through to the SHARED WES_SLEEPER_TOKEN when there is
+    # no per-account one, so a typo'd username gets a perfectly valid token
+    # belonging to somebody else and reports success: `--username ghostaccount`
+    # came back "token: 357 chars" (2026-08-28). The tokens are opaque, not
+    # JWTs, so nothing offline can say whose they are -- naming the source is
+    # the next best thing.
+    TOKEN_SOURCE = ("none" if not TOKEN
+                    else "per-account" if _has_own_token(username)
+                    else "shared")
+    return bool(TOKEN)
+
+
+def _has_own_token(username):
+    """Is there a WES_SLEEPER_TOKEN_<USERNAME> variable for this account?
+
+    BY NAME, NOT BY VALUE. Comparing the resolved token against the shared one
+    was the first cut and it cannot tell them apart when they hold the SAME
+    string -- which is exactly the case here, the shared variable currently
+    being a copy of the bot's. It reported the bot's own account as running on
+    a fallback (2026-08-28).
+
+    Checks the registry too: `read_token` does, and a variable set with setx
+    but not inherited by this shell is invisible to os.environ."""
+    suffix = "_" + "".join(c for c in username.upper() if c.isalnum())
+    names = [f"{p}_TOKEN{suffix}" for p in _sd_config.ENV_PREFIXES]
+    if any(os.environ.get(n) for n in names):
+        return True
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            for n in names:
+                try:
+                    if str(winreg.QueryValueEx(key, n)[0] or ""):
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return False
+    return False
+
+
+# Set by `use_account`: "per-account", "shared", or "none".
+TOKEN_SOURCE = "per-account" if TOKEN else "none"
 
 _Session = _sd_session.Session
 _is_login_wall = _sd_session.is_login_wall

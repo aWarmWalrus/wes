@@ -76,6 +76,12 @@ class TestTheRunPathResolvesTheSeatToo:
         monkeypatch.setattr(day, "preflight", lambda *a, **k: (True, []))
         monkeypatch.setattr(wes_sleeper, "slot_in_draft", slot_in_draft)
         monkeypatch.setattr(wes_sleeper, "join_draft", join_draft)
+        # main() now switches account and checks the name is a real Sleeper
+        # one before anything else. These tests are about SEAT resolution and
+        # use a placeholder username, so both are stubbed -- otherwise the
+        # account guard rejects "u" and the run never reaches the seat code.
+        monkeypatch.setattr(wes_sleeper, "use_account", lambda _n: True)
+        monkeypatch.setattr(wes_sleeper, "user_id", lambda _n, **k: "uid-1")
         # Never actually wait for or run a draft.
         monkeypatch.setattr(wes_sleeper, "draft_status_fresh",
                             lambda _d: "complete")

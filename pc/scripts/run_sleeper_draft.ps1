@@ -19,8 +19,12 @@
 [CmdletBinding()]
 param([switch]$Check, [double]$WaitHours = 8.0, [string]$DraftId,
       [string]$League, [switch]$RebuildSnapshot, [switch]$Join,
+      [string]$User,
       [ValidateSet('off','propose','auto')][string]$Banter = 'auto',
       [double]$BanterGap = 0)
+# -User picks the Sleeper ACCOUNT to draft as; default gmbartimusprime. The
+# token follows the name (WES_SLEEPER_TOKEN_<USER>, else the shared one), so
+# this switches credentials and seat together rather than half of each.
 # -Banter defaults to 'auto' (posts, 2026-08-28). Use -Banter propose in a room
 # of strangers: it composes and logs without sending anything.
 
@@ -53,6 +57,7 @@ if ($DraftId) { $args += @("--draft", $DraftId) }
 # -Join claims a free seat in -DraftId first. A WRITE, so it is opt-in; pair it
 # with -Check to get seated and verified without then drafting.
 if ($Join) { $args += "--join" }
+if ($User) { $args += @("--username", $User) }
 if ($League) { $args += @("--league", $League) }
 if ($RebuildSnapshot) { $args += "--rebuild-snapshot" }
 # ALWAYS PASS IT, including "off". This used to send the flag only when banter
