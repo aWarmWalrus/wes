@@ -35,6 +35,8 @@ import argparse
 import sys
 import time
 
+import draft_chat_context
+import draft_reporting
 import wes_banter
 import wes_browser
 import wes_draft
@@ -68,93 +70,6 @@ SUBMIT_TRIES = 3
 
 def _log(msg):
     print(f"[draft] {time.strftime('%H:%M:%S')} {msg}", flush=True)
-
-
-def _record(league_id, roster_id, draft_id, pick_no, board, decision,
-            outcome, drafted=None, note="", _ledger_path=None, _now=None):
-    """Write one draft decision to the shared fantasy ledger.
-
-    WHY THE LEDGER AND NOT JUST THE LOG. A draft is reviewed afterwards, and a
-    log file is a thin place to keep the only record of fifteen irreversible
-    decisions — grep-able at best, gone at worst. The ledger is structured,
-    already holds every Yahoo action, and already backs `fantasy_recent_moves`,
-    so "why did it take Zay Flowers over Cam Skattebo?" becomes answerable
-    months later instead of being reconstructed from memory.
-
-    EVERY decision is recorded, not just the successful ones. A stand-down and
-    a substitution are exactly the rows worth having later — the nine silent
-    substitutions that produced four tight ends and no defence were invisible
-    precisely because nothing durable said what had been wanted (2026-08-15).
-
-    `action_type` is "draft_pick", which `count_recent_moves` ignores, so these
-    rows cannot eat the weekly add/drop budget."""
-    cand = decision.get("candidate") or {}
-    entry = {
-        "ts": _now if _now is not None else time.time(),
-        # Platform-qualified so a Sleeper roster can never collide with a
-        # Yahoo team key in the same file.
-        "team_key": f"sleeper.l.{league_id}.r.{roster_id}",
-        "name": f"Sleeper roster {roster_id}",
-        "sport": "nfl", "action_type": "draft_pick", "autonomy": "auto",
-        "draft_id": draft_id, "pick_no": pick_no,
-        "round": (board or {}).get("round"),
-        "phase": (board or {}).get("phase"),
-        # What it WANTED, which is not always what it got.
-        "moves": [{"add": cand.get("name"), "player_key": cand.get("player_key"),
-                   "position": (cand.get("positions") or [None])[0],
-                   "nfl_team": cand.get("team"), "bye": cand.get("bye"),
-                   "vor": cand.get("vor"),
-                   "market_rank": cand.get("market_rank")}] if cand else [],
-        "why": decision.get("reason"),
-        "source": decision.get("source"),
-        "considered": decision.get("considered") or [],
-        "runner_up": decision.get("runner_up"),
-        "why_not": decision.get("why_not"),
-        # The choice set, so a later review can ask what it passed over -- the
-        # shortlist IS half the decision, and without it "took the best
-        # available" is unfalsifiable.
-        "shortlist": [c.get("name") for c in ((board or {}).get("candidates")
-                                              or [])],
-        "outcome": outcome,
-        "executed": outcome in ("drafted", "substituted"),
-        "dry_run": outcome == "would_draft",
-    }
-    if drafted and drafted != cand.get("name"):
-        entry["actually_drafted"] = drafted
-    if note:
-        entry["note"] = note
-    wes_execute.record_action(entry, _ledger_path)
-
-
-_ROSTER_CACHE = {}
-
-
-def _roster_line(board_fn, league_id, draft_id, roster_id):
-    """"3 RB, 2 WR, 1 QB" — what we hold, at a glance.
-
-    Cached on our own pick count: the board is the expensive call and a
-    heartbeat must never cost what a decision costs."""
-    try:
-        key = (draft_id, roster_id)
-        made = len(_ROSTER_CACHE.get(key, {}).get("roster", []))
-        board = board_fn(league_id, draft_id, roster_id, limit=1)
-        if isinstance(board, str):
-            return "roster unknown"
-        _ROSTER_CACHE[key] = board
-        counts = {}
-        for r in board.get("roster") or []:
-            pos = r.get("position") or "?"
-            counts[pos] = counts.get(pos, 0) + 1
-        if not counts:
-            return "no picks yet"
-        held = ", ".join(f"{n} {p}" for p, n in sorted(counts.items(),
-                                                       key=lambda x: -x[1]))
-        gaps = board.get("still_unfilled") or {}
-        need = ("; need " + ", ".join(f"{p}x{n}" for p, n in gaps.items())
-                if gaps else "; starters full")
-        return held + need
-    except Exception:  # noqa: BLE001 — a heartbeat must never break a draft
-        return "roster unknown"
 
 
 # How often to confirm AUTO-PICK is still off, in seconds. Sleeper turns it on
@@ -209,145 +124,14 @@ def _shut(browser, log):
     browser.close()
 
 
-def _banter_context(draft_id, league_id, roster_id, state, wait, board_fn,
-                    shortlist=None):
-    """What the room actually looks like, for trash talk that lands.
-
-    Banter had `{round, picks_made, picks_until_our_turn}` and nothing about
-    who drafted what, so it could only produce generic ribbing. "That is your
-    fourth tight end" needs the picks; "your RB1 is on PUP with an ACL" needs
-    the notes. Both are things we already hold.
-
-    Best-effort: a chat line is never worth breaking a draft for."""
-    ctx = {"round": state.get("round"),
-           "picks_made": state.get("picks_made"),
-           "picks_until_our_turn": wait}
-    try:
-        import wes_notes
-        import wes_snapshot
-        idx = wes_snapshot.players()
-        picks = wes_sleeper.draft_picks(draft_id) or []
-        # WHO TOOK WHAT, lately. The last handful is what the room is still
-        # talking about.
-        # WHOSE PICK IT WAS, said outright. Slot numbers alone made the model
-        # join `our_slot` against `draft_slot` to work out which picks were
-        # its own -- and it got that wrong in front of the owner, denying a
-        # player it had drafted itself: "at least my first-round pick isn't
-        # listed as questionable", about Puka Nacua, its own first-round pick,
-        # who was listed as questionable (2026-08-22). Ownership is a fact we
-        # hold; it does not go to the model as a puzzle.
-        names = {}
-        try:
-            names = wes_sleeper.slot_names(draft_id)
-        except Exception:  # noqa: BLE001
-            pass
-        # HOW GOOD WAS IT. Roster shapes gave the model one joke -- "five RBs
-        # and no TE" -- and it told that joke every time. A draft room is a
-        # series of individual picks, and having an opinion about a PICK needs
-        # what the pick was worth: where the player was ranked, how far from
-        # consensus he went, and whether we wanted him ourselves.
-        teams = rounds = 0
-        try:
-            settings = ((wes_sleeper.draft(draft_id) or {})
-                        .get("settings") or {})
-            teams = int(settings.get("teams") or 0)
-            # `rounds` bounds where consensus rank still means anything -- see
-            # pick_verdict. Without it a round-14 kicker reads as a reach.
-            rounds = int(settings.get("rounds") or 0)
-        except Exception:  # noqa: BLE001
-            pass
-        # WHO WE ARE HOPING FALLS TO US. The shortlist is shared with the
-        # drafting agent, so this is the same board it will pick from rather
-        # than a second guess at it -- and reading it is free, which is the
-        # only reason it can be here at all.
-        if shortlist is not None:
-            # Freshen it from the picks we already hold -- no extra fetch, and
-            # without this a target taken three picks ago still reads as
-            # somebody we are waiting on, which is a claim the room can see is
-            # wrong.
-            shortlist.mark_taken(p.get("player_id") for p in picks)
-            targets = shortlist.targets(4)
-            if targets:
-                ctx["our_targets"] = targets
-        recent = []
-        for p in picks[-6:]:
-            pid = str(p.get("player_id"))
-            info = idx.get(pid) or {}
-            rank = info.get("search_rank")
-            row = {
-                "pick": p.get("pick_no"), "slot": p.get("draft_slot"),
-                # A CPU seat has no user id in draft_order, so it has no
-                # display name -- and `None` reached the model as the manager's
-                # name, giving "pick 42 None took Colston Loveland"
-                # (2026-08-24). Naming the seat is honest and still usable;
-                # inventing a manager would not be.
-                "by": ("US" if p.get("draft_slot") == roster_id
-                       else (names.get(p.get("draft_slot"))
-                             or f"slot {p.get('draft_slot')}")),
-                "ours": p.get("draft_slot") == roster_id,
-                "player": " ".join(filter(None, [
-                    (p.get("metadata") or {}).get("first_name"),
-                    (p.get("metadata") or {}).get("last_name")])),
-                "position": (p.get("metadata") or {}).get("position"),
-                "round": p.get("round"),
-            }
-            v = wes_banter.pick_verdict(p.get("pick_no"), rank, teams, rounds)
-            if v:
-                row.update(v)
-            # SNIPED. A player who was on our shortlist for this very pick and
-            # went to somebody else is the single most quotable thing that
-            # happens in a draft, and we already know it -- no need to make the
-            # model infer it from a board it cannot see. Never flagged on our
-            # OWN picks: "that's who I wanted" about a player we just took
-            # would read as a bot that has lost track of itself.
-            was = shortlist.wanted(pid) if shortlist is not None else None
-            if not row["ours"] and was:
-                row["we_wanted"] = True
-                row["our_rank_for_him"] = was.get("our_rank")
-            recent.append(row)
-        ctx["recent_picks"] = recent
-        # EVERY team's shape, so it can needle the right person.
-        rosters = {}
-        for p in picks:
-            pos = (p.get("metadata") or {}).get("position")
-            if pos:
-                rosters.setdefault(p.get("draft_slot"), []).append(pos)
-        ctx["rosters_by_slot"] = {
-            ("US" if k == roster_id else (names.get(k) or f"slot {k}")):
-                _count(v)
-            for k, v in sorted(rosters.items()) if k is not None}
-        ctx["our_slot"] = roster_id
-        # OUR OWN ROSTER, by name, as its own field. The model should never
-        # have to reconstruct what it drafted from a table of everyone's.
-        ctx["our_roster"] = [
-            {"player": " ".join(filter(None, [
-                (p.get("metadata") or {}).get("first_name"),
-                (p.get("metadata") or {}).get("last_name")])),
-             "position": (p.get("metadata") or {}).get("position"),
-             "round": p.get("round")}
-            for p in picks if p.get("draft_slot") == roster_id]
-        # OUR injured players, in words. The most quotable facts in the room
-        # are usually about a body part.
-        hurt = []
-        for p in picks:
-            if p.get("draft_slot") != roster_id:
-                continue
-            info = idx.get(str(p.get("player_id"))) or {}
-            note = wes_notes.injury_note(info)
-            if note:
-                hurt.append(f"{info.get('name')}: {note}")
-        if hurt:
-            ctx["our_injuries"] = hurt
-    except Exception:  # noqa: BLE001 — a chat line is not worth a draft
-        pass
-    return ctx
-
-
-def _count(items):
-    out = {}
-    for i in items:
-        out[i] = out.get(i, 0) + 1
-    return out
+def _banter_context(draft_id, league_id, roster_id, state, wait,
+                    board_fn, shortlist=None):
+    """Kept as a name here because the loop and its tests both use it;
+    the assembly itself lives in draft_chat_context, which is a payload
+    for a different agent and was a hundred and forty lines of paging
+    past."""
+    return draft_chat_context.build(draft_id, league_id, roster_id,
+                                    state, wait, board_fn, shortlist)
 
 
 def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
@@ -360,7 +144,7 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     _raw_submit = _submit_fn or wes_sleeper.submit_pick
     sleep = _sleep_fn or time.sleep
     now = _now_fn or time.time
-    record = _record_fn or _record
+    record = _record_fn or draft_reporting._record
     # Banter shares this process ON PURPOSE. The Chrome profile is a persistent
     # singleton, so a second process reading the chat would collide with the
     # one submitting picks. Only touched when we are NOT on the clock.
@@ -457,7 +241,7 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             last_wait = wait
             _log(f"round {state.get('round', '?')}, {state.get('picks_made')} "
                  f"picks in — {wait} until our turn "
-                 f"({_roster_line(board_fn, league_id, draft_id, roster_id)})")
+                 f"({draft_reporting._roster_line(board_fn, league_id, draft_id, roster_id)})")
         # EVERY CYCLE while waiting, not just before a pick. This is the only
         # place the check can live: once autopick is on, our turn is taken
         # before we ever reach the pick path.
