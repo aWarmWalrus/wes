@@ -41,10 +41,23 @@ import re
 PROFILE_DIR = os.environ.get(
     "WES_YAHOO_PROFILE_DIR",
     os.path.join(os.path.expanduser("~"), "wes-pc", "yahoo_profile"))
-# Headed by default: login/2FA needs a visible window, and a headed browser is
-# far less likely to trip bot-detection than headless. Scheduled unattended runs
-# may flip this via env once a session is established and proven.
-HEADLESS = os.environ.get("WES_YAHOO_HEADLESS", "0") == "1"
+# HEADLESS BY DEFAULT (2026-08-29). This was headed on the reasoning that
+# login/2FA needs a visible window and that a headed browser is less likely to
+# trip bot-detection -- with the note that unattended runs "may flip this via
+# env once a session is established and proven". It is, and this is that flip.
+#
+# Verified rather than assumed, the same way the Sleeper side was: the same
+# roster read run both ways returns identical data -- fifteen players, same
+# slots, same `positions` -- and headless does it in 3.5s. Bot-detection never
+# came into it because the session already exists in PROFILE_DIR; the login
+# that would provoke a challenge is the one flow still forced headed.
+#
+# LOGIN STAYS HEADED regardless, explicitly: `login()` and the draft-recon tool
+# both pass headless=False, because a 2FA prompt nobody can see is a hang.
+#
+# Set WES_YAHOO_HEADLESS=0 to watch it, which is worth doing whenever Yahoo's
+# DOM shifts under us.
+HEADLESS = os.environ.get("WES_YAHOO_HEADLESS", "1") == "1"
 # Drive the REAL installed Chrome, not Playwright's bundled Chromium. Google SSO
 # ("this browser may not be secure") blocks Chromium + the automation flags; real
 # Chrome with those flags stripped (see _Session) reads as an ordinary browser.

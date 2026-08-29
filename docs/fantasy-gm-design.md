@@ -480,7 +480,12 @@ low-volume.
 - **New fragility to manage:** selector drift (a Yahoo layout change silently
   breaks reads/writes → a canary that asserts the scrape still parses, like the
   old schema-drift canary), session expiry (re-login flow, possibly 2FA), and
-  bot-detection (keep it headed/low-volume/human-paced).
+  bot-detection (low-volume, human-paced). *Headed* was on that list until
+  2026-08-29; the browser now runs **headless by default**, since the session
+  already lives in `WES_YAHOO_PROFILE_DIR` and the login that would actually
+  provoke a challenge is still forced headed. Verified by running the same
+  roster read both ways: identical players, slots and positions, 3.5s headless.
+  `WES_YAHOO_HEADLESS=0` to watch it.
 - **Shadow mode gets more important, not less:** the write script is now the
   riskiest component, so P3 soaks browser writes in dry-run (compute + log the
   clicks without committing) before any `auto` team is enabled.

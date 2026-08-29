@@ -929,9 +929,11 @@ def _submit_lineup(team_key, moves, _session_cls=None, _roster_fn=None):
         raise RuntimeError(f"couldn't read the current roster before writing: {before!r}")
     key_of = {p["name"]: p.get("player_key", "") for p in before}
     current_slots = {p["name"]: p.get("slot", "") for p in before}
-    # WHAT EACH PLAYER MAY LEGALLY OCCUPY. Already on the scraped roster and
-    # previously unused by planning, which is how a swap that put a RB in a WR
-    # slot got planned at all.
+    # WHAT EACH PLAYER MAY LEGALLY OCCUPY. `positions` is the field the Yahoo
+    # scrape actually returns (["RB"], ["WR"], ...); it was already there and
+    # planning simply never read it, which is how a swap that put a RB in a WR
+    # slot got planned at all. `eligible` is accepted first only so a caller
+    # with a richer roster shape can supply one -- nothing produces it today.
     eligible = {p["name"]: (p.get("eligible") or p.get("positions") or [])
                 for p in before}
 
