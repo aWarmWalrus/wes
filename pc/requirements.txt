@@ -42,9 +42,9 @@ playwright==1.61.0         # Yahoo fantasy scraping (#029/#030); needs `playwrig
 
 # --- Sleeper draft automation ---
 # The draft-room half of #039, extracted into a standalone package; what is left
-# in pc/wes_sleeper.py is the fantasy-domain half (scoring, player identity, the
+# in pc/sleeper/data.py is the fantasy-domain half (scoring, player identity, the
 # valued board). It was an UNDECLARED dependency until now — imported by
-# wes_sleeper but listed nowhere, so rebuilding this venv from this file
+# the sleeper package but listed nowhere, so rebuilding this venv from this file
 # produced a WES that could not import its own fantasy module.
 #
 # NOTE: this machine has it as an EDITABLE install from C:\Users\awarm\sleeperdraft
@@ -52,7 +52,7 @@ playwright==1.61.0         # Yahoo fantasy scraping (#029/#030); needs `playwrig
 # pinned copy below; re-run the editable install afterwards if you are still
 # working on the package:
 #   ...\python.exe -m pip install -e C:\Users\awarm\sleeperdraft
-sleeperdraft @ git+https://github.com/aWarmWalrus/sleeperdraft@1fc8058
+sleeperdraft @ git+https://github.com/aWarmWalrus/sleeperdraft@1b32768
 
 # --- Observability ---
 prometheus_client==0.25.0  # wes_server /metrics token counters

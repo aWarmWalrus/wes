@@ -25,6 +25,7 @@ DESIGN NOTES
   every fetch through here.
 """
 import json
+import ssl
 import threading
 import time
 import urllib.error
@@ -53,6 +54,38 @@ TEXT_TTL = 300.0
 
 _cache = {}          # (url, kind) -> (expiry_ts, value)
 _lock = threading.Lock()   # the Flask server serves turns from several threads
+
+
+def _ssl_context():
+    """A TLS context that does not read the Windows certificate store.
+
+    THIS MACHINE'S STORE CONTAINS A MALFORMED CERTIFICATE. Python enumerates
+    the whole store in `load_default_certs`, hands the blob to OpenSSL, and the
+    bad entry takes the entire call down:
+
+        ssl.SSLError: [ASN1: NOT_ENOUGH_DATA] not enough data
+
+    Every outbound HTTPS call in WES then fails. It killed a live mock draft at
+    the pre-flight on 2026-08-30 and had been quietly turning the snapshot unit
+    tests into 21-second retry loops before that.
+
+    `create_default_context(cafile=...)` skips the store entirely -- CPython
+    only calls `load_default_certs` when no CA source was given -- so pointing
+    at certifi's bundle sidesteps the bad entry while still verifying properly.
+    SSL_CERT_FILE does NOT work here: the store is read before it is consulted.
+
+    This is a workaround, not the fix. The malformed certificate is still in
+    the store and will break any other Python on this machine; it wants finding
+    and removing. Falls back to the default context if certifi is absent, so a
+    machine with a healthy store is unaffected."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # noqa: BLE001 — a healthy store needs nothing from us
+        return None
+
+
+_SSL = _ssl_context()
 
 
 def clear_cache():
@@ -115,7 +148,8 @@ def _fetch(url, headers, timeout, retries):
     while True:
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout,
+                                        context=_SSL) as r:
                 return r.read()
         except urllib.error.HTTPError as e:
             transient = e.code in (429, 500, 502, 503, 504)
