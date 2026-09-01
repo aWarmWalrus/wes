@@ -316,19 +316,36 @@ _POS_RE = re.compile(r"^[A-Za-z0-9/+]{1,6}$")
 
 def _detail_team_positions(row):
     """Best-effort (team_abbr, [positions]) for a roster row, either sport.
-    Returns ("", []) when the page doesn't expose it (NBA offseason blanks it)."""
+    Returns ("", []) when the page doesn't expose it (NBA offseason blanks it).
+
+    EVERY MATCH, NOT THE FIRST. An injury designation renders as its OWN
+    `span.Fz-xxs` ("Q", "D", "O") placed BEFORE the team/position span, so
+    `query_selector` — which returns only the first hit — read "Q" for any
+    flagged player, found no " - ", and returned no positions at all.
+
+    With no positions the player is eligible for nothing and the optimizer
+    benches him. Verified live on Teletubbies 2026-09-01: it proposed benching
+    Christian McCaffrey (21.51 pts, the roster's best player) to start Kenny
+    Gainwell (10.87), purely because McCaffrey was tagged Q. The bias is
+    towards the WORST possible lineup, because stars carry injury tags most
+    often and this silently drops exactly them.
+
+    So scan all matches of each selector and take the first with the actual
+    team/position SHAPE, which is the rule the selector loop already applied
+    across selectors — it just never considered one selector matching twice.
+    """
     for sel in _DETAIL_SELECTORS:
-        el = row.query_selector(sel)
-        text = " ".join((el.inner_text() or "").split()) if el else ""
-        if " - " not in text:
-            continue
-        team, _, pos = text.partition(" - ")
-        positions = [p.strip() for p in re.split(r"[,/]", pos) if p.strip()]
-        # "/" is a separator inside NBA multi-position ("PG/SG") but also part of
-        # NFL slot names; splitting on it is right for POSITIONS, which are
-        # always atomic ("WR", not "W/R/T").
-        if positions and all(_POS_RE.match(p) for p in positions):
-            return team.strip(), positions
+        for el in row.query_selector_all(sel):
+            text = " ".join((el.inner_text() or "").split())
+            if " - " not in text:
+                continue
+            team, _, pos = text.partition(" - ")
+            positions = [p.strip() for p in re.split(r"[,/]", pos) if p.strip()]
+            # "/" is a separator inside NBA multi-position ("PG/SG") but also
+            # part of NFL slot names; splitting on it is right for POSITIONS,
+            # which are always atomic ("WR", not "W/R/T").
+            if positions and all(_POS_RE.match(p) for p in positions):
+                return team.strip(), positions
     return "", []
 
 

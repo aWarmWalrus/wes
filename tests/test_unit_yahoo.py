@@ -393,11 +393,28 @@ class TestRosterCellParsing:
             return self._t
 
     def _row(self, cells):
+        """A cell value may be a STRING (one element) or a LIST (several
+        elements matching that selector). The list case is not hypothetical
+        decoration: Yahoo renders an injury tag as its own `span.Fz-xxs`
+        alongside the team/position one, and a fake that can only ever return
+        a single element cannot express the bug that caused."""
         outer = self
 
         class _Row:
+            @staticmethod
+            def _els(sel):
+                v = cells.get(sel)
+                if v is None:
+                    return []
+                return [outer._El(t) for t in (v if isinstance(v, list)
+                                               else [v])]
+
             def query_selector(self, sel):
-                return outer._El(cells[sel]) if sel in cells else None
+                els = self._els(sel)
+                return els[0] if els else None
+
+            def query_selector_all(self, sel):
+                return self._els(sel)
         return _Row()
 
     def test_nba_shape_from_ysf_player_detail(self):
@@ -419,6 +436,29 @@ class TestRosterCellParsing:
     def test_game_is_empty_when_the_cell_holds_team_positions(self):
         row = self._row({".ysf-player-detail": "Bkn - PG,SG"})
         assert wy._detail_game(row) == ""
+
+    def test_an_injury_tag_does_not_hide_the_positions(self):
+        """THE LIVE SHAPE, captured off Teletubbies 2026-09-01. A flagged player
+        gets an EXTRA span.Fz-xxs holding the tag, ahead of the team/position
+        one. Reading only the first match returned "Q", which has no " - ", so
+        the player came back with NO positions -- eligible for no slot, and
+        therefore benched. It proposed benching Christian McCaffrey (21.51 pts)
+        to start Kenny Gainwell (10.87) on exactly this row."""
+        row = self._row({".ysf-player-detail": "Thu 5:35 pm @ LAR",
+                         "span.Fz-xxs": ["Q", "SF - RB"]})
+        assert wy._detail_team_positions(row) == ("SF", ["RB"])
+
+    def test_the_healthy_row_still_works(self):
+        """The control. Without it the test above passes for a parser that just
+        takes the LAST match, which would break every untagged player."""
+        row = self._row({".ysf-player-detail": "Sun 10:00 am @ Ind",
+                         "span.Fz-xxs": "Bal - RB"})
+        assert wy._detail_team_positions(row) == ("Bal", ["RB"])
+
+    def test_a_tag_with_no_position_span_still_degrades_to_blank(self):
+        """A tag alone must not be coerced into a position."""
+        row = self._row({"span.Fz-xxs": ["Q"]})
+        assert wy._detail_team_positions(row) == ("", [])
 
     def test_a_game_string_containing_a_dash_is_not_read_as_positions(self):
         # The guard against the fallback matching junk.
