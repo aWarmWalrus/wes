@@ -3,6 +3,7 @@
 No network: every test injects `_fetch_fn`, and cache expiry is driven by an
 injected `_now` rather than by sleeping.
 """
+import builtins
 import os
 import sys
 
@@ -194,7 +195,7 @@ class TestRetry:
         monkeypatch.setattr(wes_http.time, "sleep", lambda s: None)
         attempts = []
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kw):
             attempts.append(1)
             raise self._urlerror(code)
         monkeypatch.setattr(wes_http.urllib.request, "urlopen", fake_urlopen)
@@ -207,7 +208,7 @@ class TestRetry:
         monkeypatch.setattr(wes_http.time, "sleep", lambda s: None)
         attempts = []
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kw):
             attempts.append(1)
             raise self._urlerror(code)
         monkeypatch.setattr(wes_http.urllib.request, "urlopen", fake_urlopen)
@@ -229,7 +230,7 @@ class TestRetry:
             def __exit__(self, *a):
                 return False
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kw):
             state["n"] += 1
             if state["n"] == 1:
                 raise TimeoutError("slow")
@@ -347,3 +348,56 @@ class TestNflEmptyPayloadGuard:
         assert nfl._has_payload({"league": {}}) is False
         assert nfl._has_payload({"athletes": []}) is False
         assert nfl._has_payload(None) is False
+
+
+class TestSSLContext:
+    """The certifi workaround for a malformed certificate in the Windows store
+    (2026-08-30). It shipped with no test of its own, and the one thing it did
+    do -- pass `context=` to urlopen -- broke every fake in TestRetry, which is
+    how the omission surfaced. Pin both halves here."""
+
+    def test_the_context_is_passed_to_urlopen(self, monkeypatch):
+        """The whole point of the fix. Without this argument the request falls
+        back to Python's default context, which enumerates the cert store and
+        dies on the bad entry."""
+        seen = {}
+
+        class _Resp:
+            def read(self):
+                return b"{}"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=0, **kw):
+            seen.update(kw)
+            return _Resp()
+        monkeypatch.setattr(wes_http.urllib.request, "urlopen", fake_urlopen)
+        wes_http._fetch(URL, {}, 1.0, 0)
+        assert "context" in seen
+        assert seen["context"] is wes_http._SSL
+
+    def test_it_degrades_to_none_without_certifi(self, monkeypatch):
+        """A machine with a healthy store must be unaffected. `None` means
+        'urlopen, use your default' -- not 'skip verification'."""
+        real_import = builtins.__import__
+
+        def no_certifi(name, *a, **kw):
+            if name == "certifi":
+                raise ImportError("no certifi")
+            return real_import(name, *a, **kw)
+        monkeypatch.setattr(builtins, "__import__", no_certifi)
+        assert wes_http._ssl_context() is None
+
+    def test_it_builds_a_verifying_context_when_certifi_is_present(self):
+        """The fallback must not be the normal path: a context that silently
+        stopped verifying would look identical at this level."""
+        import ssl as _ssl
+        ctx = wes_http._ssl_context()
+        if ctx is None:
+            pytest.skip("certifi not installed in this environment")
+        assert ctx.verify_mode == _ssl.CERT_REQUIRED
+        assert ctx.check_hostname is True
