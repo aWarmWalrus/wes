@@ -460,6 +460,37 @@ class TestRosterCellParsing:
         row = self._row({"span.Fz-xxs": ["Q"]})
         assert wy._detail_team_positions(row) == ("", [])
 
+    def test_the_nfl_injury_tag_is_read_as_status(self):
+        """Football keeps the designation in its own Fz-xxs span, not in
+        span.player-status (which holds note chrome there). Left unread, every
+        NFL player had status "" -- and _startable only refuses to start a
+        player whose status is in the sport's `out` set, so NOTHING was ever
+        ruled out and the optimizer would start an IR'd player."""
+        row = self._row({".ysf-player-detail": "Thu 5:35 pm @ LAR",
+                         "span.Fz-xxs": ["Q", "SF - RB"]})
+        assert wy._detail_status(row) == "Q"
+
+    @pytest.mark.parametrize("tag", ["O", "IR", "PUP", "SUSP", "D"])
+    def test_out_designations_are_read(self, tag):
+        """These are the ones that actually change the lineup."""
+        row = self._row({"span.Fz-xxs": [tag, "SF - RB"]})
+        assert wy._detail_status(row) == tag
+
+    def test_a_team_abbreviation_is_not_mistaken_for_an_injury(self):
+        """The hazard of guessing which span is the status: team abbreviations
+        are short and upper-case too. 'SF' must not become a designation."""
+        row = self._row({"span.Fz-xxs": ["SF", "SF - RB"]})
+        assert wy._detail_status(row) == ""
+
+    def test_the_team_position_cell_is_never_read_as_status(self):
+        row = self._row({"span.Fz-xxs": ["Bal - RB"]})
+        assert wy._detail_status(row) == ""
+
+    def test_a_healthy_player_has_no_status(self):
+        row = self._row({".ysf-player-detail": "Sun 10:00 am @ Ind",
+                         "span.Fz-xxs": "Bal - RB"})
+        assert wy._detail_status(row) == ""
+
     def test_a_game_string_containing_a_dash_is_not_read_as_positions(self):
         # The guard against the fallback matching junk.
         row = self._row({".ysf-player-detail": "Sun 1:25 pm - vs Washington"})

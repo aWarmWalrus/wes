@@ -375,6 +375,44 @@ def _clean_status(text):
     return t
 
 
+# THE DESIGNATIONS YAHOO ACTUALLY PRINTS, for the football fallback below.
+# An explicit whitelist, NOT the permissive rule `_clean_status` uses. That
+# rule is right for `span.player-status`, which holds the status or nothing;
+# here we are picking one span out of several and a wrong guess would invent
+# an injury. Team abbreviations are the specific hazard -- "SF" and "LAR" are
+# short and upper-case too -- so membership is exact.
+_INJURY_TAGS = frozenset({
+    "Q", "D", "O", "P", "IR", "IR-R", "PUP", "NFI", "NA", "SUSP", "GTD",
+    "DTD", "OUT", "DNP",
+})
+
+
+def _detail_status(row):
+    """The injury designation from the football layout, or "".
+
+    NFL puts it in its own `span.Fz-xxs` next to the team/position one, NOT in
+    `span.player-status` -- which on football holds note chrome ("Video
+    Forecast Player Note") that `_clean_status` correctly strips to nothing.
+    So every NFL player came back with NO status at all.
+
+    That matters because `_startable` refuses to start anyone whose status is
+    in the sport's `out` set (O, IR, PUP, D, SUSP...). With the field always
+    empty, NOTHING was ever ruled out, and the optimizer would happily start
+    a player who is not going to play. Verified live on Teletubbies
+    2026-09-01: McCaffrey renders "Q" here and arrived with status "".
+
+    Skips any span holding "<team> - <positions>" -- that is the OTHER cell,
+    and `_detail_team_positions` owns it."""
+    for sel in _DETAIL_SELECTORS:
+        for el in row.query_selector_all(sel):
+            text = " ".join((el.inner_text() or "").split())
+            if not text or " - " in text:
+                continue
+            if text.upper() in _INJURY_TAGS:
+                return text.upper()
+    return ""
+
+
 def _extract_roster(page):
     """DOM -> list[player-dict] in the normalized contract."""
     out = []
@@ -390,7 +428,9 @@ def _extract_roster(page):
         slot = ((slot_el.get_attribute("data-pos") or slot_el.inner_text())
                 if slot_el else "").strip()
         status_el = row.query_selector("span.player-status")
-        status = _clean_status(status_el.inner_text() if status_el else "")
+        # NBA's own cell first; fall back to football's separate tag span.
+        status = (_clean_status(status_el.inner_text() if status_el else "")
+                  or _detail_status(row))
         team, positions = _detail_team_positions(row)
         out.append({
             "name": name,
