@@ -59,9 +59,8 @@ _lock = threading.Lock()   # the Flask server serves turns from several threads
 def _ssl_context():
     """A TLS context that does not read the Windows certificate store.
 
-    THIS MACHINE'S STORE CONTAINS A MALFORMED CERTIFICATE. Python enumerates
-    the whole store in `load_default_certs`, hands the blob to OpenSSL, and the
-    bad entry takes the entire call down:
+    Python enumerates the whole Windows store in `load_default_certs`, hands
+    the DER blob to OpenSSL, and the call dies:
 
         ssl.SSLError: [ASN1: NOT_ENOUGH_DATA] not enough data
 
@@ -69,15 +68,26 @@ def _ssl_context():
     the pre-flight on 2026-08-30 and had been quietly turning the snapshot unit
     tests into 21-second retry loops before that.
 
+    ROOT CAUSE (corrected 2026-09-02; originally blamed on a malformed store
+    entry): the store is healthy — every entry parses, and a Python built
+    against OpenSSL 3.0 loads the same store fine. This env's conda Python
+    (3.11.5 + OpenSSL 3.5.7) rejects the DER `cadata` path that CPython's
+    `_load_windows_store_certs` uses, for ANY cert — a known-good DigiCert
+    root from certifi fails identically. PEM `cadata` and `cafile` still work.
+
     `create_default_context(cafile=...)` skips the store entirely -- CPython
     only calls `load_default_certs` when no CA source was given -- so pointing
-    at certifi's bundle sidesteps the bad entry while still verifying properly.
+    at certifi's bundle avoids the broken path while still verifying properly.
     SSL_CERT_FILE does NOT work here: the store is read before it is consulted.
 
-    This is a workaround, not the fix. The malformed certificate is still in
-    the store and will break any other Python on this machine; it wants finding
-    and removing. Falls back to the default context if certifi is absent, so a
-    machine with a healthy store is unaffected."""
+    RESOLVED 2026-09-02: the miniconda base was rebuilt fresh at E:\miniconda3
+    (Python 3.11.16 — same OpenSSL 3.5.7, but a CPython built against it) and
+    the default store path works again, so it was the old env's stale-CPython/
+    upgraded-OpenSSL mismatch, not OpenSSL 3.5.7 itself. This certifi override
+    and wes_discord.certifi_default_ssl_context are kept as cheap insurance
+    against the same drift recurring. Falls back to the default context if
+    certifi is absent, so an environment with a working store path is
+    unaffected."""
     try:
         import certifi
         return ssl.create_default_context(cafile=certifi.where())

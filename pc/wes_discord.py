@@ -506,6 +506,45 @@ def make_client(discord):
     return client
 
 
+def certifi_default_ssl_context():
+    """Make `ssl.create_default_context()` use certifi instead of the Windows
+    certificate store. Must run BEFORE `import discord`.
+
+    On this machine's conda Python (3.11.5 + OpenSSL 3.5.7), loading the
+    Windows store fails for EVERY certificate:
+
+        ssl.SSLError: [ASN1: NOT_ENOUGH_DATA] not enough data
+
+    The store itself is healthy — all 136 entries parse, and a Python built
+    against OpenSSL 3.0 reads them fine. OpenSSL 3.5.7 rejects the DER
+    `cadata` path that CPython's `_load_windows_store_certs` feeds it (a
+    single known-good DigiCert root from certifi fails the same way), so any
+    default-context creation in this env dies. `wes_http` sidesteps it with
+    `cafile=certifi.where()` (2026-08-30, same symptom), but aiohttp builds
+    its default contexts at IMPORT time in `aiohttp.connector`, so
+    `import discord` crashes before a custom connector could ever be passed —
+    the default-context factory itself has to be fixed first.
+
+    The wrapper only fills in certifi when the caller gave no CA source of
+    its own, and only for server-auth contexts, so explicit configuration
+    still wins. No-op (keeps the stock factory) when certifi is missing."""
+    import ssl
+    try:
+        import certifi
+    except ImportError:
+        return
+    orig = ssl.create_default_context
+
+    def patched(purpose=ssl.Purpose.SERVER_AUTH, *,
+                cafile=None, capath=None, cadata=None):
+        if (cafile is None and capath is None and cadata is None
+                and purpose == ssl.Purpose.SERVER_AUTH):
+            cafile = certifi.where()
+        return orig(purpose, cafile=cafile, capath=capath, cadata=cadata)
+
+    ssl.create_default_context = patched
+
+
 def main():
     # Under the scheduled task, stdout is cp1252 — any print of user content
     # or emoji would raise UnicodeEncodeError mid-handler. Log lossy, not fatal.
@@ -519,6 +558,7 @@ def main():
     if OWNER_ID == 0:
         raise SystemExit("WES_DISCORD_OWNER_ID is not set — the bot would "
                          "answer nobody; set it to your Discord user ID")
+    certifi_default_ssl_context()  # before import discord — see its docstring
     import discord
 
     make_client(discord).run(token)

@@ -605,3 +605,68 @@ class TestRecommendationDedup:
                  "executed": True}
         sent = self._run(monkeypatch, [[write], [dict(write, ts=200)]])
         assert len(sent) == 2
+
+
+class TestCertifiSslContext:
+    """certifi_default_ssl_context — the pre-`import discord` TLS shim.
+
+    On the PC's conda env (OpenSSL 3.5.7) the stock default-context factory
+    dies reading the Windows store, and aiohttp calls it at import time; the
+    shim reroutes no-CA-source calls to certifi. These tests pin the wrapper's
+    contract without touching the real store: explicit CA sources and non-
+    server purposes must pass through untouched, and the patch must restore
+    cleanly (the tests may run on machines where the default path works)."""
+
+    def _patched_ssl(self):
+        import ssl
+        orig = ssl.create_default_context
+        wd.certifi_default_ssl_context()
+        return ssl, orig
+
+    def test_bare_call_gets_certifi_cas(self):
+        import certifi
+        ssl, orig = self._patched_ssl()
+        try:
+            ctx = ssl.create_default_context()
+            # certifi's bundle alone is ~150 roots; a context that silently
+            # loaded nothing (the failure this guards against) would have 0.
+            assert len(ctx.get_ca_certs()) > 50
+        finally:
+            ssl.create_default_context = orig
+
+    def test_explicit_cafile_wins(self, tmp_path):
+        import certifi
+        ssl, orig = self._patched_ssl()
+        try:
+            one_cert = tmp_path / "one.pem"
+            pem = open(certifi.where(), encoding="utf-8").read()
+            end = pem.index("-----END CERTIFICATE-----") + len(
+                "-----END CERTIFICATE-----")
+            start = pem.index("-----BEGIN CERTIFICATE-----")
+            one_cert.write_text(pem[start:end] + "\n", encoding="utf-8")
+            ctx = ssl.create_default_context(cafile=str(one_cert))
+            assert len(ctx.get_ca_certs()) == 1  # ours, not certifi's bundle
+        finally:
+            ssl.create_default_context = orig
+
+    def test_client_auth_purpose_untouched(self, monkeypatch):
+        # CLIENT_AUTH contexts (a server verifying clients) must not be
+        # silently pointed at certifi's server-auth roots.
+        ssl, orig = self._patched_ssl()
+        try:
+            seen = {}
+
+            def spy(purpose=ssl.Purpose.SERVER_AUTH, *, cafile=None,
+                    capath=None, cadata=None):
+                seen.update(purpose=purpose, cafile=cafile)
+                return ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+
+            # The wrapper closed over the factory it replaced; spy one level
+            # deeper by re-patching and re-wrapping.
+            ssl.create_default_context = spy
+            wd.certifi_default_ssl_context()
+            ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            assert seen["purpose"] == ssl.Purpose.CLIENT_AUTH
+            assert seen["cafile"] is None
+        finally:
+            ssl.create_default_context = orig
