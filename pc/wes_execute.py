@@ -744,6 +744,21 @@ def _plan_swaps(moves, current_slots, eligible=None):
             for b in want_of:
                 if b == a or not legal(a, b):
                     continue
+                # A SWAP WITHIN ONE SLOT TYPE CHANGES NOTHING. Exchanging two
+                # bench players leaves both on the bench, so the state after is
+                # identical to the state before -- and the progress test below
+                # still called it progress, because a partner ALREADY on its
+                # target trivially satisfies "lands on its target".
+                #
+                # That is an infinite loop, not a slow one: the planner picked
+                # Cairo Santos <-> Tony Pollard (both BN) every iteration,
+                # never changed a thing, and burned the whole step budget
+                # without ever reaching the empty-slot fallback that would
+                # have put Santos in the vacant K. It failed the entire lineup
+                # write on Teletubbies 2026-09-02 -- including the two moves
+                # that were perfectly valid.
+                if _norm_slot(slots.get(a, "")) == _norm_slot(slots.get(b, "")):
+                    continue
                 a_lands, b_lands = slots.get(b, ""), slots.get(a, "")
                 if (_norm_slot(a_lands) == want_of[a]
                         or _norm_slot(b_lands) == want_of[b]):

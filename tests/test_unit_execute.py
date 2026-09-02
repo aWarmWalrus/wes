@@ -162,6 +162,50 @@ class TestPlanSwaps:
         assert ex._norm_slot(sim["B"]) == "WR"
         assert ex._norm_slot(sim["C"]) == "QB"
 
+    def test_filling_an_empty_slot_is_not_blocked_by_a_no_op_swap(self):
+        """THE LIVE FAILURE, 2026-09-02, first real auto run on Teletubbies.
+
+        Cairo Santos was picked up for a vacant K slot. The planner paired him
+        with Tony Pollard because BOTH were on BN and Pollard was already
+        settled there -- so "does either land on its target?" was trivially
+        true while the swap changed nothing. It re-picked that same no-op every
+        iteration, burned the step budget, and never reached the empty-slot
+        fallback:
+
+            lineup plan did not converge after 14 steps;
+            unresolved: ['Cairo Santos']
+
+        The whole write failed, including the two moves that were fine, and the
+        K slot stayed empty for the week."""
+        moves = [{"name": "Pollard", "from_slot": "W/R/T", "to_slot": "BN"},
+                 {"name": "Gainwell", "from_slot": "BN", "to_slot": "W/R/T"},
+                 {"name": "Santos", "from_slot": "BN", "to_slot": "K"}]
+        current = {"Pollard": "W/R/T", "Gainwell": "BN", "Santos": "BN"}
+        elig = {"Pollard": ["RB"], "Gainwell": ["RB"], "Santos": ["K"]}
+        plan = ex._plan_swaps(moves, current, elig)
+
+        # It must terminate AND actually place the kicker.
+        sim = dict(current)
+        for name, partner, dom in plan:
+            if partner:
+                sim[name], sim[partner] = sim[partner], sim[name]
+            else:
+                sim[name] = dom
+        assert ex._norm_slot(sim["Santos"]) == "K"
+        assert ex._norm_slot(sim["Gainwell"]) == "W/R/T"
+        assert ex._norm_slot(sim["Pollard"]) == "BN"
+
+    def test_two_players_in_the_same_slot_are_never_swapped(self):
+        """The mechanism directly. Exchanging two bench players leaves both on
+        the bench, so it can never be a step towards anything -- and offering
+        it to Yahoo would be a pointless click even if it terminated."""
+        moves = [{"name": "A", "from_slot": "BN", "to_slot": "K"},
+                 {"name": "B", "from_slot": "BN", "to_slot": "BN"}]
+        current = {"A": "BN", "B": "BN"}
+        plan = ex._plan_swaps(moves, current, {"A": ["K"], "B": ["RB"]})
+        assert all(partner != "B" for name, partner, _ in plan if name == "A")
+        assert ("A", None, "K") in plan
+
     def test_a_cycle_is_not_decomposed_into_an_ILLEGAL_swap(self):
         """THE LIVE FAILURE, 2026-08-26 to 2026-08-29, every scheduled run.
 

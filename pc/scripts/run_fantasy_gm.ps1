@@ -20,7 +20,29 @@ New-Item -ItemType Directory -Force -Path $logdir | Out-Null
 $detail = "$logdir\fantasy_gm_last.log"
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm"
 
-Set-Content $detail "==== WES fantasy GM $stamp ===="
-& $py "$repo\pc\fantasy_gm_run.py" *>> $detail
+# UTF-8 END TO END, for the same reason as run_sleeper_draft.ps1 — this script
+# had the bug that one documents. `Set-Content` wrote the header in ANSI and
+# `*>>` appended in UTF-16LE, so the log was two encodings in one file: a NUL
+# between every character of the Python output, every em-dash mojibake, and
+# grep finding nothing. A log you cannot read is not a log, and this one is
+# where a failed lineup write gets explained.
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$env:PYTHONIOENCODING = "utf-8"
+$utf8 = New-Object System.Text.UTF8Encoding $false
+
+[System.IO.File]::WriteAllText($detail,
+    "==== WES fantasy GM $stamp ====" + [Environment]::NewLine, $utf8)
+
+# -u (UNBUFFERED): piped to a file rather than a console, Python block-buffers
+# stdout, and a whole GM cycle fits inside one buffer — so the log would arrive
+# only at exit, which is no use while a run is hanging.
+& $py -u "$repo\pc\fantasy_gm_run.py" 2>&1 | ForEach-Object {
+    $line = "$_"
+    Write-Output $line
+    [System.IO.File]::AppendAllText($detail, $line + [Environment]::NewLine, $utf8)
+}
+
 $result = if ($LASTEXITCODE -eq 0) { "ok" } else { "ERROR (see fantasy_gm_last.log)" }
-Add-Content "$logdir\fantasy_gm.log" "$stamp  $result"
+[System.IO.File]::AppendAllText("$logdir\fantasy_gm.log",
+    "$stamp  $result" + [Environment]::NewLine, $utf8)
