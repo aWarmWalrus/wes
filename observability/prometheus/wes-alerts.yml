@@ -1,10 +1,17 @@
-# WES alert rules — evaluated by Prometheus on the Pi; the Discord bot polls
-# ALERTS{alertstate="firing"} every minute and DMs the owner on fire/resolve
-# (docs/observability.md). Deploy after editing:
-#   ssh walrus-pi "sudo cp ~/claude/wes/observability/prometheus/wes-alerts.yml \
-#     /etc/prometheus/rules/ && promtool check rules /etc/prometheus/rules/wes-alerts.yml \
-#     && sudo systemctl reload prometheus"
-# `summary` is the human sentence the DM shows — write it for a phone screen.
+# WES alert rules. Mounted into the Prometheus container at
+# /etc/prometheus/rules/ by observability/docker-compose.yml; the Discord bot
+# polls the firing set every minute and DMs the owner on fire/resolve
+# (docs/observability.md). `summary` is the human sentence the DM shows — write
+# it for a phone screen, and keep ALERT_CONTEXT in pc/wes_discord.py in sync.
+#
+# Apply after editing (no restart, no data loss):
+#   curl -X POST http://127.0.0.1:9090/-/reload
+# State: http://127.0.0.1:9090/alerts
+#
+# PiHot and PiDiskLow were removed 2026-09-02 with the Pi itself. EDiskLow is
+# new in the same change: the Ollama model store moved to E: in the September
+# migration, so that volume filling now stops the local model from loading at
+# all — a failure the C: rule would not have seen.
 groups:
   - name: wes
     rules:
@@ -22,20 +29,6 @@ groups:
         annotations:
           summary: "PC GPU has been over 85°C for 5 minutes (now {{ $value }}°C)."
 
-      - alert: PiHot
-        expr: max(node_thermal_zone_temp) > 80
-        for: 5m
-        annotations:
-          summary: "The Pi has been over 80°C for 5 minutes (now {{ $value }}°C)."
-
-      - alert: PiDiskLow
-        expr: >-
-          node_filesystem_avail_bytes{mountpoint="/"} /
-          node_filesystem_size_bytes{mountpoint="/"} < 0.10
-        for: 30m
-        annotations:
-          summary: "The Pi's SD card is under 10% free space."
-
       - alert: PCDiskLow
         expr: >-
           windows_logical_disk_free_bytes{volume="C:"} /
@@ -43,3 +36,13 @@ groups:
         for: 30m
         annotations:
           summary: "The PC's C: drive is under 10% free space."
+
+      - alert: EDiskLow
+        expr: >-
+          windows_logical_disk_free_bytes{volume="E:"} /
+          windows_logical_disk_size_bytes{volume="E:"} < 0.10
+        for: 30m
+        annotations:
+          summary: >-
+            The PC's E: drive is under 10% free space — the Ollama models and
+            the conda environment live there.

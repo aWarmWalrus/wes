@@ -29,9 +29,10 @@ Start-ScheduledTask -TaskName "WES Server"
 
 (Same pattern with `"WES Discord"` for the bot.)
 
-- The server warms up Whisper + piper + Gemma BEFORE serving — allow **60-120s**
-  before `/health` answers. Poll with a generous deadline; do not conclude
-  failure at 45s.
+- The server pins Gemma into VRAM before serving, so `/health` answers within
+  a few seconds. It used to warm Whisper and the piper voice too and took
+  60-120s; that was the bulk of the wait, and it went with the voice tier
+  (2026-09-02). `wes-dev.ps1 reload` still polls generously either way.
 - Verify: `Invoke-RestMethod http://127.0.0.1:8080/health` — the `llm` field
   shows the router + escalation target (single-model topology since 2026-07-16,
   e.g. `local (gemma4:12b) + gemma4:12b escalation (thinking)`).
@@ -48,7 +49,8 @@ $log = Get-Content C:\Users\awarm\wes-pc\logs\server.log -Raw
 ```
 
 Useful log markers: `[route] escalating to ...`, `[tool] name(args)`,
-`[respond_text] (channel)`, `[timing] stt=..`, `[discord] logged in as`.
+`[respond_text] (channel)`, `[warmup] ... ready (resident)`,
+`[discord] logged in as`, `[alerts] watching ...`.
 
 ## Testing server changes without touching the live service
 
@@ -62,23 +64,12 @@ $c = Get-NetTCPConnection -LocalPort 8081 -State Listen
 Stop-Process -Id $c[0].OwningProcess -Force -Confirm:$false
 ```
 
-## Pi client
+## There is no Pi any more
 
-Runs as a systemd **user** unit (`wes-client`, from `pi/wes-client.service`;
-linger enabled so it survives reboots). After editing `pi/wes_client.py`,
-`pi/pi_state.py`, or `pi/hailo_*.py`:
-
-```bash
-ssh walrus-pi "systemctl --user restart wes-client"
-ssh walrus-pi "journalctl --user -u wes-client -n 30 --no-pager -o cat"
-```
-
-- Startup takes ~10s (wake-word model load); verify with the `[state] endpoint
-  on :8090` log line or `curl http://10.0.0.79:8090/state`.
-- A restart drops the JBL's A2DP connection; `bt_monitor` reclaims it within
-  ~5-10s automatically. Repeated `[bt] connect rc=1` /
-  `le-connection-abort-by-local` means the speaker is off or out of battery —
-  not a software problem.
+A section here covered restarting the Raspberry Pi's `wes-client` systemd user
+unit over ssh, and reclaiming the JBL's A2DP connection afterwards. That
+hardware was repurposed on 2026-09-02 (`archive/pi/README.md`). If a note or a
+habit tells you to `ssh walrus-pi`, it is stale.
 
 ## Observability stack (docs/observability.md)
 
@@ -86,12 +77,22 @@ ssh walrus-pi "journalctl --user -u wes-client -n 30 --no-pager -o cat"
   (launcher `run_exporters.ps1`, binaries in `wes-pc\bin\`); same
   Stop/Start-ScheduledTask reload pattern. Logs: `logs\exporters.log`,
   `logs\windows_exporter.err.log`.
-- Pi side: `ssh walrus-pi "sudo systemctl restart prometheus"` (or
-  `grafana-server`, `prometheus-node-exporter`). Target health:
-  <http://10.0.0.79:9090/targets>; dashboard <http://10.0.0.79:3000>.
-- The dashboard JSON is provisioned from the repo
-  (`observability/dashboards/wes-overview.json`) — edit there, copy to
-  `/var/lib/grafana/dashboards/`, restart grafana-server.
+- Prometheus + Grafana are Docker containers on this PC (they were on the Pi).
+  Docker lives inside WSL and needs sudo, so use the wrapper:
+
+  ```powershell
+  & C:\Users\awarm\wes-pc\wes-dev.ps1 obs ps
+  & C:\Users\awarm\wes-pc\wes-dev.ps1 obs "restart grafana"
+  ```
+
+  Target health: <http://127.0.0.1:9090/targets>; dashboard
+  <http://localhost:3001> (3001, not 3000 — Open WebUI holds 3000).
+- Everything about the stack is in `observability/` and mounted into the
+  containers, so editing the dashboard JSON or the alert rules is a repo edit
+  plus a restart (rules and scrape config reload with
+  `curl.exe -X POST http://127.0.0.1:9090/-/reload`).
+- **If every PC panel blanks at once**, the WSL NAT gateway moved — see the
+  `windows-host` note in `observability/docker-compose.yml`.
 
 ## Smoke-test via the scheduled task, not just the script
 
@@ -118,10 +119,9 @@ give every new scheduled task `-WindowStyle Hidden`.
 
 ## Cautions
 
-- Restarting "WES Server" briefly takes the house assistant down — routine
-  after edits, but don't restart on a hunch mid-conversation with the user.
-- The audio house rule still applies: never trigger speaker playback (cast or
-  JBL) as part of debugging without explicit confirmation. `/respond_text` is
-  the safe silent probe.
-- The Pi client is separate (`ssh walrus-pi`, runs `pi/wes_client.py` from
-  `~/wes/.venv`); server reloads don't require touching it.
+- Restarting "WES Server" takes the assistant down — routine after edits, but
+  don't restart on a hunch mid-conversation with the user, and check the
+  fantasy schedule first: the "WES Fantasy GM" task runs unattended and really
+  writes to a live Yahoo account.
+- Restarting "WES Discord" is the more disruptive one now that Discord is the
+  only way in, and it also carries the alert and fantasy watchers.

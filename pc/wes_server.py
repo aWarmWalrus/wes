@@ -1,38 +1,41 @@
-"""WES Tier 2 service (runs on the PC, DESKTOP-R2PFF9T / DESKTOP-R2PFF9T.local).
+"""The WES service (runs on the PC, DESKTOP-R2PFF9T / DESKTOP-R2PFF9T.local).
 
-Turn-based voice pipeline:
+Text in, text out:
 
-    Pi records an utterance --POST /respond (WAV bytes)--> PC
-    PC: faster-whisper STT --> Claude (Haiku 4.5) --> piper TTS --> cast to speaker
-    PC returns JSON {transcript, reply} to the Pi for logging/display.
+    a frontend --POST /respond_text {"text", "channel"}--> here
+    here: local gemma4 router (tools) -> deep tier / Claude if it escalates
+    returns JSON {reply, timing}
 
-The LLM step is optional: if ANTHROPIC_API_KEY is unset, /respond still
-transcribes and echoes the transcript back as speech, so the STT+TTS+cast
-pipeline can be verified before the key is in place.
+The one live frontend is the Discord bot (`pc/wes_discord.py`); the fantasy GM
+reaches the same brain through `/announce`. Every channel keeps its own sliding
+conversation window, and durable memory (MEMORY.md) is shared across all of them.
+
+WAS A VOICE PIPELINE, until 2026-09-02. A Raspberry Pi 5 recorded utterances and
+POSTed WAV bytes to `/respond` and `/respond_stream`, which ran faster-whisper
+STT and streamed piper TTS back for the Pi to play. The Pi was repurposed, which
+left STT, TTS, the speculative-prefetch cache and the camera/vision tools with no
+producer on one end and no consumer on the other, so all of it was removed —
+`archive/pi/README.md` lists what went and where to find it. What is left is the
+half that was never Pi-shaped: the model routing, the tools, the memory and the
+fantasy GM.
 
 Run (from the PC's local venv):
-    C:\\Users\\awarm\\wes-pc\\.venv\\Scripts\\python.exe Z:\\wes\\pc\\wes_server.py
+    C:\\Users\\awarm\\wes-pc\\.venv\\Scripts\\python.exe C:\\Users\\awarm\\wes\\pc\\wes_server.py
 """
 
-import base64
 import csv
-import io
 import json
 import os
 import re
-import subprocess
 import sys
-import tempfile
 import threading
 import time
-import urllib.parse
 import urllib.request
-import wave
 from datetime import datetime
 
 # Under the scheduled task stdout is a cp1252 pipe; a reply containing any
-# character outside it (Claude likes '✓', '→') makes print() raise mid-stream
-# and kills the chunked response the Pi is playing. Degrade to '?' instead.
+# character outside it (Claude likes '✓', '→') makes print() raise mid-request
+# and takes the response down with it. Degrade to '?' instead.
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(errors="replace")
@@ -51,39 +54,13 @@ import wes_fantasy  # noqa: E402 — fantasy valuation engine (#029 P1)
 from flask import Flask, Response, request, jsonify
 from prometheus_client import (Counter, generate_latest,
                                CONTENT_TYPE_LATEST)
-from faster_whisper import WhisperModel
 
 # --- Config (override via environment) -------------------------------------
 
 HOST = os.environ.get("WES_HOST", "0.0.0.0")
 PORT = int(os.environ.get("WES_PORT", "8080"))
 
-# STT. Default to CPU int8 (robust everywhere). Set WES_WHISPER_DEVICE=cuda to
-# use the GTX 1660 once cuBLAS/cuDNN are installed — note an unsupported CUDA
-# setup hard-aborts the process (CTranslate2), so this is opt-in, not auto.
-WHISPER_MODEL = os.environ.get("WES_WHISPER_MODEL", "base.en")
-WHISPER_DEVICE = os.environ.get("WES_WHISPER_DEVICE", "cpu")
-
-# TTS (piper) + voice model, on the PC's local disk.
 PC_HOME = os.path.expanduser("~")
-PIPER_BIN = os.environ.get(
-    "WES_PIPER_BIN", os.path.join(PC_HOME, "wes-pc", ".venv", "Scripts", "piper.exe")
-)
-VOICE_MODEL = os.environ.get(
-    "WES_VOICE_MODEL", os.path.join(PC_HOME, "wes-pc", "voices", "en_GB-cori-medium.onnx")
-)
-
-# Output mode:
-#   "return" — send the TTS WAV back to the Pi in the HTTP response; the Pi plays
-#              it locally (e.g. over a Bluetooth speaker). Lowest latency.
-#   "cast"   — cast to a Google Home / Nest device (higher latency: discovery +
-#              fetch + buffer per reply).
-OUTPUT_MODE = os.environ.get("WES_OUTPUT", "return")
-
-# Cast target (only used when OUTPUT_MODE == "cast").
-# Per project rule, NEVER use "Good gray" or "Matcha".
-CAST_DEVICE = os.environ.get("WES_CAST_DEVICE", "Kitchen Display")
-CAST_VOLUME = float(os.environ.get("WES_CAST_VOLUME", "0.5"))  # 5/10
 
 # LLM. Backend "local" = Ollama chat (LOCAL_LLM_MODEL, tools + streaming);
 # "claude" = Anthropic API. Local errors fall back to Claude when a key exists.
@@ -98,11 +75,18 @@ ESCALATE = os.environ.get("WES_ESCALATE", "1") == "1"
 # way — its semantics ("hand off to the much smarter model") don't change.
 ESCALATE_MODEL = os.environ.get("WES_ESCALATE_MODEL", "")
 # Channels that run the DEEP tier (ESCALATE_MODEL + thinking) as their router on
-# every turn, not just on escalation. Latency-tolerant text channels (Discord)
-# can afford to "think harder" and call tools more reliably; voice stays on the
-# fast e4b router where time-to-first-audio matters. Empty = every channel fast.
+# every turn, not just on escalation. Latency-tolerant channels can afford to
+# "think harder" and call tools more reliably. This existed to keep the VOICE
+# channel on the fast router, where time-to-first-audio mattered; with voice
+# retired, every remaining channel is latency-tolerant and Discord is listed
+# explicitly rather than the default flipping to "all", so a new channel still
+# has to opt in. Empty = every channel fast.
+# "eval" is here so the nightly eval harness grades the SAME tier Discord runs.
+# It keeps its own channel (and so its own conversation window) rather than
+# driving "discord", because the harness resets memory between cases and would
+# otherwise wipe the owner's real chat history every night — which it did, once.
 DEEP_CHANNELS = set(
-    c.strip() for c in os.environ.get("WES_DEEP_CHANNELS", "discord").split(",")
+    c.strip() for c in os.environ.get("WES_DEEP_CHANNELS", "discord,eval").split(",")
     if c.strip())
 
 
@@ -157,9 +141,11 @@ EFFORT_BUDGET = {
 # escalate call — keep the full "deep" budget so this change never touches their
 # behavior; only the fast-router → escalation path is sized by the router.
 DEFAULT_EFFORT = "standard"
-# Spoken by the SERVER (not the model) the moment an escalation fires, so the
-# ~2-3s Claude spin-up isn't dead air. Must end with a sentence terminator +
-# space so the TTS splitter flushes it immediately. Empty string disables.
+# Emitted by the SERVER (not the model) the moment an escalation fires, so the
+# ~2-3s deep-tier spin-up isn't dead silence. It kept a sentence terminator +
+# trailing space because the TTS sentence splitter needed one to flush it
+# immediately; that splitter is gone with the voice tier, but the shape is
+# harmless and the buffered path still splits on it. Empty string disables.
 ESCALATE_ACK = os.environ.get(
     "WES_ESCALATE_ACK", "Good question — let me think about that. ")
 ANTHROPIC_MODEL = os.environ.get("WES_LLM_MODEL", "claude-haiku-4-5")
@@ -176,8 +162,8 @@ WEB_SEARCH_SERVER_TOOL = {
     "name": "web_search",
     "max_uses": WEB_SEARCH_MAX_USES,
 }
-# Spoken/typed the moment a web lookup fires, to cover Claude's spin-up (like
-# ESCALATE_ACK). Must end with a terminator + space so the TTS splitter flushes.
+# Emitted the moment a web lookup fires, to cover Claude's spin-up (like
+# ESCALATE_ACK).
 WEB_SEARCH_ACK = os.environ.get("WES_WEB_SEARCH_ACK", "Let me look that up. ")
 # Appended to Claude's system prompt on a web-search handoff. The router's
 # invisible-handoff rule doesn't reach Haiku (it runs the normal Jarvis prompt),
@@ -190,46 +176,38 @@ WEB_SEARCH_NUDGE = (
     "about searching, looking, checking, finding, or the web (no \"I'll search\", "
     "\"let me look that up\", \"I found that\", \"according to...\"). Reply exactly "
     "as if you already knew the fact.")
-# The base persona is CHANNEL-AGNOSTIC (Jarvis is the same whether reached by
-# voice or Discord). Channel-specific presentation lives in the *_CHANNEL_NOTE
-# constants below and is appended per turn. This is also the in-code fallback
-# for SOUL.md (soul_prompt) — keep it free of spoken/typed assumptions.
+# The base persona is CHANNEL-AGNOSTIC. Channel-specific presentation lives in
+# TEXT_CHANNEL_NOTE below and is appended per turn. This is also the in-code
+# fallback for SOUL.md (soul_prompt) — keep it free of presentation assumptions.
 SYSTEM_PROMPT = os.environ.get(
     "WES_SYSTEM_PROMPT",
     "You are Jarvis, a warm, concise assistant for the user's household. You "
-    "have tools to check live status (the Raspberry Pi's temperature and "
-    "resources, the date and time, recent service logs, the network layout) and "
-    "to remember durable facts across conversations — actually CALL the "
-    "relevant tool when a question needs current information or the user tells "
-    "you something worth keeping; never just claim you did something you didn't. "
-    "You are also a general assistant: answer everyday knowledge questions "
-    "confidently from what you know, and keep replies brief and natural.",
+    "have tools to check live information (the date and time, NBA scores and "
+    "schedules, the owner's fantasy teams, the network layout) and to remember "
+    "durable facts across conversations — actually CALL the relevant tool when "
+    "a question needs current information or the user tells you something worth "
+    "keeping; never just claim you did something you didn't. You are also a "
+    "general assistant: answer everyday knowledge questions confidently from "
+    "what you know, and keep replies brief and natural.",
 )
 
-# Voice turns are spoken aloud; text turns are typed. Exactly one of these is
-# appended to the (channel-agnostic) persona per turn — see system_prompt().
-VOICE_CHANNEL_NOTE = (
-    " You are speaking this reply aloud through a text-to-speech engine, so keep "
-    "it to one or two short sentences of plain spoken English: no markdown, "
-    "bullet points, headings, asterisks, emoji, or other symbols, and say "
-    "numbers, times, and units the way a person would say them out loud. The "
-    "user's words reach you through speech recognition, so if a word looks "
-    "slightly wrong, interpret it charitably from context rather than literally."
-)
+# Appended to the (channel-agnostic) persona per turn — see system_prompt().
+# There used to be a VOICE_CHANNEL_NOTE beside this one, chosen per channel; it
+# told the model it was being read aloud by a TTS engine and to drop all
+# markdown. The voice tier retired with the Pi (2026-09-02), so every channel is
+# typed and there is nothing left to choose between.
 TEXT_CHANNEL_NOTE = (
-    " The user is TYPING to you over a text chat (Discord), probably away from "
-    "home — no microphone or speaker is involved, so never mention voice, "
-    "speaking, or hearing them. Their words arrive exactly as typed. Write "
-    "numbers, times, IP addresses, ports, filenames, and other identifiers as "
-    "ordinary digits and text (e.g. '10.0.0.168:9835'), never spelled out "
-    "phonetically. Keep replies short and conversational; simple formatting is "
-    "fine in text. Your tools work here exactly as they do in person — you still "
-    "have live access to the house's camera, status, logs, and memory. When the "
-    "user asks what you can see, asks you to remember or forget something, or "
-    "asks for live status, you MUST actually call the matching tool THIS turn "
-    "and answer from its result. Never say you looked, remembered, checked, or "
-    "saw something unless you truly called the tool — you have no memory of the "
-    "current view or of facts you did not save."
+    " The user is TYPING to you over a text chat (Discord) — no microphone or "
+    "speaker is involved, so never mention voice, speaking, or hearing them. "
+    "Their words arrive exactly as typed. Write numbers, times, IP addresses, "
+    "ports, filenames, and other identifiers as ordinary digits and text (e.g. "
+    "'10.0.0.168:9835'), never spelled out phonetically. Keep replies short and "
+    "conversational; simple formatting is fine in text. When the user asks you "
+    "to remember or forget something, or asks for live status, scores or "
+    "fantasy information, you MUST actually call the matching tool THIS turn "
+    "and answer from its result. Never say you looked, remembered, or checked "
+    "something unless you truly called the tool — you have no memory of facts "
+    "you did not save."
 )
 
 # Appended for every channel. Some tools (e.g. nba_discussion) return content
@@ -344,13 +322,16 @@ def forget_fact(match):
     return f"Okay, I've forgotten that."
 
 
-def system_prompt(channel="voice"):
+def system_prompt(channel="text"):
     """The system prompt for a turn: channel-agnostic persona (SOUL.md) + the
-    channel's presentation note (spoken vs typed) + durable memory (MEMORY.md,
-    unified across channels) + live scene."""
-    note = VOICE_CHANNEL_NOTE if channel == "voice" else TEXT_CHANNEL_NOTE
-    return (soul_prompt() + note + WEB_CONTENT_RULE
-            + memory_block() + _scene_context())
+    presentation note + durable memory (MEMORY.md, unified across channels).
+
+    `channel` no longer selects between notes — it did while a spoken channel
+    existed — but it stays in the signature because every caller threads a
+    channel through for conversation memory anyway, and a future channel that
+    needs different presentation should branch here rather than at each caller."""
+    return (soul_prompt() + TEXT_CHANNEL_NOTE + WEB_CONTENT_RULE
+            + memory_block())
 
 
 # Framing for a proactive notification (an alert, later a scheduled action):
@@ -364,64 +345,28 @@ ANNOUNCE_FRAMING = (
     "not read out raw IP addresses or port numbers. Do not say the user asked; "
     "do not invent any detail beyond what is given.]\n\n")
 
-# --- Tools (Pi introspection) ----------------------------------------------
+# --- Tools ------------------------------------------------------------------
+# There were four more of these until 2026-09-02, all of them calls into the
+# Pi's :8090 state endpoint: `get_system_status` (CPU temperature, throttling,
+# the Bluetooth speaker), `look` (Hailo YOLOv8s object detection),
+# `describe_scene` (face recognition + a Gemma vision description) and
+# `read_pi_log`. The Pi was repurposed, so they now describe hardware that does
+# not exist — and a tool whose description promises a camera is worse than no
+# tool, because the model will call it and then narrate the failure. Removed
+# together with the vision cache and the VLM plumbing; see archive/pi/README.md.
 TOOLS_ENABLED = os.environ.get("WES_TOOLS", "1") == "1"
-PI_STATE_URL = os.environ.get(
-    "WES_PI_STATE_URL", wes_hosts.url("pi", "pi_state", default="http://10.0.0.79:8090"))
 MAX_TOOL_ROUNDS = 4
 
-# Local vision-language model (Gemma via Ollama) for rich scene descriptions.
 # Ollama runs on the PC alongside the server, so it's reached over loopback;
 # the registry supplies only the port (its identity), not the host.
 OLLAMA_URL = os.environ.get(
     "WES_OLLAMA_URL",
     f"http://127.0.0.1:{wes_hosts.port('pc', 'ollama', default=11434)}")
-VLM_MODEL = os.environ.get("WES_VLM_MODEL", "gemma3:4b")
-VLM_PROMPT = ("Describe what you see in this image in one or two natural, "
-              "conversational sentences, as an assistant describing the view.")
-# A scene description prefetched at wake-word time is reused within this window.
-SCENE_TTL = float(os.environ.get("WES_SCENE_TTL", "20"))
-_scene_lock = threading.Lock()
-# desc: Gemma's description. faces: face-rec results ([] = ran, nobody in frame;
-# None = no recognition data). faces_ts is set the moment identities arrive (before
-# Gemma finishes) so the turn's system context can use them immediately.
-_scene_cache = {"desc": None, "ts": 0.0, "faces": None, "faces_ts": 0.0}
 
 TOOLS = [
     {
-        "name": "get_system_status",
-        "description": (
-            "Get the Raspberry Pi's live system status: CPU temperature (°C), "
-            "throttling state, load average, memory, disk, uptime, and whether the "
-            "Bluetooth speaker is connected. Use when asked about the Pi's health, "
-            "temperature, memory/resources, or how it's doing."
-        ),
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
         "name": "get_datetime",
         "description": "Get the current date and time. Use when asked the time or day.",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "look",
-        "description": (
-            "Look through the camera and detect what objects are currently visible, "
-            "using on-device computer vision. Returns a list of detected objects with "
-            "their rough position (left/center/right) and size. Use when asked what "
-            "you see, who/what is there, or to describe the view."
-        ),
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "describe_scene",
-        "description": (
-            "Look through the camera: rich natural-language description of the scene "
-            "PLUS face recognition — returns who is in frame by name (with position "
-            "and clothing) and what they're doing. Use whenever asked what you see, "
-            "or anything about a specific person (how they look, what they're doing, "
-            "whether they're present). For a quick object list only, use 'look'."
-        ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
@@ -464,31 +409,12 @@ TOOLS = [
     {
         "name": "lookup_hosts",
         "description": (
-            "Look up the WES network layout: the IP addresses, hostnames, roles, "
-            "and service ports of the machines in the system (the PC / desktop "
-            "server and the Raspberry Pi). Call this whenever you need a "
-            "machine's address, which host runs a given service, or a port "
-            "number — do not guess these, they can change."
+            "Look up the WES network layout: the IP address, hostname, role, and "
+            "service ports of the machine the system runs on. Call this whenever "
+            "you need the server's address, which port a given service is on, or "
+            "a port number — do not guess these, they can change."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "read_pi_log",
-        "description": (
-            "Read recent log lines from the Pi to investigate errors or recent "
-            "activity. Pick the relevant service."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "service": {
-                    "type": "string",
-                    "enum": ["bluetooth", "wireplumber", "pipewire", "kernel"],
-                },
-                "lines": {"type": "integer", "description": "recent lines (max 50)"},
-            },
-            "required": ["service"],
-        },
     },
     {
         "name": "nba_scores",
@@ -903,193 +829,21 @@ def _local_toolset(deep=False, use_tools=True):
     return tools
 
 
-def _pi_get(path, params=None):
-    url = f"{PI_STATE_URL}{path}"
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-    with urllib.request.urlopen(url, timeout=12) as r:
-        return json.loads(r.read().decode())
-
-
-def _vlm_prompt(identities):
-    """Base describe prompt, augmented with any recognized people."""
-    if isinstance(identities, dict):
-        identities = [identities]
-    if not isinstance(identities, list):
-        identities = []
-    known = [f for f in identities
-             if isinstance(f, dict) and f.get("name") and f["name"] != "unknown"]
-    if known:
-        who = ", ".join(
-            f"{f['name']} (wearing {f.get('clothing', 'unknown')}, {f['position']})"
-            for f in known
-        )
-        return (f"Face recognition has identified these people in the image, with the "
-                f"color they're wearing to help tell them apart: {who}. Use the "
-                f"clothing colors to match each name to the right person, especially "
-                f"if people are close together. In two or three conversational "
-                f"sentences, describe each identified person BY NAME — their "
-                f"appearance, expression, posture, and what they're doing — then the "
-                f"surroundings briefly. Never say 'a person' or 'a man/woman' for "
-                f"someone who has a name.")
-    return VLM_PROMPT
-
-
-def _gemma_describe(jpeg, prompt=None):
-    """Run the local Gemma VLM on a JPEG and return the description string."""
-    import base64
-
-    payload = json.dumps({
-        "model": VLM_MODEL,
-        "prompt": prompt or VLM_PROMPT,
-        "images": [base64.b64encode(jpeg).decode()],
-        "stream": False,
-        "keep_alive": -1,  # keep the model resident so it never cold-loads
-        "options": {"num_ctx": NUM_CTX},  # bound KV cache (see _ollama_chat)
-    }).encode()
-    req = urllib.request.Request(
-        f"{OLLAMA_URL}/api/generate", data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=120) as r:
-        data = json.loads(r.read().decode())
-    record_usage(VLM_MODEL, "vlm", "scene",
-                 data.get("prompt_eval_count"), data.get("eval_count"))
-    return data.get("response", "").strip() or "(no description)"
-
-
-def prefetch_scene(jpeg, identities=None):
-    """Describe a frame captured at wake-word time (with recognized identities
-    woven in) and cache it, so describe_scene returns instantly."""
-    if isinstance(identities, dict):
-        identities = [identities]
-    if not isinstance(identities, list):
-        identities = []
-    # Identities are known now — publish them immediately so the turn's system
-    # context can say who's in frame even while Gemma is still describing.
-    with _scene_lock:
-        _scene_cache["faces"] = identities
-        _scene_cache["faces_ts"] = time.time()
-    try:
-        desc = _gemma_describe(jpeg, _vlm_prompt(identities))
-        with _scene_lock:
-            _scene_cache["desc"] = desc
-            _scene_cache["ts"] = time.time()
-        names = [f.get("name") for f in identities if isinstance(f, dict)]
-        print(f"[vision] prefetched scene {names}: {desc[:70]!r}", flush=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"[vision] prefetch error: {e!r}", flush=True)
-
-
-def _face_summary(faces):
-    """Structured identity summary for tool output / Claude context."""
-    if faces is None:
-        return {"recognition_ran": False, "people": []}
-    people = [
-        {"name": f.get("name", "unknown"), "position": f.get("position", "?"),
-         "clothing": f.get("clothing", "unknown")}
-        for f in faces if isinstance(f, dict)
-    ]
-    return {"recognition_ran": True, "people": people}
-
-
-def describe_scene():
-    """Rich scene description WITH face identity.
-
-    Cache hit: the wake-word prefetch already ran face-rec + Gemma. Miss: capture
-    via the Pi's /scene (face-rec included) and describe with an identity-aware
-    prompt. Returns {"description": str, **_face_summary(...)}."""
-    with _scene_lock:
-        if _scene_cache["desc"] and time.time() - _scene_cache["ts"] < SCENE_TTL:
-            print("[vision] describe_scene: cache HIT", flush=True)
-            return {"description": _scene_cache["desc"],
-                    **_face_summary(_scene_cache["faces"])}
-    print("[vision] describe_scene: miss — capturing now (with face-rec)", flush=True)
-    faces = None
-    jpeg = b""
-    try:  # preferred: one capture with recognition
-        with urllib.request.urlopen(f"{PI_STATE_URL}/scene", timeout=30) as r:
-            data = json.loads(r.read().decode())
-        if "error" not in data:
-            faces = data.get("faces", [])
-            jpeg = base64.b64decode(data.get("jpeg_b64") or "")
-    except Exception as e:  # noqa: BLE001
-        print(f"[vision] /scene failed ({e!r}); falling back to /frame", flush=True)
-    if not jpeg:  # fallback: bare frame, no identity
-        with urllib.request.urlopen(f"{PI_STATE_URL}/frame", timeout=15) as r:
-            jpeg = r.read()
-    if not jpeg:
-        return {"description": "I couldn't capture an image from the camera.",
-                **_face_summary(None)}
-    desc = _gemma_describe(jpeg, _vlm_prompt(faces))
-    with _scene_lock:
-        _scene_cache.update(desc=desc, ts=time.time(),
-                            faces=faces, faces_ts=time.time())
-    return {"description": desc, **_face_summary(faces)}
-
-
-def _scene_context():
-    """System-prompt addendum: who face recognition currently sees.
-
-    Injected into every Claude turn so questions about a person ("how does
-    charlie look?") are answered assuming the recognized person IS in frame —
-    and 'I don't see them' is said only when recognition genuinely didn't find
-    them. Empty string when there's no fresh recognition data."""
-    with _scene_lock:
-        faces = _scene_cache["faces"]
-        fresh = faces is not None and time.time() - _scene_cache["faces_ts"] < SCENE_TTL
-    if not fresh:
-        return ""
-    known = [f for f in faces
-             if isinstance(f, dict) and f.get("name") and f["name"] != "unknown"]
-    unknown_n = sum(1 for f in faces if isinstance(f, dict)) - len(known)
-    if known:
-        who = ", ".join(
-            f"{f['name']} ({f.get('position', '?')}, wearing {f.get('clothing', 'unknown')})"
-            for f in known
-        )
-        extra = f" plus {unknown_n} unrecognized person(s)" if unknown_n else ""
-        seen = f"{who}{extra}"
-    elif unknown_n:
-        seen = f"{unknown_n} person(s), but none match enrolled faces"
-    else:
-        seen = "no people"
-    return (
-        f"\n\nLive camera face recognition (moments ago): currently in frame: {seen}. "
-        "Treat this as ground truth for who is present. If asked about a person "
-        "listed here, they ARE in view — answer about them directly (use "
-        "describe_scene for visual detail). Only say you can't find someone if "
-        "they are NOT listed here."
-    )
-
-
 def run_tool(name, tool_input):
-    """Execute a tool and return a string result for Claude."""
+    """Execute a tool and return a string result for the model."""
     try:
-        if name == "get_system_status":
-            return json.dumps(_pi_get("/state"))
-        if name == "describe_scene":
-            return json.dumps(describe_scene())
         if name == "get_datetime":
-            # spoken-friendly: no ISO dates, 24h clocks, or seconds — the
-            # model repeats this string near-verbatim into TTS
+            # Readable rather than machine-shaped: no ISO dates, 24h clocks or
+            # seconds. The model repeats this string near-verbatim, and it read
+            # it aloud through TTS back when there was a speaker.
             now = datetime.now().astimezone()
             return now.strftime("%A, %B %d, %Y, %I:%M %p").replace(" 0", " ")
-        if name == "look":
-            return json.dumps(_pi_get("/look"))
         if name == "lookup_hosts":
             return wes_hosts.summary()
         if name == "remember":
             return remember_fact(tool_input.get("fact", ""))
         if name == "forget":
             return forget_fact(tool_input.get("match", ""))
-        if name == "read_pi_log":
-            data = _pi_get(
-                "/logs",
-                {"service": tool_input.get("service", ""),
-                 "n": tool_input.get("lines", 20)},
-            )
-            return data.get("log", "(no log)")
         if name == "nba_scores":
             return wes_nba.live_scores(tool_input.get("team"),
                                        tool_input.get("date"))
@@ -1163,20 +917,7 @@ def _clear_write_suppression(_exc=None):
 
 # --- Lazy singletons --------------------------------------------------------
 
-_whisper = None
 _anthropic = None
-
-
-def get_whisper():
-    global _whisper
-    if _whisper is None:
-        if WHISPER_DEVICE == "cuda":
-            _whisper = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
-            app.logger.info("Whisper on CUDA (float16)")
-        else:
-            _whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-            app.logger.info("Whisper on CPU (int8)")
-    return _whisper
 
 
 def get_anthropic():
@@ -1190,10 +931,13 @@ def get_anthropic():
 
 
 # --- LLM rate-limit budget --------------------------------------------------
-# The org has a low RPM cap (default assume 5/min). Speculation must not starve
-# the real finalize request, so we reserve slots for it and gate speculation.
+# The org has a low RPM cap (default assume 5/min). This counter existed to gate
+# SPECULATIVE Claude calls (fired while the user was still speaking) so they
+# could not starve the real turn; speculation died with the microphone, but the
+# counter is still worth keeping — it is what /speculate's replacement would
+# need, and `_llm_calls_last_min()` is a cheap read on how hard Claude is being
+# hit right now.
 _RATE_LIMIT_RPM = int(os.environ.get("WES_LLM_RPM", "5"))
-_SPEC_RESERVE = int(os.environ.get("WES_SPEC_RESERVE", "2"))  # slots kept for real turns
 _rate_lock = threading.Lock()
 _rate_calls = []  # timestamps of recent Claude calls
 
@@ -1211,53 +955,11 @@ def _llm_calls_last_min():
         return len(_rate_calls)
 
 
-def _spec_budget_ok():
-    """True if there's spare budget to speculate (keeping a reserve for real turns)."""
-    if LLM_BACKEND == "local":
-        return True  # local inference has no API rate limit
-    return _llm_calls_last_min() < max(0, _RATE_LIMIT_RPM - _SPEC_RESERVE)
-
-
 # --- Pipeline steps ---------------------------------------------------------
 
-
-# Contextual biasing: whisper's initial_prompt reads to the decoder like the
-# transcript-so-far, so ambiguous audio resolves toward in-context words —
-# proper nouns especially. The lexicon is this house's vocabulary (devices,
-# hardware, household names); launcher-overridable, empty string disables.
-STT_LEXICON = os.environ.get(
-    "WES_STT_LEXICON",
-    "Jarvis is a voice assistant running on a Raspberry Pi with a Hailo "
-    "accelerator. It can control the Hue lights and the ecobee thermostat, "
-    "knows the speakers Matcha, Good gray, Stevie, and the JBL, and knows "
-    "Charlie and Cindy. The user follows the NBA and the Brooklyn Nets.",
-    # Kaia and Ellis were dropped 2026-08-29. Biasing never reliably held them
-    # -- Whisper still returned "Kaya" and "Alice" about half the time -- and
-    # they are not names WES needs to get right, so the eval case that kept
-    # reporting it went too. Charlie and Cindy stay because they do land.
-)
-
-
-def stt_bias_prompt():
-    """Whisper initial_prompt: the domain lexicon plus the tail of the live
-    conversation (same idea as Google boosting your on-screen entities).
-    Kept short — an overlong prompt makes whisper hallucinate prompt words
-    into marginal audio (the robust-silence eval case is the tripwire)."""
-    tail = " ".join(m["content"] for m in conversation_context()[-2:])
-    return (STT_LEXICON + " " + tail[:300]).strip()
-
-
-def transcribe(wav_bytes):
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        f.write(wav_bytes)
-        path = f.name
-    try:
-        segments, _ = get_whisper().transcribe(
-            path, language="en", initial_prompt=stt_bias_prompt() or None)
-        return " ".join(s.text.strip() for s in segments).strip()
-    finally:
-        os.remove(path)
-
+# STT lived here: faster-whisper, plus a contextual-biasing lexicon of this
+# house's vocabulary that nudged the decoder toward in-context proper nouns.
+# Both retired with the microphone on 2026-09-02 (archive/pi/README.md).
 
 RATE_LIMIT_REPLY = "Sorry, I'm being rate limited right now. Try again in a moment."
 
@@ -1291,16 +993,19 @@ def _ollama_chat(messages, tools=None, stream=False, max_tokens=512, timeout=120
 
 
 # --- Conversation memory ----------------------------------------------------
-# LiveKit ChatContext-style sliding window, keyed by channel: "voice" is the
-# house conversation (one house, one mic); remote text frontends (Discord) get
-# their own channel so a chat from away doesn't clobber the in-house context
-# (channels never bleed — only the future durable layer is shared, see
+# LiveKit ChatContext-style sliding window, keyed by channel: each frontend gets
+# its own channel so one conversation doesn't clobber another's context
+# (channels never bleed — only the durable layer is shared, see
 # docs/memory-design.md). Depth + idle TTL are PER CHANNEL: Discord chats span
-# hours/days and want a deep, long-lived window; voice is short spoken context
-# where latency matters and old turns age out fast. Windows are persisted to
-# disk so they survive a server restart.
-CONV_TURNS = int(os.environ.get("WES_CONV_TURNS", "6"))       # voice/default depth
-CONV_TTL = float(os.environ.get("WES_CONV_TTL", "300"))       # voice/default idle TTL
+# hours/days and want a deep, long-lived window. Windows are persisted to disk
+# so they survive a server restart.
+#
+# The shallow 6-turn / 5-minute default below was tuned for the retired "voice"
+# channel — short spoken context where latency mattered and old turns aged out
+# fast. It stays as the DEFAULT rather than being raised to Discord's, because
+# an unrecognised channel getting a small cheap window is the safer accident.
+CONV_TURNS = int(os.environ.get("WES_CONV_TURNS", "6"))       # default depth
+CONV_TTL = float(os.environ.get("WES_CONV_TTL", "300"))       # default idle TTL
 # Per-channel overrides: (max exchanges kept, idle TTL seconds).
 CONV_POLICY = {
     "discord": (int(os.environ.get("WES_CONV_TURNS_DISCORD", "40")),
@@ -1379,7 +1084,7 @@ def load_conversations():
               f"{ {c: len(m) // 2 for c, m in _convs.items()} }", flush=True)
 
 
-def conversation_context(channel="voice"):
+def conversation_context(channel="text"):
     """Recent exchanges for the LLM, or [] once the conversation went idle."""
     _, ttl = _conv_policy(channel)
     with _conv_lock:
@@ -1389,7 +1094,7 @@ def conversation_context(channel="voice"):
         return list(conv)
 
 
-def record_turn(transcript, reply, channel="voice", error=None):
+def record_turn(transcript, reply, channel="text", error=None):
     """Record one exchange. ALWAYS logs the turn for observability — even a
     failed or empty reply, which is exactly what you need to SEE to debug (the
     turn log is the observability record, not just a memory of what worked).
@@ -1560,7 +1265,7 @@ def _note_escalation():
         _turn_notes.escalated = True
 
 
-def log_turn(transcript, reply, channel="voice", error=None):
+def log_turn(transcript, reply, channel="text", error=None):
     """Append one exchange (+ this thread's notes) to the turn log. Consumes the
     notes; trims the file to TURNS_MAX lines; never breaks a turn. `error` (or an
     empty reply) tags the record `error` so failed turns are visible in /turns
@@ -1636,18 +1341,10 @@ def recent_draft_turns(n=20, kind=None):
         return []
 
 
-# LiveKit-style interruption tag: when the client aborts playback (barge-in),
-# the partial reply IS what the user heard — remember it, but tell the model
-# where it was cut off so the follow-up turn can pivot naturally.
-INTERRUPT_TAG = " [reply interrupted by the user]"
-
-
-def record_spoken_turn(transcript, reply, completed):
-    """Record one exchange; tag the reply if the stream was aborted mid-way."""
-    if reply and not completed:
-        reply = reply.rstrip() + INTERRUPT_TAG
-    record_turn(transcript, reply)
-
+# A LiveKit-style interruption tag and `record_spoken_turn` lived here: when the
+# voice client aborted playback (barge-in), the partial reply was what the user
+# had actually heard, so it was recorded with a marker saying where it was cut
+# off. Nothing can be interrupted mid-delivery now that every channel is text.
 
 # Buffered-mode marker: nothing yielded so far reached the user — discard it.
 # Lets a buffered caller retract a spoken escalation announcement ("I think
@@ -1699,7 +1396,7 @@ def _is_unkept_promise(reply):
     return True
 
 
-def _think_local(transcript, channel="voice", use_tools=True):
+def _think_local(transcript, channel="text", use_tools=True):
     """One-shot local reply — same tool loop as streaming, joined. Without tools
     gemma4 hallucinates tool output (fake times, literal '{tool_output}').
     Runs buffered: no text reaches the user until the reply is complete, so a
@@ -1708,8 +1405,9 @@ def _think_local(transcript, channel="voice", use_tools=True):
 
     Buffered means nothing has reached the user yet, so an unkept promise
     (#002) can be silently re-run at the deep tier and replaced with a real
-    answer. Streaming voice (/respond_stream) is already speaking and cannot
-    retract, so it is out of scope here."""
+    answer. (This was the only caller that could retract; the streaming voice
+    path was already speaking by then. That path retired with the Pi, so every
+    turn now runs buffered.)"""
     deep = _channel_deep(channel)
     parts = []
     for delta in _stream_local(transcript, channel=channel, buffered=True,
@@ -1736,7 +1434,7 @@ def _think_local(transcript, channel="voice", use_tools=True):
     return reply
 
 
-def _stream_escalation(transcript, channel="voice", effort="deep"):
+def _stream_escalation(transcript, channel="text", effort="deep"):
     """Route an escalated (hard) query to the configured deep backend:
     the local ESCALATE_MODEL with thinking, or Claude. `effort` sizes the local
     deep tier's thinking budget (#026); it has no effect on the Claude path,
@@ -1749,7 +1447,7 @@ def _stream_escalation(transcript, channel="voice", effort="deep"):
         yield from _stream_claude(transcript, channel=channel)
 
 
-def _stream_local(transcript, channel="voice", deep=False, buffered=False,
+def _stream_local(transcript, channel="text", deep=False, buffered=False,
                   source="router", effort="deep", use_tools=True):
     """Stream a local reply with the same tool loop the Claude path runs.
     Yields text deltas; runs requested tools between rounds. deep=True is the
@@ -1877,7 +1575,7 @@ def _stream_local(transcript, channel="voice", deep=False, buffered=False,
             })
 
 
-def think(transcript, channel="voice", use_tools=True):
+def think(transcript, channel="text", use_tools=True):
     """Get a reply from the configured LLM backend.
 
     `use_tools=False` runs the turn with NO tool schemas — for phrasing-only
@@ -1918,7 +1616,7 @@ def announce(event, channel="discord", use_tools=True):
     return reply
 
 
-def _think_claude(transcript, channel="voice"):
+def _think_claude(transcript, channel="text"):
     """Get a reply from Claude, or echo the transcript if no API key."""
     client = get_anthropic()
     if client is None:
@@ -1942,54 +1640,16 @@ def _think_claude(transcript, channel="voice"):
         return "Sorry, I ran into an error. Please try again."
 
 
-def synthesize(text, out_path):
-    subprocess.run(
-        [PIPER_BIN, "-m", VOICE_MODEL, "-f", out_path],
-        input=tts_clean(text).encode("utf-8"),
-        check=True,
-    )
+# TTS lived here: `synthesize` (piper subprocess -> WAV file), an in-process
+# streaming `PiperVoice` singleton, and `stream_reply`, which fed the model's
+# deltas into it sentence by sentence so the first audio started before the
+# reply finished. All of it retired with the speaker on 2026-09-02
+# (archive/pi/README.md). `_stream_local` and `_stream_claude` below still
+# stream, because the tool loop and the escalation retraction are built on
+# generators — the deltas are just joined by the caller now rather than spoken.
 
 
-# --- Streaming TTS (in-process piper) --------------------------------------
-
-_voice = None
-
-
-def get_voice():
-    """Load the piper voice once (avoids per-sentence model reload)."""
-    global _voice
-    if _voice is None:
-        from piper import PiperVoice
-
-        _voice = PiperVoice.load(VOICE_MODEL)
-        app.logger.info("piper voice loaded (streaming)")
-    return _voice
-
-
-def stream_reply(transcript):
-    """Yield the reply text in deltas from the configured LLM backend."""
-    _turn_begin()
-    if not transcript:
-        yield "Sorry, I didn't catch that."
-        return
-    if LLM_BACKEND == "local":
-        yielded = False
-        try:
-            for delta in _stream_local(transcript):
-                yielded = True
-                yield delta
-            return
-        except Exception as e:  # noqa: BLE001
-            print(f"[llm] local stream error: {e!r}", flush=True)
-            if yielded:
-                # Mid-reply failure — can't cleanly restart on another backend.
-                yield " Sorry, I lost my train of thought there."
-                return
-            print("[llm] falling back to Claude", flush=True)
-    yield from _stream_claude(transcript)
-
-
-def _stream_claude(transcript, channel="voice", web=False):
+def _stream_claude(transcript, channel="text", web=False):
     """Yield the reply text in deltas as Claude streams it. web=True adds
     Anthropic's server-side web search (for the search_web live-info handoff) —
     Claude runs the searches itself; we just relay the streamed text."""
@@ -2057,186 +1717,18 @@ def _stream_claude(transcript, channel="voice", web=False):
         messages.append({"role": "user", "content": tool_results})
 
 
-# Split off a complete sentence when a terminator is followed by whitespace.
-_SENTENCE = re.compile(r"[.!?]\s")
-
-
-def next_sentence(buf):
-    m = _SENTENCE.search(buf)
-    if m:
-        return buf[: m.start() + 1], buf[m.end():]
-    return None, buf
-
-
-# The prompt asks for plain spoken English, but models still slip markdown in
-# (escalated Claude replies especially). Strip it before piper reads "asterisk
-# asterisk" aloud. Applied to every sentence at both TTS entry points.
-_TTS_STRIP = [
-    # spoken-out abbreviations: piper reads "Jr." as "J R dot" otherwise. Match
-    # the token (with or without the dot) so "Mikel Brown Jr." -> "... Junior".
-    (re.compile(r"\bJr\b\.?"), "Junior"),
-    (re.compile(r"\bSr\b\.?"), "Senior"),
-    (re.compile(r"```[a-zA-Z]*"), " "),                 # code fences
-    (re.compile(r"^\s{0,3}#{1,6}\s+", re.M), ""),       # headings
-    (re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+", re.M), ""),  # list markers
-    (re.compile(r"\[([^\]]+)\]\([^)]*\)"), r"\1"),      # [text](url) -> text
-    (re.compile(r"[*_`~#|]+"), ""),                     # emphasis/code/table
-    (re.compile(r"[→⇒]"), " to "),
-    (re.compile(r"[✓✔]"), ""),
-    (re.compile(r"[ \t]{2,}"), " "),
-]
-
-
-def tts_clean(text):
-    """Reduce model output to plain speakable English for piper."""
-    for pat, repl in _TTS_STRIP:
-        text = pat.sub(repl, text)
-    return text.strip()
-
-
-# --- Speculative prefetch ---------------------------------------------------
-# During recording the Pi POSTs partial audio to /speculate every ~2s. We run
-# Claude speculatively on each partial transcript and cache the reply keyed by
-# the normalized transcript. On finalize (/respond_stream), a matching cached
-# reply skips the Claude call entirely. We never play speculatively — worst case
-# is a wasted Claude call.
-
-_SPEC_TTL = 60.0            # seconds to keep a cache entry
-_SPEC_PREFIX_RATIO = 0.85  # accept a cached partial that covers ≥85% of final
-_spec_lock = threading.Lock()
-_spec_cache = {}           # norm -> {"reply": str|None, "event": Event, "ts": float}
-
-
-def _norm(text):
-    return re.sub(r"[^a-z0-9 ]", "", text.lower()).strip()
-
-
-def speculate_async(transcript):
-    """Kick off a background Claude call for a partial transcript (cached).
-
-    Returns a status: 'new' | 'cached' | 'skipped-budget' | 'skipped-tools' | 'empty'."""
-    if TOOLS_ENABLED:
-        # A speculative reply is generated without running tools, so it could be
-        # wrong for a tool-requiring query. Skip reply-prefetch (STT still primed).
-        return "skipped-tools"
-    key = _norm(transcript)
-    if not key:
-        return "empty"
-    with _spec_lock:
-        now = time.time()
-        for k in [k for k, e in _spec_cache.items() if now - e["ts"] > _SPEC_TTL]:
-            del _spec_cache[k]
-        if key in _spec_cache:
-            return "cached"
-        if not _spec_budget_ok():
-            return "skipped-budget"  # preserve rate-limit budget for the real turn
-        entry = {"reply": None, "event": threading.Event(), "ts": now}
-        _spec_cache[key] = entry
-
-    def _run():
-        try:
-            reply = think(transcript)
-        except Exception:  # noqa: BLE001
-            reply = None
-        with _spec_lock:
-            entry["reply"] = reply
-        entry["event"].set()
-
-    threading.Thread(target=_run, daemon=True).start()
-    return "new"
-
-
-def lookup_speculation(final_transcript, wait_s=1.5):
-    """Return a cached speculative reply matching the final transcript, or None."""
-    key = _norm(final_transcript)
-    if not key:
-        return None
-    with _spec_lock:
-        best = None
-        for k, e in _spec_cache.items():
-            match = k == key or (
-                key.startswith(k) and len(k) >= _SPEC_PREFIX_RATIO * len(key)
-            )
-            if match and (best is None or len(k) > len(best[0])):
-                best = (k, e)
-    if best is None:
-        return None
-    entry = best[1]
-    if entry["reply"] is None:
-        entry["event"].wait(wait_s)  # in flight — wait briefly
-    return entry["reply"]
-
-
-def cast(wav_path):
-    """Cast a local WAV to the speaker via pychromecast + a tiny HTTP server."""
-    import pychromecast
-    from pychromecast.controllers.media import MediaController
-    import http.server
-    import socketserver
-    import threading
-
-    # Serve the file from its own directory on an ephemeral port.
-    directory = os.path.dirname(wav_path)
-    filename = os.path.basename(wav_path)
-
-    handler = lambda *a, **k: http.server.SimpleHTTPRequestHandler(  # noqa: E731
-        *a, directory=directory, **k
-    )
-    httpd = socketserver.TCPServer(("0.0.0.0", 0), handler)
-    serve_port = httpd.server_address[1]
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-
-    try:
-        chromecasts, browser = pychromecast.get_listed_chromecasts(
-            friendly_names=[CAST_DEVICE]
-        )
-        if not chromecasts:
-            raise RuntimeError(f"Cast device {CAST_DEVICE!r} not found")
-        cc = chromecasts[0]
-        cc.wait()
-        cc.set_volume(CAST_VOLUME)
-
-        my_ip = cc.socket_client.socket.getsockname()[0]
-        url = f"http://{my_ip}:{serve_port}/{filename}"
-        print(f"[cast] device={CAST_DEVICE!r} serving {url}", flush=True)
-
-        mc = cc.media_controller
-        mc.play_media(url, "audio/wav")
-        mc.block_until_active()
-        import time
-
-        # Phase 1: wait for the device to actually START playing (it has to
-        # fetch the file first — status is briefly IDLE right after play_media).
-        start_deadline = time.time() + 15
-        while time.time() < start_deadline:
-            mc.update_status()
-            if mc.status.player_state in ("PLAYING", "BUFFERING"):
-                break
-            time.sleep(0.3)
-        # Phase 2: keep the HTTP server alive until playback finishes.
-        play_deadline = time.time() + 30
-        while time.time() < play_deadline:
-            mc.update_status()
-            if mc.status.player_state not in ("PLAYING", "BUFFERING"):
-                break
-            time.sleep(0.3)
-        pychromecast.discovery.stop_discovery(browser)
-    finally:
-        httpd.shutdown()
-
-
-def speak(text):
-    fd, wav_path = tempfile.mkstemp(prefix="wes_reply_", suffix=".wav")
-    os.close(fd)
-    try:
-        synthesize(text, wav_path)
-        cast(wav_path)
-    finally:
-        try:
-            os.remove(wav_path)
-        except OSError:
-            pass
-
+# Four more blocks lived between here and the HTTP API, all of them voice:
+#
+#   next_sentence / tts_clean — split the model's stream into whole sentences
+#     and strip markdown, so piper never read "asterisk asterisk" aloud.
+#   the SPECULATIVE PREFETCH cache — while the user was still talking, the Pi
+#     POSTed partial audio to /speculate every ~2s and this ran the model
+#     against each partial transcript, so a matching final transcript could
+#     skip the model call entirely. It existed to hide STT latency.
+#   cast / speak — pychromecast playback to a Google Home device, an
+#     alternative output mode to handing the WAV back to the Pi.
+#
+# Retired 2026-09-02 with the rest of the voice tier; archive/pi/README.md.
 
 # --- HTTP API ---------------------------------------------------------------
 
@@ -2255,8 +1747,6 @@ def health():
             else "claude" if os.environ.get("ANTHROPIC_API_KEY")
             else "echo (no API key)"
         ),
-        output=OUTPUT_MODE,
-        cast_device=CAST_DEVICE if OUTPUT_MODE == "cast" else None,
         # #029 P3: whether this process can ACTUALLY write fantasy lineup
         # changes to Yahoo (still gated per-team by teams.yaml autonomy +
         # guardrails on top of this). Surfaced here because it's exactly the
@@ -2277,7 +1767,7 @@ def usage_route():
 @app.route("/turns")
 def turns_route():
     """Last n exchanges, newest first: what was asked, the reply, tools run,
-    escalated y/n. ?n=20 sets the count, ?channel=voice filters. Feeds the
+    escalated y/n. ?n=20 sets the count, ?channel=discord filters. Feeds the
     Grafana "Recent turns" table; also handy from curl or the Discord bot."""
     n = max(1, min(request.args.get("n", default=20, type=int), TURNS_MAX))
     return jsonify(turns=recent_turns(n, request.args.get("channel")))
@@ -2345,7 +1835,8 @@ def _indent_json(v):
 @app.route("/metrics")
 def metrics_route():
     """Prometheus exposition (wes_llm_* counters + python runtime defaults).
-    Scraped by the Pi's Prometheus every 15s — docs/observability.md."""
+    Scraped every 15s by the Prometheus container on this machine — it ran on
+    the Pi until 2026-09-02. See docs/observability.md."""
     return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
 
 
@@ -2401,171 +1892,10 @@ def announce_route():
     return jsonify(reply=reply)
 
 
-@app.route("/respond", methods=["POST"])
-def respond():
-    """Body: raw WAV bytes (16kHz mono int16). Returns {transcript, reply}."""
-    wav_bytes = request.get_data()
-    if not wav_bytes:
-        return jsonify(error="empty body; POST WAV bytes"), 400
-
-    # Log incoming audio duration so we can spot a silent/empty mic capture.
-    try:
-        with wave.open(io.BytesIO(wav_bytes)) as w:
-            dur = w.getnframes() / float(w.getframerate() or 1)
-        print(f"[respond] received {len(wav_bytes)} bytes, {dur:.1f}s audio", flush=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"[respond] received {len(wav_bytes)} bytes (wav header unreadable: {e})", flush=True)
-
-    t0 = time.perf_counter()
-    transcript = transcribe(wav_bytes)
-    t_stt = time.perf_counter()
-    print(f"[respond] transcript: {transcript!r}", flush=True)
-    err = None
-    try:
-        reply = think(transcript)
-    except Exception as e:  # noqa: BLE001 — log the failed turn, don't 500 silently
-        err, reply = f"{type(e).__name__}: {e}", ""
-        print(f"[respond] think failed: {e!r}", flush=True)
-    t_llm = time.perf_counter()
-    print(f"[respond] reply: {reply!r}" + (f" [ERROR {err}]" if err else ""), flush=True)
-    record_turn(transcript, reply, error=err)  # logs even on failure
-    if err:
-        reply = "Sorry, I ran into an error."
-
-    stt_ms = round((t_stt - t0) * 1000)
-    llm_ms = round((t_llm - t_stt) * 1000)
-
-    if OUTPUT_MODE == "return":
-        # Synthesize and hand the audio back to the Pi to play locally.
-        from urllib.parse import quote
-
-        fd, wav_path = tempfile.mkstemp(prefix="wes_reply_", suffix=".wav")
-        os.close(fd)
-        try:
-            synthesize(reply, wav_path)
-            audio = open(wav_path, "rb").read()
-        finally:
-            try:
-                os.remove(wav_path)
-            except OSError:
-                pass
-        tts_ms = round((time.perf_counter() - t_llm) * 1000)
-        print(
-            f"[timing] stt={stt_ms}ms llm={llm_ms}ms tts={tts_ms}ms "
-            f"(server total {stt_ms + llm_ms + tts_ms}ms), audio={len(audio)}B",
-            flush=True,
-        )
-        return app.response_class(
-            audio,
-            mimetype="audio/wav",
-            headers={
-                "X-Transcript": quote(transcript),
-                "X-Reply": quote(reply),
-                "X-Stt-Ms": str(stt_ms),
-                "X-Llm-Ms": str(llm_ms),
-                "X-Tts-Ms": str(tts_ms),
-            },
-        )
-
-    # OUTPUT_MODE == "cast"
-    try:
-        speak(reply)
-        cast_ms = round((time.perf_counter() - t_llm) * 1000)
-        print(
-            f"[timing] stt={stt_ms}ms llm={llm_ms}ms cast(tts+play)={cast_ms}ms",
-            flush=True,
-        )
-    except Exception as e:  # noqa: BLE001
-        print(f"[respond] cast FAILED: {e!r}", flush=True)
-        cast_ms = None
-    return jsonify(
-        transcript=transcript, reply=reply,
-        timing={"stt_ms": stt_ms, "llm_ms": llm_ms, "cast_ms": cast_ms},
-    )
-
-
-@app.route("/respond_stream", methods=["POST"])
-def respond_stream():
-    """Body: WAV bytes. Streams raw s16le PCM (22050Hz mono) of the reply back as
-    Claude generates it — sentence-by-sentence TTS, so the first audio starts
-    before the full reply exists. X-Transcript / X-Stt-Ms in headers."""
-    wav_bytes = request.get_data()
-    if not wav_bytes:
-        return jsonify(error="empty body; POST WAV bytes"), 400
-
-    from flask import stream_with_context
-    from urllib.parse import quote
-
-    t0 = time.perf_counter()
-    transcript = transcribe(wav_bytes)
-    t_stt = time.perf_counter()
-    stt_ms = round((t_stt - t0) * 1000)
-    cached = None if TOOLS_ENABLED else lookup_speculation(transcript)
-    spec = "HIT" if cached is not None else ("tools" if TOOLS_ENABLED else "miss")
-    print(f"[stream] transcript: {transcript!r} (stt {stt_ms}ms, spec {spec})", flush=True)
-    voice = get_voice()
-    # Cache hit: skip Claude, synthesize the already-generated reply. Miss: stream
-    # the reply from Claude token-by-token.
-    source = iter([cached]) if cached is not None else stream_reply(transcript)
-
-    def generate():
-        buf = ""
-        full = []
-        t_first = None
-        completed = False
-        err = None
-        try:
-            for piece in source:
-                buf += piece
-                full.append(piece)
-                while True:
-                    sent, rest = next_sentence(buf)
-                    if sent is None:
-                        break
-                    buf = rest
-                    s = tts_clean(sent)
-                    if not s:
-                        continue
-                    for ac in voice.synthesize(s):
-                        if t_first is None:
-                            t_first = time.perf_counter()
-                        yield ac.audio_int16_bytes
-            if tts_clean(buf):
-                for ac in voice.synthesize(tts_clean(buf)):
-                    if t_first is None:
-                        t_first = time.perf_counter()
-                    yield ac.audio_int16_bytes
-            completed = True
-        except Exception as e:  # noqa: BLE001 — a mid-stream failure must still log
-            err = f"{type(e).__name__}: {e}"
-            print(f"[stream] generation failed: {e!r}", flush=True)
-        finally:
-            reply = "".join(full)
-            if err:
-                # Errored mid-stream: log it as a failure (not a barge-in, which
-                # is what completed=False would otherwise be tagged as).
-                record_turn(transcript, reply, error=err)
-            else:
-                # A client abort (barge-in) lands here with completed=False: the
-                # partial reply is what the user heard — record it, tagged.
-                record_spoken_turn(transcript, reply, completed)
-            ttfa = round((t_first - t_stt) * 1000) if t_first else None
-            total = round((time.perf_counter() - t0) * 1000)
-            print(f"[stream] reply: {reply!r}", flush=True)
-            print(
-                f"[timing-stream] stt={stt_ms}ms spec={spec} "
-                f"ttfa_after_stt={ttfa}ms total={total}ms",
-                flush=True,
-            )
-
-    resp = app.response_class(
-        stream_with_context(generate()), mimetype="application/octet-stream"
-    )
-    resp.headers["X-Transcript"] = quote(transcript)
-    resp.headers["X-Stt-Ms"] = str(stt_ms)
-    resp.headers["X-Spec"] = spec
-    resp.headers["X-Sample-Rate"] = "22050"
-    return resp
+# /respond and /respond_stream lived here: WAV bytes in, and either a reply
+# WAV back or a live stream of raw s16le PCM synthesized sentence-by-sentence
+# as the model generated it. They were the whole voice pipeline's entry point,
+# and the Pi was their only caller. Retired 2026-09-02 -- archive/pi/README.md.
 
 
 @app.route("/reset_conversation", methods=["POST"])
@@ -2577,72 +1907,26 @@ def reset_conversation_route():
     return jsonify(cleared_turns=reset_conversation(data.get("channel")))
 
 
-@app.route("/prefetch_scene", methods=["POST"])
-def prefetch_scene_ep():
-    """Body: JPEG captured by the Pi at wake-word time. Describe it in the
-    background so a later describe_scene tool call is instant."""
-    jpeg = request.get_data()
-    identities = None
-    hdr = request.headers.get("X-Identities")
-    if hdr:
-        try:
-            identities = json.loads(urllib.parse.unquote(hdr))
-        except Exception:  # noqa: BLE001
-            identities = None
-    if jpeg:
-        threading.Thread(
-            target=prefetch_scene, args=(jpeg, identities), daemon=True
-        ).start()
-    return jsonify(ok=True)
-
-
-@app.route("/speculate", methods=["POST"])
-def speculate():
-    """Body: partial WAV (audio-so-far). Transcribes it and kicks off a
-    speculative Claude call cached by transcript. Fire-and-forget from the Pi."""
-    wav_bytes = request.get_data()
-    if not wav_bytes:
-        return jsonify(error="empty body"), 400
-    t0 = time.perf_counter()
-    transcript = transcribe(wav_bytes)
-    stt_ms = round((time.perf_counter() - t0) * 1000)
-    status = speculate_async(transcript) if transcript else "empty"
-    print(
-        f"[speculate] partial ({stt_ms}ms): {transcript!r} "
-        f"[{status}, {_llm_calls_last_min()} calls/min]",
-        flush=True,
-    )
-    return jsonify(transcript=transcript)
+# /prefetch_scene and /speculate lived here, both fire-and-forget from the Pi:
+# a JPEG grabbed at wake-word time to describe in the background, and partial
+# audio to transcribe and answer speculatively. Both existed only to hide
+# latency the voice pipeline had and this one does not.
 
 
 def warmup():
-    """Load + tiny-inference the STT and TTS models so the first real request
-    doesn't pay the model-load / first-inference cost."""
-    import numpy as np
+    """Pin the LLM into VRAM so the first real request isn't cold.
 
+    Warmed the Whisper decode graph and the piper voice too, until the voice
+    tier retired (2026-09-02) — the STT/TTS load cost was the bulk of what this
+    was hiding, which is why startup is now fast enough that this is only about
+    keeping the model resident."""
     t = time.perf_counter()
     print("[warmup] loading models...", flush=True)
-    try:
-        w = get_whisper()
-        # 1s of silence forces the decode graph to initialize.
-        list(w.transcribe(np.zeros(16000, dtype=np.float32), language="en")[0])
-        print("[warmup] STT ready", flush=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"[warmup] STT warmup skipped: {e!r}", flush=True)
-    try:
-        for _ in get_voice().synthesize("Ready."):
-            pass
-        print("[warmup] TTS ready", flush=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"[warmup] TTS warmup skipped: {e!r}", flush=True)
-    # Load the Ollama model(s) into VRAM (keep_alive -1) so the first real
-    # request isn't cold. With WES_LLM=local and VLM_MODEL == LOCAL_LLM_MODEL
-    # this is one model serving both vision and chat.
-    warm = set()
-    if TOOLS_ENABLED:
-        warm.add(VLM_MODEL)
-    if LLM_BACKEND == "local":
-        warm.add(LOCAL_LLM_MODEL)
+    # keep_alive -1 pins it. Ollama would otherwise evict on its idle timer and
+    # the next turn would pay a multi-second cold load.
+    warm = {LOCAL_LLM_MODEL} if LLM_BACKEND == "local" else set()
+    if ESCALATE_MODEL:
+        warm.add(ESCALATE_MODEL)
     for model in warm:
         try:
             payload = json.dumps({
@@ -2661,8 +1945,8 @@ def warmup():
 
 
 if __name__ == "__main__":
-    # Scheduled-task stdout is cp1252; printing a transcript/reply containing
-    # emoji (Discord turns can) would raise UnicodeEncodeError mid-request.
+    # Scheduled-task stdout is cp1252; printing a reply containing emoji
+    # (Discord turns can) would raise UnicodeEncodeError mid-request.
     for _s in (sys.stdout, sys.stderr):
         if hasattr(_s, "reconfigure"):
             _s.reconfigure(encoding="utf-8", errors="replace")

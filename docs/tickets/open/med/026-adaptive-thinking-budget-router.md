@@ -174,3 +174,18 @@ this ticket rather than retiring it:
 
 Supersedes the #001 "route Discord to 12b always" workaround with a principled
 version; keep that as the fallback until the verifier is proven.
+
+## Update 2026-09-02 — the latency half of the motivation is gone
+
+This ticket is written around a fast/deep split that existed to protect
+**voice** time-to-first-audio: the fast router answered while someone was
+standing there waiting to hear a reply. The Raspberry Pi was repurposed and the
+voice tier retired (`archive/pi/README.md`), so every remaining channel is
+latency-tolerant text, and "no voice-latency regression" in the acceptance list
+is no longer checkable or meaningful.
+
+What survives is the part that was never about latency: **sizing the thinking
+budget to the question**. Spending a 2048-token thinking budget on "what time is
+it" is wasteful whether or not anyone is waiting, and `effort`
+(standard/deep) is still the knob. Re-read the acceptance list with the
+latency criterion struck out.

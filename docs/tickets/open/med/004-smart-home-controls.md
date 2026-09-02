@@ -47,3 +47,22 @@ any of this is exposed remotely (#016 done-ticket notes this).
 
 ## Notes
 Add hosts to `hosts.yaml` if any of these become code-referenced.
+
+## Update 2026-09-02 — two premises in the approach are gone
+
+The Raspberry Pi was repurposed (`archive/pi/README.md`), which invalidates two
+things written above:
+
+- **"Pi 5 can host it"** for Home Assistant. There is no Pi. Home Assistant
+  would have to run on the PC (Docker, alongside the monitoring stack in
+  `observability/`) or on new hardware.
+- **"via the existing catt/pychromecast stack"**. That stack no longer exists:
+  `PyChromecast` came out of `pc/requirements.txt` and the cast code out of
+  `wes_server.py` with the rest of the audio path. Casting a *notification* to a
+  Nest device is still perfectly possible, but it is now new work rather than
+  reuse.
+
+The **house audio rule** it cites also needs restating rather than deleting:
+WES has no speaker of its own any more, so "never play audio without
+confirmation" now applies to anything it might cast to someone else's device —
+which is a stronger version of the same rule, not a weaker one.

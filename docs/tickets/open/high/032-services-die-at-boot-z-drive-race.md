@@ -86,3 +86,29 @@ being silent next time.
   "smoke-test via the scheduled task" section: the un-hidden Exporters console
   and the cp1252 emoji death). The pattern: **the scheduled-task environment is
   not your shell**, and here specifically it doesn't have your drive letters.
+
+## Update 2026-09-02 — the root cause is gone; two of three fixes still matter
+
+The Raspberry Pi was repurposed and the `Z:\` share went with it. Both clones
+are gone: the repo lives on the PC's local disk at `C:\Users\awarm\wes`, the
+launchers are deployed to `C:\Users\awarm\wes-pc\`, and nothing a scheduled task
+touches lives on a network path. **Fix 1 (don't depend on the drive letter) is
+therefore moot** — there is no drive letter and no host that has to be awake
+first.
+
+What is NOT fixed, and is the reason this stays open:
+
+2. **The launchers still swallow the child's exit code.** `LastTaskResult` was
+   `0` for a process that never started, and it still would be. A different
+   cause — a broken venv after the E: migration, a syntax error in a launcher —
+   produces exactly the same silent success.
+3. **There is still no watchdog that outlives the services.** This is the
+   sharper half. The August 2026 incident (`docs/observability.md`) proved the
+   point independently of any drive letter: the server and the Discord bot died
+   on the same afternoon and nobody noticed for a week, because the alert
+   watcher lives *inside* the Discord bot. Moving Prometheus onto this PC does
+   not help — it will happily fire `TargetDown` at a bot that is not running to
+   receive it.
+
+So this ticket is now really "make a dead service loud", and the Z: race was one
+instance of it. Retitle if it is ever picked up.

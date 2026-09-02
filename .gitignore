@@ -8,7 +8,10 @@ hailort.log
 *~
 tests/.pytest_cache/
 tests/eval/fixtures/
-pi/hailort*.log
+
+# Local monitoring-stack settings (the WSL gateway address, Grafana password).
+# observability/.env.example is the committed template.
+observability/.env
 
 # Claude Code local settings (machine-specific permissions)
 .claude/settings.local.json

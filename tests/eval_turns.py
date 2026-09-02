@@ -1,12 +1,23 @@
 """Eval harness, phases 1-2 (docs/eval-design.md): golden set, deterministic
 checks, and an LLM judge with selectable backends.
 
-Runs each case in eval/golden.yaml through the LIVE server's /respond_stream
-(real STT -> LLM tool loop -> streaming TTS), re-transcribes the reply PCM with
-a local tiny.en whisper (zero server changes — doubles as a TTS intelligibility
-check), and applies the case's deterministic checks. Phase 2: each case's
-`judge:` question is also scored by one LLM-judge call (correct/concise/
-natural 0-2 + hallucination flag).
+Runs each case in eval/golden.yaml through the LIVE server's /respond_text
+(the real router -> tool loop -> reply path) and applies the case's
+deterministic checks. Phase 2: each case's `judge:` question is also scored by
+one LLM-judge call (correct/concise/natural 0-2 + hallucination flag).
+
+CHANGED 2026-09-02. This used to POST piper-synthesized WAV fixtures to
+/respond_stream and read the reply back by re-transcribing the streamed PCM with
+a local tiny.en Whisper — which also served as a TTS intelligibility check, and
+meant every assertion had to survive a speech round-trip. The Pi that made that
+pipeline real was repurposed (archive/pi/README.md), so both ends are gone.
+Text in, text out: the deterministic checks got sharper (no more loose regexes
+allowing for "Breece Hall" heard as "Breeze Hole"), and the audio-length brevity
+bounds became character counts. `transcript_includes` was dropped entirely — it
+asserted that STT heard the question, and now we simply send it.
+
+Cases run on the "eval" channel, which the server routes through the deep tier
+exactly as it does Discord, so this grades the tier production actually uses.
 
 Judge backends (--judge / WES_EVAL_JUDGE, default haiku):
   haiku   claude-haiku-4-5 — the sharper signal; pennies per run. Use when
@@ -36,23 +47,16 @@ Results append to eval_history.csv; the run FAILS (exit 1) if
     ... --judge both          # judge-agreement check
     ... --no-judge            # deterministic checks only
     ... --web-search          # also run web_search cases (paid API — weekly, not nightly)
-
-Audio goes over HTTP only; nothing is ever played on a speaker.
 """
 import argparse
 import csv
-import hashlib
-import io
 import json
 import os
 import re
 import statistics
-import struct
-import subprocess
 import sys
 import time
 import urllib.request
-import wave
 
 # cp1252 console: a judge note containing '→' etc. must degrade, not crash
 for _s in (sys.stdout, sys.stderr):
@@ -65,17 +69,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "pc"))
 
-from stream_client import post_stream, SAMPLE_RATE  # noqa: E402
-
 GOLDEN = os.path.join(HERE, "eval", "golden.yaml")
-FIXTURES = os.path.join(HERE, "eval", "fixtures")
 HISTORY = os.path.join(HERE, "eval_history.csv")
 SERVER = os.environ.get("WES_TEST_URL", "http://127.0.0.1:8080")
-PI_STATE = os.environ.get("WES_PI_STATE_URL", "http://10.0.0.79:8090")
 MAX_TOTAL_MS_DEFAULT = 30000
 
-FIELDS = ["ts", "case", "passed", "fails", "transcript", "reply", "spec",
-          "stt_ms", "ttfa_ms", "total_ms", "audio_s", "judge",
+# `transcript` is kept as a column even though it is now just the question we
+# sent: the history is read back by case and by run, and dropping a column that
+# every recorded row has would make old runs unreadable for no gain.
+# spec/stt_ms/ttfa_ms/audio_s went with the audio pipeline; append_history
+# migrates the existing file to this header on the next write.
+FIELDS = ["ts", "case", "passed", "fails", "transcript", "reply",
+          "total_ms", "reply_chars", "judge",
           "judge_correct", "judge_concise", "judge_natural",
           "hallucination", "judge_note"]
 
@@ -85,13 +90,15 @@ JUDGE_LOCAL_MODEL = os.environ.get("WES_EVAL_JUDGE_LOCAL_MODEL", "gemma4:12b")
 OLLAMA_URL = os.environ.get("WES_OLLAMA_URL", "http://127.0.0.1:11434")
 JUDGE_DROP = 0.3          # fail if correct-avg drops more than this vs median
 JUDGE_MEDIAN_OF = 5       # ... of the last N recorded runs
+# The old version of this told the judge both sides had been round-tripped
+# through speech recognition and to read garbled numbers and words charitably.
+# Nothing is transcribed any more, so that instruction now only buys the model
+# under test undeserved leniency — a garbled number is a real error again.
 JUDGE_SYSTEM = (
-    "You are grading a home voice assistant's spoken reply. The assistant is "
-    "Jarvis; it genuinely runs on a Raspberry Pi with live status tools, so "
-    "statements to that effect are true, not hallucinations. Both the "
-    "question and the reply were round-tripped through speech recognition: "
-    "ignore punctuation and casing, and treat garbled numbers, years, or "
-    "words that are plausibly transcription artifacts charitably. Reason in "
+    "You are grading a home assistant's typed reply. The assistant is Jarvis; "
+    "it genuinely has live tools (the date and time, NBA scores and schedules, "
+    "the owner's real Yahoo/Sleeper fantasy teams, durable memory), so a reply "
+    "citing real data from those is grounded, not a hallucination. Reason in "
     "the note field FIRST, then score; mark incorrect/hallucination only for "
     "clear content errors. Return ONLY a JSON object, no prose."
 )
@@ -106,54 +113,50 @@ def load_golden():
     return cases
 
 
-def pi_reachable():
-    try:
-        with urllib.request.urlopen(PI_STATE + "/state", timeout=3) as r:
-            return r.status == 200
-    except Exception:  # noqa: BLE001
-        return False
-
-
 def case_turns(case):
     """A case is one utterance (`say`) or a multi-turn conversation (`turns`);
     checks always apply to the reply of the LAST turn."""
     return case["turns"] if "turns" in case else [case["say"]]
 
 
-def fixture_wav(case, turn_i=0):
-    """Synthesized (or silence) WAV bytes for one turn, cached on disk.
-
-    The filename carries a hash of the SPOKEN TEXT, not just the case id. Keying
-    on the id alone meant editing a case's `say` kept the stale WAV forever (the
-    cache only checked existence), so the harness went on asking the OLD question
-    while the golden file showed the new one — a silent false pass. Caught
-    2026-07-29 repointing `fantasy-roster` from basketball to football: the
-    transcript still came back "basketball". Old hashes are simply orphaned."""
-    os.makedirs(FIXTURES, exist_ok=True)
-    say = case_turns(case)[turn_i]
-    digest = hashlib.sha1(say.encode("utf-8")).hexdigest()[:8]
-    name = case["id"] + (f"-{turn_i}" if turn_i else "") + f"-{digest}"
-    path = os.path.join(FIXTURES, name + ".wav")
-    if not os.path.exists(path):
-        if say == "SILENCE":
-            with wave.open(path, "wb") as w:
-                w.setnchannels(1)
-                w.setsampwidth(2)
-                w.setframerate(16000)
-                w.writeframes(struct.pack("<h", 0) * 16000)  # 1s of silence
-        else:
-            import wes_server as ws
-            subprocess.run(
-                [ws.PIPER_BIN, "-m", ws.VOICE_MODEL, "-f", path],
-                input=say.encode(), check=True, capture_output=True,
-            )
-    with open(path, "rb") as f:
-        return f.read()
+# Cases run on their own channel so the harness never touches the owner's real
+# Discord conversation window, and the server routes it through the deep tier so
+# the eval grades the same model Discord gets (WES_DEEP_CHANNELS).
+#
+# The old value was "voice": /respond_stream named no channel, so it landed on
+# the server default, and the reset had to name that same channel.
+EVAL_CHANNEL = "eval"
 
 
-# The eval drives /respond_stream, which names no channel and therefore uses
-# the server default ("voice"). Its reset must name that channel too.
-EVAL_CHANNEL = "voice"
+def ask_server(url, text, channel=EVAL_CHANNEL, timeout=180):
+    """One turn through /respond_text -> {"reply", "timing": {"llm_ms"}}.
+
+    X-WES-No-Writes: this is a TEST HARNESS, and a test must not mutate the
+    owner's real Yahoo account. The eval's "check if my lineup needs changes"
+    case makes the model call the executor, which wrote for real at 03:36 every
+    eval night until this header existed (2026-08-14). The header suppresses
+    fantasy writes for THIS REQUEST ONLY, server-side, so nothing the harness
+    provokes can reach a live account.
+    """
+    req = urllib.request.Request(
+        url + "/respond_text",
+        data=json.dumps({"text": text, "channel": channel}).encode(),
+        headers={"Content-Type": "application/json",
+                 "X-WES-No-Writes": "1"},
+        method="POST",
+    )
+    t0 = time.perf_counter()
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        body = json.loads(r.read())
+    reply = (body.get("reply") or "").strip()
+    return {
+        "transcript": text,
+        "reply": reply,
+        "reply_chars": len(reply),
+        # The server times the model call; we time the round trip. The wall
+        # clock is what the max_total_ms budgets have always meant.
+        "total_ms": round((time.perf_counter() - t0) * 1000),
+    }
 
 
 def reset_server_conversation(url, channel=EVAL_CHANNEL):
@@ -179,46 +182,26 @@ def reset_server_conversation(url, channel=EVAL_CHANNEL):
         print(f"! reset_conversation unavailable: {e}")
 
 
-_stt = None
-
-
-def retranscribe(pcm):
-    """Reply PCM -> text via a local tiny.en whisper (CPU). What this hears is
-    what the user hears — garbled TTS fails reply_regex, by design."""
-    global _stt
-    if not pcm:
-        return ""
-    if _stt is None:
-        from faster_whisper import WhisperModel
-        _stt = WhisperModel("tiny.en", device="cpu", compute_type="int8")
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(SAMPLE_RATE)
-        w.writeframes(pcm)
-    buf.seek(0)
-    segments, _ = _stt.transcribe(buf)
-    return " ".join(s.text.strip() for s in segments).strip()
-
-
 def check_case(case, res, reply_text):
-    """Deterministic checks -> list of failure strings (empty = pass)."""
+    """Deterministic checks -> list of failure strings (empty = pass).
+
+    `transcript_includes` was removed on 2026-09-02: it checked that speech
+    recognition had heard the question, and the question is now sent as text.
+    The brevity bounds moved from seconds of spoken audio to characters."""
     exp = case.get("expect", {})
     fails = []
-    for sub in exp.get("transcript_includes", []):
-        if sub.lower() not in res["transcript"].lower():
-            fails.append(f"transcript missing {sub!r}: {res['transcript']!r}")
     rx = exp.get("reply_regex")
     if rx and not re.search(rx, reply_text, re.IGNORECASE):
         fails.append(f"reply_regex {rx!r} unmatched: {reply_text!r}")
     nrx = exp.get("reply_not_regex")
     if nrx and re.search(nrx, reply_text, re.IGNORECASE):
         fails.append(f"reply_not_regex {nrx!r} matched: {reply_text!r}")
-    if res["audio_s"] < exp.get("min_audio_s", 0):
-        fails.append(f"reply too short: {res['audio_s']}s")
-    if res["audio_s"] > exp.get("max_audio_s", 10 ** 6):
-        fails.append(f"reply too long: {res['audio_s']}s (brevity)")
+    if not reply_text:
+        fails.append("empty reply")
+    if res["reply_chars"] < exp.get("min_reply_chars", 0):
+        fails.append(f"reply too short: {res['reply_chars']} chars")
+    if res["reply_chars"] > exp.get("max_reply_chars", 10 ** 6):
+        fails.append(f"reply too long: {res['reply_chars']} chars (brevity)")
     if res["total_ms"] > exp.get("max_total_ms", MAX_TOTAL_MS_DEFAULT):
         fails.append(f"too slow: {res['total_ms']}ms")
     return fails
@@ -246,12 +229,12 @@ def judge_prompt(case, transcript, reply):
     """The one grading prompt — identical for every backend, so backends are
     comparable and --judge both measures the judges, not the prompts."""
     check = case.get(
-        "judge", "Is the reply a reasonable spoken answer to the question?")
+        "judge", "Is the reply a reasonable answer to the question?")
     now = time.strftime("%A, %B %d %Y, %I:%M %p")
     return (
         f"Actual current date/time (for grading): {now}\n"
-        f"Question (as transcribed): {transcript or '(silence)'}\n"
-        f"Reply spoken to the user: {reply}\n"
+        f"Question the user sent: {transcript or '(empty)'}\n"
+        f"Reply sent to the user: {reply}\n"
         f"Case-specific check: {check}\n"
         'Return JSON: {"note": "<one line of reasoning>", '
         '"correct": 0-2, "concise": 0-2, "natural": 0-2, '
@@ -408,16 +391,14 @@ def main():
         cases = [c for c in cases if c["id"] == args.only]
         if not cases:
             sys.exit(f"no case with id {args.only!r}")
-    pi_up = pi_reachable()
 
     prev = previous_results()
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     rows, regressions, agreement, n_pass, n_skip = [], [], [], 0, 0
     for case in cases:
-        if case.get("requires_pi") and not pi_up:
-            print(f"SKIP {case['id']}  (Pi unreachable)")
-            n_skip += 1
-            continue
+        # A `requires_pi` flag lived here, skipping vision/status cases when the
+        # Pi's :8090 didn't answer. The Pi is gone and so are those cases.
+        #
         # web_search cases hit the paid API — skip unless explicitly opted in
         # (weekly). --only <id> forces the case in (cases is already filtered).
         if case.get("web_search") and not run_web and not args.only:
@@ -425,16 +406,15 @@ def main():
             n_skip += 1
             continue
         reset_server_conversation(args.url)
-        for turn_i in range(len(case_turns(case))):  # checks target last turn
-            res = post_stream(args.url, fixture_wav(case, turn_i),
-                              collect_audio=True)
-            reply_text = retranscribe(res.pop("pcm"))
+        for say in case_turns(case):  # checks target the LAST turn
+            res = ask_server(args.url, say)
+        reply_text = res["reply"]
         fails = check_case(case, res, reply_text)
         ok = not fails
         n_pass += ok
         mark = "PASS" if ok else "FAIL"
-        print(f"{mark} {case['id']:22s} stt={res['stt_ms']}ms "
-              f"total={res['total_ms']}ms audio={res['audio_s']}s")
+        print(f"{mark} {case['id']:22s} "
+              f"total={res['total_ms']}ms reply={res['reply_chars']}c")
         for fail in fails:
             print(f"     - {fail}")
         if not ok and prev.get(case["id"]) is True:
@@ -463,9 +443,8 @@ def main():
         rows.append({
             "ts": ts, "case": case["id"], "passed": int(ok),
             "fails": "; ".join(fails), "transcript": res["transcript"],
-            "reply": reply_text, "spec": res["spec"], "stt_ms": res["stt_ms"],
-            "ttfa_ms": res["ttfa_ms"], "total_ms": res["total_ms"],
-            "audio_s": res["audio_s"],
+            "reply": reply_text, "total_ms": res["total_ms"],
+            "reply_chars": res["reply_chars"],
             "judge": primary if scores else "",
             **(scores or {"judge_correct": "", "judge_concise": "",
                           "judge_natural": "", "hallucination": "",

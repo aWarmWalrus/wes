@@ -18,9 +18,11 @@ if ($null -eq $rest) { $rest = @() }
 
 $OLLAMA = "http://127.0.0.1:11434"
 $RUNNER = "C:\Users\awarm\wes-pc\run_server.ps1"
-# Only these env vars name an Ollama model. WES_WHISPER_MODEL / WES_VOICE_MODEL
-# are STT/TTS assets and WES_LLM_MODEL is the Claude id — none are Ollama tags.
-$LLM_VARS = @("WES_LLM_LOCAL_MODEL", "WES_ESCALATE_MODEL", "WES_VLM_MODEL")
+# Only these env vars name an Ollama model. WES_LLM_MODEL is the Claude id, not
+# an Ollama tag. (WES_WHISPER_MODEL / WES_VOICE_MODEL were also excluded here as
+# STT/TTS assets; both retired with the Pi on 2026-09-02, as did WES_VLM_MODEL,
+# which named the vision model the camera fed.)
+$LLM_VARS = @("WES_LLM_LOCAL_MODEL", "WES_ESCALATE_MODEL")
 
 function Get-Installed {
     try { return (Invoke-RestMethod "$OLLAMA/api/tags" -TimeoutSec 5).models }

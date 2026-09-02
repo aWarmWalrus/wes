@@ -123,10 +123,14 @@ class TestAlertWatcher:
                     "job": "pc_gpu"},
          "annotations": {"summary": "PC GPU over 85C for 5 minutes (now 88C)."},
          "state": "firing", "value": "88"},
-        {"labels": {"alertname": "PiHot", "instance": "10.0.0.79:9100",
-                    "job": "node"},
+        # A PENDING alert, which must be dropped. This was `PiHot` on the
+        # Pi's node_exporter until that host was retired (2026-09-02); the rule
+        # is gone but the behaviour under test never depended on which rule it
+        # was, so it is repointed rather than deleted.
+        {"labels": {"alertname": "EDiskLow", "instance": "10.0.0.168:9182",
+                    "job": "pc_windows"},
          "annotations": {"summary": "not firing yet"},
-         "state": "pending", "value": "81"},
+         "state": "pending", "value": "0.08"},
     ]}}
 
     def test_parse_keys_by_rule_and_instance(self):
@@ -137,7 +141,7 @@ class TestAlertWatcher:
         assert "missing for 5 minutes" in gpu["summary"]
 
     def test_parse_ignores_pending(self):
-        assert "PiHot|10.0.0.79:9100" not in wd.parse_alerts(self.PAYLOAD)
+        assert "EDiskLow|10.0.0.168:9182" not in wd.parse_alerts(self.PAYLOAD)
 
     def test_parse_empty(self):
         assert wd.parse_alerts({"data": {"alerts": []}}) == {}

@@ -1,85 +1,62 @@
 # WES — Walrus Embedded Assistant
 
-A 3-tier local voice assistant: **Pi 5 + Hailo-8** (edge: wake word, audio, on-device
-vision) ↔ **PC / RTX 5060 Ti 16GB** (STT, LLM, TTS) ↔ **Claude API** (fallback).
-Built and working today: wake word → VAD-endpointed capture → PC Whisper STT → local
-**gemma4:12b** via Ollama (`WES_LLM=local`; streaming + tools) serving as router,
-escalation (thinking) and VLM in one → piper TTS streamed sentence-by-sentence to a
-Bluetooth JBL. Turns share a sliding-window conversation memory (`docs/pipeline.md`).
-Claude Haiku is the error-fallback/optional backend.
+A local AI assistant on **one PC** (RTX 5060 Ti 16GB), with the **Claude API** as
+its fallback and web-search tier. Local **gemma4:12b** via Ollama
+(`WES_LLM=local`; streaming + tools) is both router and escalation (thinking)
+tier. It is reached by Discord DM, and it manages the owner's fantasy teams on a
+schedule. Turns keep a per-channel sliding-window conversation memory plus
+durable facts in MEMORY.md.
+
+> **WAS A 3-TIER VOICE ASSISTANT until 2026-09-02.** Tier 1 was a Pi 5 + Hailo-8
+> doing wake word, mic capture, Bluetooth playback and on-device vision; the PC
+> did Whisper STT and piper TTS around the model. The owner repurposed the Pi, so
+> STT, TTS, the camera/face tools, the speculative-prefetch cache and the
+> `/respond`, `/respond_stream`, `/speculate` and `/prefetch_scene` endpoints
+> were all removed — nothing produced audio into them or consumed audio out of
+> them. **`archive/pi/README.md` is the map of what went where**; `docs/archive/`
+> holds the design write-ups (pipeline, audio, vision, hardware). Read those
+> before adding any voice or vision feature back.
 
 > **Model topology (2026-07-16): ONE model.** Was e4b-router + 12b-escalate; the
 > e4b tag vanished from Ollama and every router call silently fell back to Claude
 > for a week (`/health` echoes config, not reality). Collapsed to 12b alone as the
-> project pivots to batch/analysis. Measured: 7.0GB weights, **7.8GB resident at
-> `num_ctx=16384`** (~50MB KV per 1k ctx), 6.3GB free. `gemma3:4b` has vision but
-> **no `tools`**, so it can never be the router. **Run `wes-dev.ps1 models check`
-> after any model change** — it catches exactly this drift.
+> project pivoted to batch/analysis. Measured: 7.0GB weights, **7.8GB resident at
+> `num_ctx=16384`** (~50MB KV per 1k ctx), 6.3GB free. **Run `wes-dev.ps1 models
+> check` after any model change** — it catches exactly this drift.
 
 > This root file is loaded every session — keep it lean. Put subsystem detail in
 > `docs/*.md` and read those on demand. (`@import` does NOT save context; a pointer I
 > choose to follow does.)
 
-## Machines & layout
+## Machine & layout
 
-| Tier | Host | LAN address | Role |
-|------|------|--------|------|
-| 1 | `raspberrypi` (alias `walrus-pi`) | 10.0.0.79 | Pi 5 + Hailo-8 — wake word, audio, vision |
-| 2 | `DESKTOP-R2PFF9T` | DESKTOP-R2PFF9T.local | PC (RTX 5060 Ti 16GB) — STT, LLM, TTS |
+| Host | LAN address | Role |
+|------|--------|------|
+| `DESKTOP-R2PFF9T` | DESKTOP-R2PFF9T.local | PC (RTX 5060 Ti 16GB) — all of WES |
 
-> **`hosts.yaml` (repo root) is the single source of truth** for IPs and service
-> ports — read at runtime via `wes_hosts.py` by the server, bot, and Pi client
+> **`hosts.yaml` (repo root) is the single source of truth** for the address and
+> service ports — read at runtime via `wes_hosts.py` by the server and the bot
 > (env vars still override). Jarvis reads it through the `lookup_hosts` tool.
-> Edit there when the network changes; this table and the ports below are a
-> convenience mirror, not the authority.
+> Edit there when the network changes; this table is a convenience mirror.
 
-- **TWO CLONES, one per machine** (2026-08-08). Each host runs code from its own
-  local disk: the Pi from `/home/walrus/claude/wes`, the PC from
-  `C:\Users\awarm\wes`. GitHub is the hub they sync through — so **a change is
-  not live on the other machine until it's pushed and pulled**.
-  `wes-dev.ps1 sync` pulls both, redeploys launchers, and compares HEADs.
-
-> ### WHERE TO EDIT — read this before changing any code
->
-> **Edit the clone belonging to the machine that RUNS the code.**
->
-> | Changing | Edit in | Why |
-> |---|---|---|
-> | `pc/**` (server, Discord, fantasy) | **`C:\Users\awarm\wes`** | the PC runs its own clone |
-> | `pi/**` (client, Hailo vision) | **`Z:\wes`** | that IS the Pi's clone — no push needed |
-> | shared (`wes_hosts.py`, `hosts.yaml`, `tests/`, `docs/`) | either, then `sync` | both machines read it |
->
-> **The trap:** editing `Z:\wes\pc\wes_server.py` and reloading the server now
-> does NOTHING — you changed the Pi's copy, which no PC service reads. It fails
-> SILENTLY: the service restarts fine, reports healthy, and runs the old code.
-> Before 2026-08-08 this was the correct workflow, so old habits and old notes
-> both point the wrong way.
->
-> `Z:` is still right for Pi code, for reading the Pi's logs, and for running git
-> against the Pi's clone from the PC. It is only wrong for PC *source*.
->
-> **Note the session default working directory is `Z:\wes`.** If you are working
-> on `pc/**`, `cd C:\Users\awarm\wes` first.
-- **`Z:\` is still a Samba mount of the Pi** (`Z:\wes` = the Pi's clone) and is
-  useful for reading the Pi's files and logs from the PC — but **nothing on the
-  PC runs from it any more**. It made the PC unable to boot its services without
-  the Pi (#032), and searches over it are painfully slow (a repo-wide `grep -r`
-  times out at 120s; the same search on local disk is instant). A Windows venv
-  **cannot** live on `Z:\` — PC Python envs go on `C:`.
-- The Pi also has a **separate** `~/wes` (NOT the repo): `~/wes/.venv` (Pi runtime
-  venv), `~/wes/voices/`, `~/wes/known_faces.json`, `~/wes/logs/`. `~/cast-venv` is a
-  catt/piper venv for casting.
-- **System python3 vs venv**: Hailo + `cv2` code (`hailo_*.py`) needs the Pi's
-  **system** `python3`; the client's wake-word/audio deps are in `~/wes/.venv`.
+- **ONE CLONE, on local disk: `C:\Users\awarm\wes`.** Edit here, full stop.
+  There used to be two — the Pi ran `pi/**` from its own checkout, reached over
+  the `Z:` Samba share, and editing the wrong one failed *silently* (the service
+  restarted fine and ran the old code). That is over; `Z:` goes away with the Pi,
+  and `wes-dev.ps1 sync` now just pulls and redeploys the launchers.
+  **Any note or habit that says to edit `Z:\wes` is stale.**
+- **Ports on this machine are crowded and have bitten twice.** 8080 WES server,
+  3000 Open WebUI, 3001 Grafana, 9090 Prometheus, 11434 Ollama. A WSL service
+  binding `127.0.0.1:<port>` beats a Windows `0.0.0.0` bind for IPv4 loopback,
+  which is how Open WebUI silently answered as the WES server for a while. When
+  something healthy is serving the wrong thing, check
+  `netstat -ano | findstr LISTENING`.
+- Python: the runtime venv is `C:\Users\awarm\wes-pc\.venv` (built from the
+  `E:\miniconda3` base). Ollama models live in `E:\.ollama\models`, set in the
+  Ollama app's own `db.sqlite`, which **overrides** `OLLAMA_MODELS`.
 
 ## Access & run
 
-```bash
-ssh walrus-pi        # alias → walrus@10.0.0.79, key ~/.ssh/walrus_pi
-# Pi client runs as a systemd USER unit (pi/wes-client.service, boot-persistent):
-systemctl --user restart wes-client   # reload after editing pi/wes_client.py
-journalctl --user -u wes-client -n 30 # logs
-```
 ```powershell
 # PC ops go through ONE allowlisted helper (no per-command prompt):
 & C:\Users\awarm\wes-pc\wes-dev.ps1 <cmd>
@@ -88,6 +65,7 @@ journalctl --user -u wes-client -n 30 # logs
 #   say <channel> <text> | reset | turns | usage | health | log [svc] [n]
 #   gpu                                nvidia-smi + ollama ps
 #   models [status|check|list|load|unload|fit]   VRAM/model manager (pin, drift-check)
+#   obs [ps|"up -d"|logs|"restart grafana"]      the Prometheus/Grafana docker stack
 # Raw equivalents (only if a flag the helper lacks is needed):
 Stop-ScheduledTask -TaskName "WES Server"; Start-ScheduledTask -TaskName "WES Server"
 Get-Content C:\Users\awarm\wes-pc\logs\server.log -Tail 20   # server log
@@ -100,27 +78,30 @@ Get-Content C:\Users\awarm\wes-pc\logs\server.log -Tail 20   # server log
 
 ## Key files
 
-- `pi/wes_client.py` — wake word (openwakeword "hey_jarvis"), Silero-VAD endpointing,
-  records the utterance, streams the reply to the JBL (`play_turn`), BT monitor + LED.
-- `pi/hailo_faces.py` — SCRFD + ArcFace face detect/recognize + clothing tag (**system python3**).
-- `pi/hailo_detect.py` — YOLOv8s object detection on the Hailo (**system python3**).
-- `pi/pi_state.py` — read-only Pi state/vision endpoint on `:8090`.
-- `pc/wes_server.py` — Flask `:8080`: Whisper STT, Claude (tools + vision), piper TTS.
-- `pc/wes_discord.py` — Discord frontend: owner-allowlisted DMs → `POST /respond_text`
-  (text-only, own conversation channel). Runs as scheduled task "WES Discord"
-  (`WES_DISCORD_TOKEN` + `_OWNER_ID` from PC user env; see `docs/setup.md`).
-  Also runs two background watchers in the same process: `alert_watch` (Prometheus
-  alerts) and `fantasy_watch` (#029 — DMs the owner when a real Yahoo fantasy
-  write happens, polling `wes_execute`'s ledger). Both phrase via `/announce`.
-- `hosts.yaml` + `wes_hosts.py` (repo root) — the host registry (IPs/ports) and
-  its loader; imported by server, bot, and Pi client. Jarvis reaches it via the
+- `pc/wes_server.py` — Flask `:8080`: the router + tool loop, escalation,
+  conversation and durable memory, and the fantasy tools. Text in
+  (`POST /respond_text`), text out.
+- `pc/wes_discord.py` — the Discord frontend, and the **only** interactive way
+  in: owner-allowlisted DMs → `POST /respond_text` (its own conversation
+  channel). Runs as scheduled task "WES Discord" (`WES_DISCORD_TOKEN` +
+  `_OWNER_ID` from PC user env; see `docs/setup.md`). Also runs two background
+  watchers in the same process: `alert_watch` (Prometheus alerts) and
+  `fantasy_watch` (#029 — DMs the owner when a real fantasy write happens,
+  polling `wes_execute`'s ledger). Both phrase via `/announce`.
+- `hosts.yaml` + `wes_hosts.py` (repo root) — the host registry (address/ports)
+  and its loader; imported by the server and the bot. Jarvis reaches it via the
   `lookup_hosts` tool.
+- `observability/` — the monitoring stack as code: `docker-compose.yml`
+  (Prometheus + Grafana, on this PC since the Pi went), scrape config, alert
+  rules, Grafana provisioning, dashboard JSON. On the Pi, half of this lived
+  unversioned in `/etc`.
 - `pc/scripts/*.ps1` — the launchers + `wes-dev.ps1`, **in the repo** (canonical).
   The scheduled tasks run **deployed** copies from `C:\Users\awarm\wes-pc\`: edit
-  the repo copy, then `wes-dev.ps1 deploy` (`deploy check` reports drift). They
-  must be local — a script on `Z:` can't start before the share maps at boot
-  (#032), and execution policy won't run an unsigned script off a share at all.
-  `tests/` — the test suite.
+  the repo copy, then `wes-dev.ps1 deploy` (`deploy check` reports drift).
+- `tests/` — the test suite.
+- `archive/pi/` — the retired tier-1 code (wake word, Hailo vision, the `:8090`
+  state endpoint, the cast utility), kept as reference. Not imported, not
+  tested, not deployed.
 
 Project skills in `.claude/skills/`: **wes-test** (running the suites
 correctly) and **wes-reload** (restarting the live services + reading logs) —
@@ -130,10 +111,9 @@ prefer them over re-deriving commands.
 
 Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\.venv\Scripts\python.exe`.
 - Changed `pc/wes_server.py` → `& $py -m pytest C:\Users\awarm\wes\tests\test_unit_server.py -q`
-- Changed `pi/hailo_faces.py` → `python3 ~/claude/wes/tests/test_faces.py` (on the Pi)
 - Anything latency-affecting → `& $py C:\Users\awarm\wes\tests\perf_check.py` (flags regressions vs
-  baseline; records to `tests/perf_history_stream.csv`)
-- Anything reply-quality-affecting (prompts, routing, models, TTS) →
+  baseline; records to `tests/perf_history_text.csv`)
+- Anything reply-quality-affecting (prompts, routing, models) →
   `& $py C:\Users\awarm\wes\tests\eval_turns.py` (golden set vs live server + LLM judge —
   Haiku by default, `--judge local` for free gemma4:12b judging, `--judge
   both` to check their agreement; flags named-case regressions and
@@ -141,20 +121,13 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
 - E2E (real pipeline, costs a Claude call) → `& $py -m pytest C:\Users\awarm\wes\tests\test_e2e.py --run-e2e -q`
 - **Add a test in the same change when you add a feature.** Keep unit tests
   hardware/API-free so they stay fast; reserve e2e for the full pipeline.
-- **CI** (`.github/workflows/ci.yml`) runs the
-  hardware/API-free suite on every push/PR (ubuntu, py3.11+3.12) from
-  `requirements-dev.txt`, collecting `tests/` by directory minus `test_e2e.py`
-  and `test_faces.py`. A new unit test that needs hardware or an API key will
-  fail there.
+- **CI** (`.github/workflows/ci.yml`) runs the API-free suite on every push/PR
+  (ubuntu, py3.11+3.12) from `requirements-dev.txt`, collecting `tests/` by
+  directory minus `test_e2e.py`. A new unit test that needs an API key will fail
+  there.
 
 ## Detailed docs (read on demand)
 
-- `docs/pipeline.md` — the turn lifecycle: streaming `/respond_stream`, Silero-VAD
-  endpointing, single-stream `play_turn`, speculative prefetch, telemetry, status LED.
-- `docs/audio.md` — the speaker stack: JBL/Bluetooth pairing, the **A2DP
-  persistent-silence** stability fix, Google Cast/`catt`, `speak.py`, output modes.
-- `docs/vision.md` — on-device vision: Hailo `look` (YOLOv8s), Gemma `describe_scene`,
-  face recognition + clothing-color disambiguation, wake-word vision prefetch.
 - `docs/data-architecture.md` — **read before touching the data path.** Layer
   boundaries (raw → fantasy data → regression → decision → model), the contracts
   between them, and the rule that imports point downward only. `pc/wes_http.py`
@@ -164,23 +137,27 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   reboot**: are the services actually running, is the model pinned, are the
   nightly metrics fresh, did anything die at boot. Exists because a dead service
   is silent here (see ticket #032).
-- `docs/setup.md` — PC venv + dependency pins + auto-start task; Pi client + mic setup.
-- `docs/hardware.md` — Pi/Hailo/camera specs (PERIPHERALS.md and PROJECT.md, both
-  stale early-stage docs, were folded into this + the rest of `docs/` and removed).
+- `docs/setup.md` — PC venv + dependency pins + auto-start tasks.
 - `docs/tickets/` — the task tracker (one file per ticket). **`INDEX.md` lists
   open work by priority — read it for the current queue; don't load `done/`
   unless you need a shipped feature's history.** `docs/roadmap.md` is now just a
   short overview + project history that points here.
-- `docs/observability.md` — Prometheus + Grafana utilization dashboard
-  (<http://10.0.0.79:3000>): exporters on both hosts + `wes_server` `/metrics`
+- `docs/observability.md` — Prometheus + Grafana, in Docker on this PC since the
+  Pi went (<http://localhost:3001>): the PC exporters + `wes_server` `/metrics`
   (token counters) + `/turns` (recent-exchange log, size-capped `turns.jsonl`),
-  dashboard provisioning, restart commands.
+  alerting via the Discord bot, dashboard provisioning, restart commands.
 - `docs/eval-design.md` — design for the automated quality-eval harness (golden
   set + LLM-as-judge + nightly gate); phases 1-2 (`tests/eval_turns.py`,
   deterministic checks + Haiku judge) are built.
 - `docs/memory-design.md` — long-term memory design (OpenClaw-style file-based
   MEMORY.md + remember/forget tools + nightly consolidation); exploration only,
   not yet built.
+- `docs/archive/` — **retired with the Pi**, kept for the record and for anyone
+  reviving that tier: `pipeline.md` (the voice turn lifecycle, VAD endpointing,
+  speculative prefetch), `audio.md` (JBL/Bluetooth, the A2DP persistent-silence
+  fix, Google Cast), `vision.md` (Hailo `look`, `describe_scene`, face
+  recognition + clothing-colour disambiguation), `hardware.md` (Pi/Hailo/camera
+  specs).
 - `docs/fantasy-gm-design.md` — Fantasy GM epic (#029): autonomous Yahoo
   fantasy team management (read → value → optimize → gated execute), per-team
   autonomy config + rails. **P0-P4 all shipped 2026-07-30**, live and
@@ -216,7 +193,7 @@ Suite in `tests/` (full guide: `tests/README.md`). `$py = C:\Users\awarm\wes-pc\
   draft manually. Full history + every finding: ticket #029.
   Platform pivoted from the official Yahoo API to browser automation (API access
   now requires a no-caching DocuSign).
-- `docs/tickets/open/med/030-fantasy-draft-tool.md` — Fantasy DRAFT epic (#030):
+- `docs/tickets/open/low/030-fantasy-draft-tool.md` — Fantasy DRAFT epic (#030):
   autonomous end-to-end Yahoo draft agent for AI-agent-run leagues. **Decision
   engine done 2026-07-21** — real per-league z-scores (`wes_fantasy.rank_by_zscore`,
   the population fetch #029 deferred, via ESPN's `byathlete` bulk endpoint) +

@@ -35,7 +35,7 @@ priority: high          # high | med | low
 created: 2026-07-06
 closed:                 # set to a date when status: done
 tags: [router, vision, discord]
-related: [<commit sha>, docs/pipeline.md, "#002"]
+related: [<commit sha>, docs/data-architecture.md, "#002"]
 ---
 
 ## Problem / Goal

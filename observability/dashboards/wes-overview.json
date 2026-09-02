@@ -11,7 +11,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "PC (DESKTOP-R2PFF9T.local) — inference host",
+      "title": "PC (DESKTOP-R2PFF9T) — the WES host",
       "gridPos": {
         "x": 0,
         "y": 0,
@@ -174,106 +174,10 @@
     },
     {
       "type": "row",
-      "title": "Raspberry Pi 5 (10.0.0.79) — voice client",
-      "gridPos": {
-        "x": 0,
-        "y": 17,
-        "w": 24,
-        "h": 1
-      },
-      "id": 101
-    },
-    {
-      "type": "timeseries",
-      "title": "Pi CPU utilization",
-      "id": 6,
-      "gridPos": {
-        "x": 0,
-        "y": 18,
-        "w": 8,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prom"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "min": 0,
-          "max": 100
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])))",
-          "legendFormat": "cpu"
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "Pi RAM used",
-      "id": 7,
-      "gridPos": {
-        "x": 8,
-        "y": 18,
-        "w": 8,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prom"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "min": 0,
-          "max": 100
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
-          "legendFormat": "ram"
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "Pi temperature",
-      "id": 8,
-      "gridPos": {
-        "x": 16,
-        "y": 18,
-        "w": 8,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prom"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "celsius"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "node_thermal_zone_temp",
-          "legendFormat": "{{zone}} {{type}}"
-        }
-      ]
-    },
-    {
-      "type": "row",
       "title": "WES tokens (wes_server /metrics — counters reset on server restart; increase() handles it)",
       "gridPos": {
         "x": 0,
-        "y": 26,
+        "y": 17,
         "w": 24,
         "h": 1
       },
@@ -285,7 +189,7 @@
       "id": 9,
       "gridPos": {
         "x": 0,
-        "y": 27,
+        "y": 18,
         "w": 12,
         "h": 8
       },
@@ -313,7 +217,7 @@
       "id": 10,
       "gridPos": {
         "x": 12,
-        "y": 27,
+        "y": 18,
         "w": 6,
         "h": 8
       },
@@ -341,7 +245,7 @@
       "description": "Local tokens priced at claude-haiku-4-5 rates ($1/MTok in, $5/MTok out, cached 2026-06-24 — keep in sync with wes_server.py). All-time totals: GET /usage.",
       "gridPos": {
         "x": 18,
-        "y": 27,
+        "y": 18,
         "w": 6,
         "h": 8
       },
@@ -368,7 +272,7 @@
       "title": "Recent turns (GET /turns — rolling window of the last 2000 exchanges)",
       "gridPos": {
         "x": 0,
-        "y": 35,
+        "y": 26,
         "w": 24,
         "h": 1
       },
@@ -380,7 +284,7 @@
       "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 27,
         "w": 24,
         "h": 11
       },
@@ -435,7 +339,7 @@
           "source": "url",
           "format": "table",
           "parser": "backend",
-          "url": "http://DESKTOP-R2PFF9T.local:8080/turns?n=15",
+          "url": "http://windows-host:8080/turns?n=15",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -483,7 +387,7 @@
       "title": "Draft agent (GET /draft_turns — every model call, both sides. Click a payload or reply cell to read it formatted)",
       "gridPos": {
         "x": 0,
-        "y": 47,
+        "y": 38,
         "w": 24,
         "h": 1
       },
@@ -495,7 +399,7 @@
       "title": "Draft agent calls (newest first — click payload/reply to expand)",
       "gridPos": {
         "x": 0,
-        "y": 48,
+        "y": 39,
         "w": 24,
         "h": 16
       },
@@ -666,7 +570,7 @@
           "source": "url",
           "format": "table",
           "parser": "backend",
-          "url": "http://DESKTOP-R2PFF9T.local:8080/draft_turns?n=25",
+          "url": "http://windows-host:8080/draft_turns?n=25",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -718,7 +622,7 @@
       "title": "Latest call in full (pretty-printed)",
       "gridPos": {
         "x": 0,
-        "y": 64,
+        "y": 55,
         "w": 24,
         "h": 14
       },
@@ -745,7 +649,7 @@
           "source": "url",
           "format": "logs",
           "parser": "backend",
-          "url": "http://DESKTOP-R2PFF9T.local:8080/draft_turns?n=5&pretty=1",
+          "url": "http://windows-host:8080/draft_turns?n=5&pretty=1",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -767,5 +671,6 @@
       ]
     }
   ],
-  "schemaVersion": 39
+  "schemaVersion": 39,
+  "description": "WES host overview — provisioned into the Grafana container from observability/dashboards/ (see docs/observability.md). Edit here in the repo and restart the container; provisioned dashboards are read-only in the UI. The Raspberry Pi row was removed 2026-09-02 when that host was repurposed."
 }

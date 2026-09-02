@@ -1,23 +1,37 @@
-"""Performance regression check for the WES pipeline (production streaming path).
+"""Performance regression check for the WES turn path.
 
-Runs a fixed synthesized WAV through /respond_stream a few times, records the
-median stt/ttfa/total latency to perf_history_stream.csv, and flags a regression
-if a metric is worse than median(recent runs) * FACTOR + SLACK_MS. Exit code 1 on
-regression.
+Runs a fixed question through /respond_text a few times, records the median
+latency to perf_history_text.csv, and flags a regression if a metric is worse
+than median(recent runs) * FACTOR + SLACK_MS. Exit code 1 on regression.
 
-    cd Z:\\wes\\tests && python perf_check.py [runs]   (default 3, from the wes-pc venv)
+    python tests/perf_check.py [runs]      (default 3, from the wes-pc venv)
 
-ttfa_ms (request start -> first reply audio byte) is the metric users feel —
-it's the perceived latency the streaming design exists to minimize.
+WHAT IS MEASURED CHANGED ON 2026-09-02. The metric used to be **ttfa_ms** —
+request start to the first byte of reply *audio* — because the streaming design
+existed to get a voice talking before the reply was finished, and that is the
+number a person standing in the room actually felt. The Pi that played that
+audio was repurposed (archive/pi/README.md), so there is no first audio byte and
+no partial delivery: a text turn is delivered whole, and the only latency left
+is how long the whole turn takes.
+
+  total_ms — request start -> reply in hand (the whole turn, HTTP included)
+  llm_ms   — the server's own view of the model call, from its timing block
+
+The old history is preserved at perf_history_stream.csv, which this no longer
+appends to: its stt/ttfa/total columns measured a different pipeline, and
+continuing the series would compare a spoken first syllable against a finished
+paragraph. (perf_history.csv is older still — the retired blocking /respond.)
 
 Run after meaningful changes to track latency over time and catch slowdowns.
-(perf_history.csv is the retired history of the old blocking /respond path.)
 """
 import csv
+import json
 import os
 import statistics
 import subprocess
 import sys
+import time
+import urllib.request
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,35 +39,41 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "pc"))
 sys.path.insert(0, HERE)
 
-from stream_client import post_stream  # noqa: E402
-
 URL = os.environ.get("WES_TEST_URL", "http://127.0.0.1:8080")
-HISTORY = os.path.join(HERE, "perf_history_stream.csv")
-METRICS = ("stt_ms", "ttfa_ms", "total_ms")
-FIELDS = ["ts", "git"] + list(METRICS) + ["spec", "audio_s", "transcript"]
+HISTORY = os.path.join(HERE, "perf_history_text.csv")
+METRICS = ("llm_ms", "total_ms")
+FIELDS = ["ts", "git"] + list(METRICS) + ["reply_chars", "question"]
 FACTOR = 1.5        # allow 50% drift over baseline...
 SLACK_MS = 500      # ...plus this absolute slack, before flagging a regression
 
-
-def make_speech_wav():
-    import wes_server as ws
-
-    path = os.path.join(HERE, "fixtures", "speech.wav")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    if not os.path.exists(path):
-        subprocess.run(
-            [ws.PIPER_BIN, "-m", ws.VOICE_MODEL, "-f", path],
-            input=b"What time is it right now", check=True, capture_output=True,
-        )
-    with open(path, "rb") as f:
-        return f.read()
+# The same question the streaming check used, so the two histories are at least
+# measuring the same work: it routes through the get_datetime tool, making this
+# a full router -> tool -> answer round trip rather than bare generation.
+QUESTION = "What time is it right now?"
+# Its own channel, so a perf run never disturbs the Discord conversation window.
+CHANNEL = "perf"
 
 
-def one_run(wav):
-    res = post_stream(URL, wav)
-    if res["ttfa_ms"] is None:  # empty reply stream — count it as the full time
-        res["ttfa_ms"] = res["total_ms"]
-    return res
+def one_run():
+    req = urllib.request.Request(
+        URL + "/respond_text",
+        data=json.dumps({"text": QUESTION, "channel": CHANNEL}).encode(),
+        # A test harness must not be able to mutate the owner's real fantasy
+        # account, whatever the model decides to call. See tests/eval_turns.py.
+        headers={"Content-Type": "application/json", "X-WES-No-Writes": "1"},
+        method="POST",
+    )
+    t0 = time.perf_counter()
+    with urllib.request.urlopen(req, timeout=180) as r:
+        body = json.loads(r.read())
+    total_ms = round((time.perf_counter() - t0) * 1000)
+    reply = (body.get("reply") or "").strip()
+    return {
+        "llm_ms": int(body.get("timing", {}).get("llm_ms") or total_ms),
+        "total_ms": total_ms,
+        "reply_chars": len(reply),
+        "reply": reply,
+    }
 
 
 def git_rev():
@@ -76,24 +96,22 @@ def load_history():
 
 def main():
     runs_n = int(sys.argv[1]) if len(sys.argv) > 1 else 3
-    import urllib.request
     try:
         urllib.request.urlopen(URL + "/health", timeout=5).read()
     except Exception as e:  # noqa: BLE001
         print(f"server not reachable at {URL}: {e}")
         sys.exit(2)
 
-    wav = make_speech_wav()
-    one_run(wav)  # warm, discarded
-    runs = [one_run(wav) for _ in range(runs_n)]
+    one_run()  # warm, discarded
+    runs = [one_run() for _ in range(runs_n)]
     med = {k: round(statistics.median(r[k] for r in runs)) for k in METRICS}
     last = runs[-1]
 
-    print(f"=== this run (median of {runs_n}, /respond_stream) ===")
+    print(f"=== this run (median of {runs_n}, /respond_text) ===")
     for k in METRICS:
         print(f"  {k:9s} {med[k]:6d} ms")
-    print(f"  spec={last['spec']} audio_s={last['audio_s']}")
-    print(f"  transcript: {last['transcript']!r}")
+    print(f"  question: {QUESTION!r}")
+    print(f"  reply:    {last['reply']!r}")
 
     status = 0
     hist = load_history()
@@ -119,8 +137,7 @@ def main():
         w.writerow({
             "ts": datetime.now().isoformat(timespec="seconds"),
             "git": git_rev(), **med,
-            "spec": last["spec"], "audio_s": last["audio_s"],
-            "transcript": last["transcript"],
+            "reply_chars": last["reply_chars"], "question": QUESTION,
         })
 
     print("REGRESSION DETECTED" if status else "OK (within thresholds)")

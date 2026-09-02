@@ -1,0 +1,34 @@
+# Grafana datasources, file-provisioned into the container by
+# observability/docker-compose.yml.
+#
+# The UIDs are load-bearing: observability/dashboards/wes-overview.json refers
+# to `prom` and `infinity` by uid, so renaming either one silently blanks every
+# panel that uses it. On the Pi these were hand-created in the UI and never
+# version-controlled, which is why "how is this wired up" was previously only
+# answerable by SSHing into the Pi.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prom
+    type: prometheus
+    access: proxy
+    # Service name on the compose network, not localhost — inside the Grafana
+    # container, localhost is the Grafana container.
+    url: http://prometheus:9090
+    isDefault: true
+
+  # Reads the WES server's JSON endpoints (/turns, /draft_turns) directly, so
+  # the turn log renders as a table without going through Prometheus.
+  #
+  # `windows-host` is the compose alias for the Windows side of the WSL NAT
+  # gateway. This used to be the PC's mDNS name, which cost a long debugging
+  # session: Grafana ships statically linked, so it never consults NSS and Go's
+  # built-in resolver does not speak mDNS — the panel stayed blank while the
+  # identical curl from the same host returned 200. An alias in /etc/hosts is
+  # read by the Go resolver, so that whole failure mode is gone.
+  - name: Infinity
+    uid: infinity
+    type: yesoreyeram-infinity-datasource
+    access: proxy
+    url: http://windows-host:8080

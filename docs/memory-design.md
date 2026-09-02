@@ -1,5 +1,17 @@
 # Memory architecture — unified across channels (design v2, 2026-07-06)
 
+> **Channel note (2026-09-02).** This design is built around a "voice" channel
+> and a "discord" channel, and its central argument — conversational context
+> private per channel, durable knowledge unified across them — is illustrated
+> throughout with "don't bleed voice↔discord". **The voice channel is gone**
+> with the Pi (`archive/pi/README.md`), so today there is one interactive
+> channel plus the eval's own. The argument is unaffected and the per-channel
+> machinery is still live and still tested; read "voice" as "any second channel".
+> Two concrete details are stale: `VOICE_CHANNEL_NOTE` no longer exists (there
+> is only `TEXT_CHANNEL_NOTE`), and the `WES_STT_LEXICON` idea in the
+> people/names section has nothing left to feed.
+
+
 Supersedes the v1 exploration (2026-07-04). v1 correctly picked file-based
 memory; v2 adds the piece the user asked for: a **channel axis** that keeps
 conversational context from bleeding between voice and Discord while unifying

@@ -65,3 +65,21 @@ would stop the case laundering a real bug as a flake. **Also note the nightly's
 "REGRESSIONS (passed last run, fail now)" label is misleading for a coin-flip
 case** — it compares against only the previous run, so an intermittent case is
 reported as a fresh regression roughly half the time.
+
+## Update 2026-09-02 — the STT half is gone entirely
+
+Both named flakes were speech artifacts, and there is no speech any more:
+
+- **`lexicon-names`** was already deleted from the golden set on 2026-08-29 (it
+  flipped 0/1/0/1 on identical input, which is worse than no case). The
+  contextual-biasing mechanism behind it retired with Whisper on 2026-09-02.
+- **`math-simple`** is the only live item left, and it is not an STT flake: the
+  deterministic check passes and the local judge occasionally scores correctness
+  0 on 12+13. Worth keeping.
+
+Everything below about mishearing, re-transcription and camera-refusal replies
+describes a pipeline that no longer exists — read it as history. The
+`greeting-brief` observation (the model answering a greeting as if it were a
+vision request) may still be worth checking, since the model, not the microphone,
+was the cause; but the camera tools it reached for are gone, so it probably
+resolved itself.

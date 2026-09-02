@@ -8,18 +8,23 @@
 # The sibling scripts get away with em-dashes only because theirs are in
 # comments. Keep new strings ASCII rather than relying on that.
 #
-# WHY TWO COPIES EXIST AT ALL, since that looks redundant:
+# WHY TWO COPIES EXIST AT ALL, since that looks redundant. The reason is
+# historical but the arrangement is still deliberate:
 #
-# 1. The repo lives on the Pi and reaches the PC over SMB as Z:. If the tasks
-#    ran launchers straight out of Z:, a launcher could not start unless the Pi
-#    was up AND the share was mounted, and at boot it frequently is not. That is
-#    ticket #032, which took voice and Discord down for ~24h while Task
-#    Scheduler reported success.
+# 1. The repo used to live on the Raspberry Pi and reach the PC over SMB as Z:.
+#    With the tasks running launchers straight out of Z:, a launcher could not
+#    start unless the Pi was up AND the share was mounted, and at boot it
+#    frequently was not. That is ticket #032, which took the services down for
+#    ~24h while Task Scheduler reported success.
 # 2. PowerShell's execution policy refuses to run an unsigned script off a
-#    network share at all ("is not digitally signed"), because Z: lands in the
+#    network share at all ("is not digitally signed"), because Z: landed in the
 #    remote zone. So even with the Pi up and the share mounted, a launcher on Z:
-#    could not execute. Local disk is not an optimisation, it is the only thing
-#    that works.
+#    could not execute.
+#
+# The Pi and the share are both gone (2026-09-02) and the repo is on local disk,
+# so neither hazard is live. The split stays because the deployed copy is what
+# Task Scheduler holds a path to, and because a `git pull` that half-rewrites a
+# launcher while a task is starting is a race worth not having.
 #
 # The local copies are therefore GENERATED. Edit pc/scripts/*.ps1 in the repo
 # and re-run this. Editing a deployed copy works right up until the next deploy

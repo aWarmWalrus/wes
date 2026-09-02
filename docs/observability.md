@@ -1,95 +1,109 @@
 # Observability — Prometheus + Grafana
 
-Live and historical utilization graphs for both hosts, viewable from any LAN
-browser. Built 2026-07-05 (phases 1–2; phase 3 — WES app metrics — is planned).
+Live and historical utilization graphs, viewable from any LAN browser. Built
+2026-07-05 on the Raspberry Pi; **moved onto the PC in Docker on 2026-09-02**
+when that hardware was repurposed (`archive/pi/README.md`).
 
-**Dashboard: <http://10.0.0.79:3000> → WES → "WES Overview"** (login `admin` /
-`admin` until the owner changes it at first login; LAN-only, no port forwarding).
+**Dashboard: <http://localhost:3001> → WES → "WES Overview"** (login `admin` /
+`admin` unless `observability/.env` says otherwise; LAN-only, no port forwarding).
 
-> IPs and ports below are mirrored from **`hosts.yaml`** (the repo-root host
-> registry, read via `wes_hosts.py`) — the single source of truth. If the
-> network changes, edit there; the Prometheus scrape targets and this doc are
-> the two places that still restate addresses (Grafana/Prometheus configs can't
-> read the yaml). Jarvis can recite the layout via the `lookup_hosts` tool.
+> Ports below are mirrored from **`hosts.yaml`** (the repo-root host registry,
+> read via `wes_hosts.py`) — the single source of truth. If they change, edit
+> there. Jarvis can recite the layout via the `lookup_hosts` tool.
 
 ## Architecture
 
-Everything long-running lives on the Pi (16GB RAM, ~2GB used); the PC only runs
-two lightweight exporters so gaming headroom is unaffected.
+Everything is on the PC. The stack is `observability/docker-compose.yml`, which
+is also where the operational detail lives — read it before changing anything.
 
-| What | Where | Port | Runs as |
-|------|-------|------|---------|
-| Prometheus (scrapes + stores, 15s interval, 15d retention) | Pi | 9090 | apt `prometheus`, systemd |
-| Grafana (graphs) | Pi | 3000 | apt `grafana` (grafana.com repo), systemd |
-| node_exporter (Pi CPU/mem/temp/disk/net) | Pi | 9100 | apt `prometheus-node-exporter`, systemd |
-| windows_exporter v0.31.7 (PC CPU/RAM/disk/net) | PC | 9182 | "WES Exporters" scheduled task |
-| nvidia_gpu_exporter v1.9.1 (GPU util/VRAM/temp/power via nvidia-smi) | PC | 9835 | same task |
-| `wes_server` `/metrics` (token/call counters by model/source/channel) | PC | 8080 | "WES Server" task |
+| What | Port | Runs as |
+|------|------|---------|
+| Prometheus (scrapes + stores, 15s interval, 15d retention) | 9090 (loopback only) | `prom/prometheus` container |
+| Grafana (graphs) | 3001 | `grafana/grafana` container |
+| windows_exporter v0.31.7 (PC CPU/RAM/disk/net) | 9182 | "WES Exporters" scheduled task |
+| nvidia_gpu_exporter v1.9.1 (GPU util/VRAM/temp/power via nvidia-smi) | 9835 | same task |
+| `wes_server` `/metrics` (token/call counters by model/source/channel) | 8080 | "WES Server" task |
 
-- PC binaries: `C:\Users\awarm\wes-pc\bin\`; launcher
-  `C:\Users\awarm\wes-pc\run_exporters.ps1` (PC-local, not in the repo — same
-  pattern as `run_server.ps1`). windows_exporter runs a trimmed collector set
-  (`cpu,memory,os,logical_disk,net,thermalzone`); note the old `cs` collector
-  was removed in v0.31 (its metrics moved into `os`).
-- Windows Firewall: inbound rule **"WES exporters (Prometheus scrape from Pi)"**
-  allows TCP 9182+9835 from 10.0.0.79 only. Gotcha: when the exporters first
-  listened, Windows auto-created per-exe **Block** rules (the dismissed
-  connection popup) which override any Allow — those were deleted. If scrapes
-  ever go down after an exporter update/rename, check for reborn block rules:
-  `Get-NetFirewallApplicationFilter | ? Program -match exporter | Get-NetFirewallRule`.
-- Prometheus scrape jobs (`/etc/prometheus/prometheus.yml` on the Pi):
-  `node` (localhost:9100), `pc_windows` (DESKTOP-R2PFF9T.local:9182), `pc_gpu`
-  (DESKTOP-R2PFF9T.local:9835). Validate + apply:
-  `promtool check config /etc/prometheus/prometheus.yml && sudo systemctl reload prometheus`.
-  Target health: <http://10.0.0.79:9090/targets>.
+- **Grafana is on 3001, not 3000.** Open WebUI took 3000 on this machine during
+  the September 2026 E: migration, after it had spent a while silently shadowing
+  the WES server on 8080. Two services quietly answering on each other's ports
+  is the single most confusing failure this system has produced; the ports are
+  now written down in `hosts.yaml` and asserted by a unit test.
+- **The whole config is in the repo now.** On the Pi, half of it was in
+  `/etc/prometheus/` and `/etc/grafana/provisioning/` — hand-created, unversioned,
+  and only inspectable by SSHing in. `observability/` now holds the scrape
+  config, the alert rules, the datasource and dashboard provisioning, and the
+  dashboard JSON.
+- PC exporter binaries: `C:\Users\awarm\wes-pc\bin\`; launcher
+  `pc/scripts/run_exporters.ps1` (deployed to `C:\Users\awarm\wes-pc\`).
+  windows_exporter runs a trimmed collector set
+  (`cpu,memory,os,logical_disk,net,thermalzone`); the old `cs` collector was
+  removed in v0.31 (its metrics moved into `os`).
 
-## Dashboard provisioning
+### The one fragile piece: `windows-host`
 
-The dashboard JSON is versioned in the repo at
-`observability/dashboards/wes-overview.json` and file-provisioned
-(`/etc/grafana/provisioning/dashboards/wes.yaml` → `/var/lib/grafana/dashboards/`),
-so it's **read-only in the UI**. To change it:
+Docker runs **inside WSL** here, and the exporters run on **Windows**, so every
+scrape crosses the WSL NAT gateway. Windows 10 has no mirrored networking, so
+that gateway address is regenerated when WSL restarts. Compose maps the name
+`windows-host` to it (`WES_WINDOWS_HOST` in `observability/.env`, default
+`172.22.64.1`) and everything else refers to the name.
 
-```bash
-# edit observability/dashboards/wes-overview.json (C:\Users\awarm\wes\... on the PC), then:
-ssh walrus-pi "sudo cp ~/claude/wes/observability/dashboards/wes-overview.json \
-  /var/lib/grafana/dashboards/ && sudo systemctl restart grafana-server"
+**Symptom when it moves:** every PC panel goes blank at once while Grafana
+itself is perfectly healthy, and `TargetDown` fires for `pc_windows`, `pc_gpu`
+and `wes_server` together. **Recovery:**
+
+```powershell
+wsl -e bash -lc 'ip route show default'      # -> default via 172.22.64.1 ...
+# put that in observability/.env, then:
+& C:\Users\awarm\wes-pc\wes-dev.ps1 obs "up -d"
 ```
 
-(Ad-hoc dashboards created in the UI are fine too — they just aren't versioned.)
+Three services failing simultaneously is the tell — a real outage takes one down
+at a time. On Docker Desktop, set `WES_WINDOWS_HOST=host.docker.internal` and it
+stops moving.
 
-**mDNS gotcha (the `/turns` panel).** The PC is targeted by its mDNS name
-`DESKTOP-R2PFF9T.local` (its DHCP IP flaps — see `hosts.yaml`). glibc apps
-(`curl`, Prometheus) resolve `.local` via `nss-mdns`, but the **Grafana Infinity
-datasource is Go and Go's default resolver skips mDNS** — it queries upstream DNS
-(`75.75.75.75`) and fails with `no such host`, so the "Recent turns" panel goes
-blank on every IP change. Fix (applied on the Pi, not in the repo): a systemd
-drop-in `/etc/systemd/system/grafana-server.service.d/mdns.conf` sets
-`Environment=GODEBUG=netdns=cgo`, forcing Grafana to use the glibc (getaddrinfo)
-resolver, which honors `nss-mdns`. If `/turns` ever blanks again with a `no such
-host` in `journalctl -u grafana-server`, that drop-in went missing.
+## Running it
 
-Live vs cumulative: gauges (CPU%, VRAM, temp) graph directly; for counters use
-`rate(x[1m])` for live rates and `increase(x[$__range])` for cumulative totals
-over the visible time range.
+```powershell
+& C:\Users\awarm\wes-pc\wes-dev.ps1 obs ps               # is it up
+& C:\Users\awarm\wes-pc\wes-dev.ps1 obs "up -d"          # start / apply changes
+& C:\Users\awarm\wes-pc\wes-dev.ps1 obs logs
+& C:\Users\awarm\wes-pc\wes-dev.ps1 obs "restart grafana"   # after editing dashboards/
+```
 
-## Restart / debug
+That helper is a wrapper: Docker lives in WSL and needs `sudo`, so the raw form
+is `wsl -e bash -lc 'cd /mnt/c/Users/awarm/wes/observability && sudo docker compose ...'`.
+
+Prometheus config and alert rules reload without dropping the time series:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:9090/-/reload
+```
+
+Target health: <http://127.0.0.1:9090/targets>. Alert state:
+<http://127.0.0.1:9090/alerts>.
 
 Gotcha (bitten 2026-07-05): scheduled-task PowerShell actions **must include
 `-WindowStyle Hidden`** — without it the task runs in a visible console, and
 closing that window kills the service with exit 0xC000013A, which does NOT
 trigger the task's auto-restart (it's a normal termination, not a failure).
-All four WES tasks now run hidden; keep it that way for new ones.
+Keep it that way for new ones.
 
-```bash
-ssh walrus-pi "systemctl status prometheus prometheus-node-exporter grafana-server"
-ssh walrus-pi "sudo systemctl restart grafana-server"   # or prometheus
-```
-```powershell
-Stop-ScheduledTask -TaskName "WES Exporters"; Start-ScheduledTask -TaskName "WES Exporters"
-Get-Content C:\Users\awarm\wes-pc\logs\exporters.log -Tail 10          # nvidia exporter
-Get-Content C:\Users\awarm\wes-pc\logs\windows_exporter.err.log -Tail 10
-```
+## Dashboard provisioning
+
+The dashboard JSON is versioned at `observability/dashboards/wes-overview.json`
+and file-provisioned into the container, so it is **read-only in the UI**. To
+change it: edit the JSON, then `wes-dev.ps1 obs "restart grafana"`. (Ad-hoc
+dashboards created in the UI still work; they just aren't versioned.)
+
+Datasource UIDs are load-bearing — the dashboard refers to `prom` and `infinity`
+by uid, so renaming either in
+`observability/grafana/provisioning/datasources/datasources.yml` silently blanks
+every panel that uses it.
+
+Live vs cumulative: gauges (CPU%, VRAM, temp) graph directly; for counters use
+`rate(x[1m])` for live rates and `increase(x[$__range])` for cumulative totals
+over the visible time range.
 
 ## WES app metrics (phase 3a — built 2026-07-05)
 
@@ -110,9 +124,7 @@ reply, which tools ran, escalated y/n, per channel. Pipeline:
 
 - `wes_server` logs one JSONL record per exchange to
   `C:\Users\awarm\wes-pc\logs\turns.jsonl` (env `WES_TURNS_LOG`), from the
-  `record_turn()` choke point — voice, Discord, and text all flow through it.
-  Tool calls and escalations are captured via a thread-local notepad
-  (`_turn_begin`/`_note_tool`/`_note_escalation`).
+  `record_turn()` choke point — every channel flows through it.
 - **Every REQUEST is logged, success or not** (2026-07-21): logging is decoupled
   from memory, so a turn with an empty/failed reply is still recorded — tagged
   with an `error` field (`"empty_reply"`, or the exception on a crash) so failed
@@ -121,55 +133,29 @@ reply, which tools ran, escalated y/n, per channel. Pipeline:
   invisible in the log, which is exactly when you most need to see it. The
   request handlers also wrap `think()` so a crash logs the turn + returns a
   graceful reply instead of a silent 500.)
-- **This file stores content** — transcripts of everything said in the house —
-  so unlike `usage.csv` it is a rolling window, not append-forever: past ~4MB
-  it trims itself to the last `WES_TURNS_MAX` (default 2000) exchanges.
-- `GET /turns?n=20&channel=voice` serves the tail, newest first (also handy
-  from curl or a future Discord `!turns`).
+- **This file stores content**, so unlike `usage.csv` it is a rolling window,
+  not append-forever: past ~4MB it trims itself to the last `WES_TURNS_MAX`
+  (default 2000) exchanges.
+- `GET /turns?n=20&channel=discord` serves the tail, newest first.
 - Grafana renders it via the **Infinity datasource** plugin
-  (`yesoreyeram-infinity-datasource`, installed with
-  `sudo grafana cli --homepath /usr/share/grafana plugins install ...` +
-  restart; provisioned in `/etc/grafana/provisioning/datasources/infinity.yaml`).
-  The table panel polls `http://DESKTOP-R2PFF9T.local:8080/turns?n=15` — it shows the
-  *current* tail regardless of the dashboard's time range.
+  (`yesoreyeram-infinity-datasource`), installed by `GF_INSTALL_PLUGINS` at
+  container start rather than the manual `grafana cli` step the Pi needed.
 
-## Alerting — Jarvis DMs the owner (built 2026-07-05)
+### The mDNS saga, now moot
 
-Division of labor: **Prometheus evaluates, the Discord bot delivers.**
+On the Pi this table kept going blank with `lookup DESKTOP-R2PFF9T.local on
+75.75.75.75:53: no such host`, while Prometheus scraped the identical name fine
+and `curl` from the same box returned 200 in 31ms. Cause: Grafana ships
+**statically linked**, so it has no cgo resolver, never consults NSS, and falls
+back to Go's built-in DNS client — which does not speak mDNS. Prometheus is
+dynamically linked and could. That asymmetry was the whole bug, and it needed a
+`wes-mdns-hosts` systemd timer on the Pi to seed `/etc/hosts` from `hosts.yaml`
+every five minutes (the PC's DHCP lease flaps, so a static entry would have
+re-created the original problem).
 
-- Rules live in the repo at `observability/prometheus/wes-alerts.yml`
-  (deploy command in its header) → `/etc/prometheus/rules/` on the Pi.
-  Current set: `TargetDown` (any scrape target, 5m), `GPUHot` (>85°C 5m),
-  `PiHot` (>80°C 5m), `PiDiskLow` / `PCDiskLow` (<10% free 30m). Prometheus
-  owns thresholds, `for:` durations, and flap suppression — state at
-  <http://10.0.0.79:9090/alerts>.
-- `wes_discord.py` runs an `alert_watch` task: polls Prometheus'
-  `GET /api/v1/alerts` every 60s (`WES_PROM_URL`, `WES_ALERT_POLL_S`) and
-  notifies the owner on changes. One DM per (rule, instance); a still-firing
-  alert never repeats. If Prometheus itself is unreachable 5 polls in a row it
-  DMs that too (the watchdog needs a watchdog), and again on recovery.
-- **Alerts are phrased by Jarvis, not sent raw.** On a change the bot builds a
-  grounded event string — the rule's own `summary`, the affected host, and a
-  plain-English description of what the rule means (`ALERT_CONTEXT` in
-  `wes_discord.py`, keep it in sync with the rules) — and POSTs it to the
-  server's **`POST /announce`**. The server has Jarvis explain it in his own
-  voice AND **records it into the "discord" conversation memory**, so a reply
-  like "what was that?" has context (without `/announce` the DM would bypass
-  the server and Jarvis would have no memory of sending it). If the server is
-  unreachable (which may be *why* an alert fired) the bot falls back to a raw
-  `🚨 WES alert: <summary>` DM — an alert is never lost.
-- `/announce` (`{"event", "channel"}` → `{"reply"}`) is the general proactive-
-  notification primitive; scheduled/deferred actions will reuse it.
-- No Alertmanager: for one owner and five rules, the bot-as-receiver keeps it
-  to zero new services. Revisit if rules need routing/grouping/silences.
-- Verified live 2026-07-05: stopped the PC exporters → two TargetDown DMs
-  after 5m → restarted → two Resolved DMs.
-- **Encoding gotcha:** under the scheduled task, Python's stdout is cp1252, so
-  `print()`-ing an emoji or any non-Latin-1 char raises `UnicodeEncodeError`
-  mid-handler. The first real alert died on its own 🚨 this way. Both
-  `wes_discord.py` and `wes_server.py` now `reconfigure(errors="replace")`
-  their streams in `main`, and the alert watcher logs with `!a` (ASCII repr).
-  Keep any new console print in the services ASCII-safe.
+None of that survives the move: the datasource now points at `windows-host`, an
+`/etc/hosts` alias, which Go's pure resolver reads happily. The timer units are
+in `archive/pi/` for the record.
 
 ## "Metrics stopped working" was the server being dead for a week (2026-08-28)
 
@@ -204,9 +190,12 @@ week-long outage. WES Server is now 999.
 `TargetDown` for scrape targets, and `wes_server` IS a scrape target — so a
 `TargetDown` should have fired and been DMed. It was not, because the alert
 watcher lives in `wes_discord.py`, **which was down too**. The watchdog and the
-thing it watches die together, and they died on the same afternoon. Worth
-either moving `alert_watch` somewhere that outlives the bot, or having the Pi
-alert on the bot's absence.
+thing it watches die together, and they died on the same afternoon.
+
+**Moving Prometheus onto this PC does not fix this**, and it is worth being
+explicit about that: Prometheus will happily fire `TargetDown` at a Discord bot
+that is not running to receive it. Anything that genuinely closes this gap has
+to deliver without the bot — tracked as fix 3 in #032.
 
 Check both in one line:
 
@@ -215,46 +204,48 @@ Get-ScheduledTask WES* | % { $i=$_|Get-ScheduledTaskInfo
   "{0,-16} {1,-9} restarts={2}" -f $_.TaskName,$_.State,$_.Settings.RestartCount }
 ```
 
+## Alerting — Jarvis DMs the owner (built 2026-07-05)
+
+Division of labor: **Prometheus evaluates, the Discord bot delivers.**
+
+- Rules live at `observability/prometheus/wes-alerts.yml`, mounted into the
+  container. Current set: `TargetDown` (any scrape target, 5m), `GPUHot`
+  (>85°C 5m), `PCDiskLow` and `EDiskLow` (<10% free 30m). Prometheus owns
+  thresholds, `for:` durations, and flap suppression.
+  - `PiHot`/`PiDiskLow` were removed with the Pi. `EDiskLow` was added in the
+    same change: the Ollama model store moved to `E:` in the September migration,
+    so that volume filling now stops the local model loading at all — something
+    the `C:` rule would never have seen.
+- `wes_discord.py` runs an `alert_watch` task: polls Prometheus'
+  `GET /api/v1/alerts` every 60s (`WES_PROM_URL`, `WES_ALERT_POLL_S`) and
+  notifies the owner on changes. One DM per (rule, instance); a still-firing
+  alert never repeats. If Prometheus itself is unreachable 5 polls in a row it
+  DMs that too (the watchdog needs a watchdog), and again on recovery.
+- **Alerts are phrased by Jarvis, not sent raw.** On a change the bot builds a
+  grounded event string — the rule's own `summary`, the affected target, and a
+  plain-English description of what the rule means (`ALERT_CONTEXT` in
+  `wes_discord.py`, keep it in sync with the rules) — and POSTs it to the
+  server's **`POST /announce`**. The server has Jarvis explain it in his own
+  words AND **records it into the "discord" conversation memory**, so a reply
+  like "what was that?" has context (without `/announce` the DM would bypass
+  the server and Jarvis would have no memory of sending it). If the server is
+  unreachable (which may be *why* an alert fired) the bot falls back to a raw
+  `🚨 WES alert: <summary>` DM — an alert is never lost.
+- `/announce` (`{"event", "channel"}` → `{"reply"}`) is the general proactive-
+  notification primitive; scheduled/deferred actions will reuse it.
+- No Alertmanager: for one owner and four rules, the bot-as-receiver keeps it
+  to zero new services. Revisit if rules need routing/grouping/silences.
+- Verified live 2026-07-05: stopped the PC exporters → two TargetDown DMs
+  after 5m → restarted → two Resolved DMs.
+- **Encoding gotcha:** under the scheduled task, Python's stdout is cp1252, so
+  `print()`-ing an emoji or any non-Latin-1 char raises `UnicodeEncodeError`
+  mid-handler. The first real alert died on its own 🚨 this way. Both
+  `wes_discord.py` and `wes_server.py` now `reconfigure(errors="replace")`
+  their streams in `main`, and the alert watcher logs with `!a` (ASCII repr).
+  Keep any new console print in the services ASCII-safe.
+
 ## Still planned (phase 3b)
 
-- Turn-latency histograms by channel (stt/ttfa/total) on `/metrics`.
-
-## "Last 15 turns" panel: Grafana can't resolve `.local` (fixed 2026-08-09)
-
-**Symptom:** the turns table was empty while every Prometheus panel worked, the
-Prometheus `wes_server` target was `up`, and `curl http://DESKTOP-R2PFF9T.local:8080/turns`
-from the same Pi returned 200 in 31ms.
-
-**Cause.** Grafana's log:
-
-```
-lookup DESKTOP-R2PFF9T.local on 75.75.75.75:53: no such host
-```
-
-It was asking the upstream (Comcast) DNS server for an mDNS name. `nsswitch.conf`
-is configured correctly (`hosts: files mdns4_minimal [NOTFOUND=return] dns`) — but
-Grafana ships **statically linked** (`ldd` → "not a dynamic executable"), so it has
-no cgo resolver, so it never consults NSS at all and falls back to Go's built-in
-DNS client, which does not speak mDNS.
-
-Prometheus resolves the identical name because it is **dynamically linked**
-against libc and can go through NSS. That asymmetry is the entire bug, and it is
-why "the exporter is up" and "the panel is dead" were true at the same time.
-
-**Fix.** Go's pure resolver *does* read `/etc/hosts`, so a `wes-mdns-hosts`
-systemd timer on the Pi seeds it from `hosts.yaml` every 5 minutes
-(`pi/wes-mdns-hosts.{sh,service,timer}`).
-
-It is a **timer, not a one-off write**, on purpose: the PC's Wi-Fi lease flaps
-between addresses, which is exactly why `hosts.yaml` moved from a hardcoded IP to
-the mDNS name on 2026-07-24. A static `/etc/hosts` entry would have re-created
-that bug in a place nobody would think to look. Names are parsed out of
-`hosts.yaml` so this does not become a second source of truth, and a failed
-lookup keeps the previous entry rather than deleting a good one.
-
-Check it with:
-
-```bash
-getent -s files hosts DESKTOP-R2PFF9T.local   # the path a static Go binary uses
-systemctl list-timers wes-mdns-hosts.timer
-```
+- Turn-latency histograms by channel on `/metrics` (#006). The metric to
+  histogram is now `llm_ms` — the stt/ttfa/total split described a pipeline that
+  no longer exists.

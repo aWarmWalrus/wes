@@ -1,14 +1,19 @@
 """Shared accessor for the WES host registry (hosts.yaml at the repo root).
 
 The single source of truth for machine identities, IPs, and service ports.
-Imported by pc/wes_server.py, pc/wes_discord.py, and pi/wes_client.py — each
-adds the repo root to sys.path first. Every lookup takes a `default` so a
-missing or malformed registry degrades to the caller's old hard-coded value
-rather than bricking a service; a unit test guards the file's shape.
+Imported by pc/wes_server.py and pc/wes_discord.py — each adds the repo root to
+sys.path first. Every lookup takes a `default` so a missing or malformed
+registry degrades to the caller's old hard-coded value rather than bricking a
+service; a unit test guards the file's shape.
 
     import wes_hosts
-    wes_hosts.url("pi", "pi_state", "/scene")   # -> http://10.0.0.79:8090/scene
+    wes_hosts.url("pc", "prometheus", "/api/v1/alerts")
     wes_hosts.summary()                          # human/LLM-readable table
+
+The registry describes ONE host now (the PC). It held a `pi` entry until
+2026-09-02, when that hardware was repurposed — see archive/pi/README.md. The
+multi-host shape is kept because it costs nothing and adding a machine back is
+then a config edit rather than a code change.
 """
 import os
 

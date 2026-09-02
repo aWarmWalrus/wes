@@ -1,0 +1,45 @@
+# Prometheus scrape config for WES. Mounted read-only into the container by
+# observability/docker-compose.yml.
+#
+# This file did not exist in the repo until 2026-09-02 — it lived at
+# /etc/prometheus/prometheus.yml on the Pi, which meant the scrape targets were
+# the one part of the monitoring stack with no version history. It is here now.
+#
+# `windows-host` is an /etc/hosts alias the compose file points at the WSL NAT
+# gateway (the Windows side); see the long comment in docker-compose.yml for why
+# it is a name and not an address, and what to do when it moves.
+#
+# Apply changes without dropping the TSDB:
+#   curl -X POST http://127.0.0.1:9090/-/reload
+# Check what it thinks it is scraping:  http://127.0.0.1:9090/targets
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # Prometheus itself — cheap, and it is the one target whose absence cannot be
+  # detected by TargetDown (nothing would be evaluating the rule).
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # PC host metrics. The `node` job (the Pi's node_exporter) was removed with
+  # the Pi; nothing scrapes a Linux host any more.
+  - job_name: pc_windows
+    static_configs:
+      - targets: ["windows-host:9182"]
+
+  - job_name: pc_gpu
+    static_configs:
+      - targets: ["windows-host:9835"]
+
+  # wes_server's own token/call counters (docs/observability.md, phase 3a).
+  # Also the liveness signal for the server: it went down for a week in August
+  # 2026 and TargetDown here is what should have caught it.
+  - job_name: wes_server
+    static_configs:
+      - targets: ["windows-host:8080"]

@@ -1,12 +1,11 @@
-"""Shared pytest config + fixtures for the PC-side tests.
+"""Shared pytest config + fixtures for the tests.
 
-The Pi-side vision tests live in test_faces.py and run under SYSTEM python3
-(they need cv2/hailo); they are NOT collected by pytest here.
+A `speech_wav` fixture lived here (piper-synthesized WAV bytes for STT
+round-trips), along with a note that the Pi's vision tests ran under system
+python3. Both went with the Pi on 2026-09-02 — archive/pi/README.md.
 """
 import os
-import subprocess
 import sys
-import tempfile
 import urllib.request
 
 import pytest
@@ -76,21 +75,3 @@ def server_up():
             return r.status == 200
     except Exception:  # noqa: BLE001
         return False
-
-
-@pytest.fixture(scope="session")
-def speech_wav():
-    """Synthesize a known sentence with piper -> WAV bytes, for STT round-trips.
-
-    Cached on disk so repeated runs don't re-synthesize."""
-    import wes_server as ws
-
-    text = "What time is it right now"
-    path = os.path.join(tempfile.gettempdir(), "wes_test_speech.wav")
-    if not os.path.exists(path):
-        subprocess.run(
-            [ws.PIPER_BIN, "-m", ws.VOICE_MODEL, "-f", path],
-            input=text.encode(), check=True, capture_output=True,
-        )
-    with open(path, "rb") as f:
-        return {"text": text, "wav": f.read()}

@@ -1,0 +1,84 @@
+# WES monitoring stack — Prometheus + Grafana, on the PC.
+#
+# This ran on the Raspberry Pi as two apt packages under systemd until
+# 2026-09-02, when that hardware was repurposed. Moving it here made it a
+# compose file rather than a hand-built host install, so the whole thing is now
+# in the repo instead of half in the repo and half in /etc on a machine that no
+# longer exists.
+#
+#   cd observability && docker compose up -d
+#   docker compose ps            # is it up
+#   docker compose logs -f       # why is it not
+#   docker compose restart grafana   # after editing dashboards/ or provisioning/
+#
+# Docker lives inside WSL on this machine and needs sudo, so all of the above
+# run as: wsl -e bash -lc 'cd /mnt/c/Users/awarm/wes/observability && sudo docker compose ...'
+#
+# THE ONE FRAGILE PIECE is `windows-host`. The containers run in WSL's network
+# namespace, and Windows services (windows_exporter, the GPU exporter, the WES
+# server) are on the far side of the WSL NAT gateway. Windows 10 has no mirrored
+# networking, so that gateway is a NAT address which CHANGES when WSL restarts.
+# Everything else here refers to the name, so recovery is one edit:
+#
+#   wsl -e bash -lc 'ip route show default'    # -> "default via 172.22.64.1 ..."
+#
+# then put that address in observability/.env as WES_WINDOWS_HOST and
+# `docker compose up -d`. The symptom is every PC panel going blank at once
+# while Grafana itself is perfectly healthy — which is why TargetDown alerts on
+# it. (Same class of failure as Open WebUI losing Ollama; see the E: migration
+# notes.) On Docker Desktop, set WES_WINDOWS_HOST=host.docker.internal instead
+# and it stops moving.
+
+name: wes-observability
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: wes-prometheus
+    restart: unless-stopped
+    # 9090 on the loopback only. Nothing off this machine reads it any more —
+    # the Discord bot's alert watcher polls it over loopback, and Grafana talks
+    # to it on the compose network by service name.
+    ports:
+      - "127.0.0.1:9090:9090"
+    extra_hosts:
+      - "windows-host:${WES_WINDOWS_HOST:-172.22.64.1}"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/wes-alerts.yml:/etc/prometheus/rules/wes-alerts.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 15 days, as on the Pi. This is a home dashboard, not a data warehouse.
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle          # POST /-/reload instead of a restart
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: wes-grafana
+    restart: unless-stopped
+    depends_on: [prometheus]
+    # 3001, NOT 3000: Open WebUI holds 3000 on this machine. See hosts.yaml.
+    ports:
+      - "3001:3000"
+    extra_hosts:
+      - "windows-host:${WES_WINDOWS_HOST:-172.22.64.1}"
+    environment:
+      GF_SERVER_HTTP_PORT: "3000"
+      # LAN-only on a home network behind NAT, same posture as the Pi install.
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      # The turns/draft tables need the Infinity datasource plugin. Installed at
+      # container start so a rebuilt container is not a manual `grafana cli` step
+      # the way it was on the Pi.
+      GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource"
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: ""
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  prometheus-data:
+  grafana-data:

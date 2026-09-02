@@ -4,16 +4,13 @@
 # pc/requirements.txt.
 #
 #   python -m pip install -r requirements-dev.txt
-#   python -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_faces.py
+#   python -m pytest tests/ --ignore=tests/test_e2e.py
 #
-# Verified 2026-07-29 in a clean venv: 332 passed, 6 skipped — identical to the
-# real PC venv. Every pin below has cp311 + cp312 manylinux wheels, so CI does
-# not build from source.
+# Every pin below has cp311 + cp312 manylinux wheels, so CI does not build from
+# source.
 #
 # NOT included, deliberately, and confirmed unnecessary:
-#   piper-tts / onnxruntime  — TTS runs the piper binary via subprocess.
-#   pychromecast             — Cast output is imported lazily.
-#   discord.py               — wes_discord's 22 unit tests pass without it.
+#   discord.py — wes_discord's unit tests pass without it.
 # If a new module top-level-imports one of these, add it here AND say why.
 #
 # playwright USED to be on that list — wes_yahoo gates every use behind
@@ -38,17 +35,16 @@ pytest==9.1.1
 Flask==3.1.3
 requests==2.34.2
 PyYAML==6.0.3
-numpy==1.26.4
 anthropic==0.113.0
 prometheus_client==0.25.0
 
-# pc/wes_server.py top-level-imports faster_whisper (WhisperModel), so the
-# import cannot be avoided even though no test ever loads a model.
-faster-whisper==1.2.1
+# numpy was pinned here for the speech stack (ctranslate2/piper were untested
+# against 2.x). Nothing outside archive/ imports it any more, so it is dropped
+# rather than pinned for a transitive dependency to satisfy on its own terms.
 
-# ctranslate2 is INTENTIONALLY UNPINNED here — do not mirror pc/requirements.txt.
-# That file pins 4.4.0 because 4.8.0 segfaults (0xC0000005) on model load on the
-# Windows PC. 4.4.0 publishes NO Linux wheel (PyPI has 4.6.3+ only), so pinning
-# it would make CI fail at install. The segfault is a model-load bug and the
-# unit suite never loads a model — verified green here on 4.8.1.
-ctranslate2
+# faster-whisper and ctranslate2 used to be here, purely because
+# pc/wes_server.py top-level-imported WhisperModel — no test ever loaded a
+# model. STT retired with the Pi on 2026-09-02, so CI stopped installing a
+# ~40MB inference runtime it never ran. (ctranslate2 was deliberately unpinned
+# here while pc/requirements.txt pinned 4.4.0, because 4.4.0 publishes no Linux
+# wheel; that whole mismatch is gone with it.)

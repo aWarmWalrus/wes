@@ -12,7 +12,7 @@
 #   draft-eval [args]       golden draft scenarios (--with-claude, --repeat N)
 #   reload [server|discord|exporters]   restart the task (default server) + wait health
 #   health                  GET /health
-#   say <channel> <text>    POST /respond_text (text-only; no audio) -> prints reply
+#   say <channel> <text>    POST /respond_text -> prints reply
 #   reset [channel]         POST /reset_conversation (all channels if omitted)
 #   turns [n]               GET /turns
 #   usage                   GET /usage
@@ -21,7 +21,8 @@
 #   models [status|check|list|load|unload|fit]   VRAM/model manager (wes-models.ps1)
 #   deploy [check]          re-copy launcher scripts from the repo to local
 #                           ("check" reports drift without changing anything)
-#   sync                    pull BOTH clones (PC + Pi), redeploy, compare HEADs
+#   sync                    git pull + redeploy the launchers
+#   obs [ps|up -d|logs|restart grafana]   the Prometheus/Grafana docker stack
 #
 # THIS FILE LIVES IN THE REPO (pc/scripts/) and is DEPLOYED to the path above.
 # Edit it here; run `deploy` to push it out. Editing the deployed copy works
@@ -33,9 +34,10 @@ param(
 $ErrorActionPreference = "Stop"
 $py   = "C:\Users\awarm\wes-pc\.venv\Scripts\python.exe"
 $base = "C:\Users\awarm\wes-pc"
-# Code now runs from a LOCAL clone, not the Z: share: the PC must not need
-# the Pi up to start (see #032), and execution policy blocks unsigned
-# scripts on a share entirely. WES_REPO overrides for a different checkout.
+# Code runs from a LOCAL clone. It briefly ran from the Z: share (the Pi's
+# clone over Samba), which made the PC unable to boot its services without the
+# Pi (#032) and which execution policy refused to run unsigned scripts from at
+# all. WES_REPO overrides for a different checkout.
 $repo = if ($env:WES_REPO) { $env:WES_REPO } else { "C:\Users\awarm\wes" }
 $srv  = "http://127.0.0.1:8080"
 if ($null -eq $rest) { $rest = @() }
@@ -77,7 +79,7 @@ switch ($cmd) {
             $extra = if ($rest.Count -ge 2) { @($rest | Select-Object -Skip 1) } else { @() }
             & $py -m pytest $target -q @extra
         } else {
-            & $py -m pytest "$repo\tests" -q --ignore="$repo\tests\test_faces.py" @rest
+            & $py -m pytest "$repo\tests" -q --ignore="$repo\tests\test_e2e.py" @rest
         }
     }
     "eval"   {
@@ -144,9 +146,11 @@ switch ($cmd) {
         & "$base\wes-models.ps1" -cmd $sub -rest $margs
     }
     "deploy" {
-        # The LOCAL copy, not the repo one: execution policy refuses to run an
-        # unsigned script off the Z: share. deploy.ps1 reads its sources from
-        # the repo, so the repo is still the source of truth.
+        # The LOCAL copy, not the repo one -- that was mandatory when the repo
+        # lived on the Z: share (execution policy refuses to run an unsigned
+        # script off a network share) and is now just consistency with how the
+        # scheduled tasks invoke it. deploy.ps1 reads its sources from the repo,
+        # so the repo is still the source of truth.
         #
         # Takes the plain word 'check', not -Check: a leading dash gets bound as
         # a parameter of THIS script before it can reach $rest.
@@ -162,35 +166,25 @@ switch ($cmd) {
         else            { & "$base\deploy.ps1" }
     }
     "sync" {
-        # Two clones now exist (PC local + the Pi's), so they can diverge. This
-        # is the routine that stops that being silent: pull both, redeploy the
-        # launchers, and print both HEADs so a mismatch is visible.
+        # ONE CLONE as of 2026-09-02. This used to pull two -- the PC's local
+        # checkout and the Pi's, over the Z: share -- and warn when their HEADs
+        # differed, because the Pi ran pi/ from its own copy and a stale voice
+        # client failed silently. The Pi is gone (archive/pi/README.md), so this
+        # is now just "pull and redeploy the launchers".
         #
         # --ff-only on purpose: a clone that has drifted should FAIL loudly here
         # rather than be quietly merged by a helper script.
-        #
-        # The Pi's clone is reached through the Z: MOUNT, not over ssh. Running
-        # `ssh walrus-pi git pull` fails with "could not read Username for
-        # https://github.com" -- the Pi's remote is HTTPS and it has no stored
-        # credentials, whereas git on the PC does. Driving the Pi's working tree
-        # across the share reuses the PC's credentials and needs no secret on
-        # the Pi at all.
-        $piRepo = "Z:\wes"
         git -C $repo pull --ff-only
         & "$base\deploy.ps1"
-        if (Test-Path $piRepo) {
-            git -C $piRepo pull --ff-only
-            $piHead = (git -C $piRepo rev-parse --short HEAD)
-        } else {
-            $piHead = "(Z: not mapped - Pi clone not checked)"
-        }
-        $pcHead = (git -C $repo rev-parse --short HEAD)
-        "PC clone: $pcHead"
-        "Pi clone: $piHead"
-        if ($pcHead -ne $piHead) {
-            "WARNING: clones differ. Push from whichever is ahead, then sync again."
-            "         The Pi runs pi/ from ITS clone, so the voice client may be stale."
-        }
+        "PC clone: $(git -C $repo rev-parse --short HEAD)"
     }
-    default  { "unknown command '$cmd'. try: test eval draft-eval perf reload health say reset turns usage log gpu models deploy sync" }
+    "obs" {
+        # The monitoring stack moved off the Pi into Docker here. Docker lives
+        # inside WSL on this machine and needs sudo, so this wraps the incantation
+        # rather than leaving it to be retyped.
+        $sub = if ($rest.Count -ge 1) { [string]$rest[0] } else { "ps" }
+        $dir = "/mnt/c/Users/awarm/wes/observability"
+        wsl -e bash -lc "cd $dir && sudo docker compose $sub"
+    }
+    default  { "unknown command '$cmd'. try: test eval draft-eval perf reload health say reset turns usage log gpu models deploy sync obs" }
 }

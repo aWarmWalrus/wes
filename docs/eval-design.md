@@ -1,5 +1,22 @@
 # Eval harness design (phases 1-2 BUILT 2026-07-04 — `tests/eval_turns.py`)
 
+> **READ THIS FIRST (2026-09-02).** This document was written when WES was a
+> voice assistant, and describes the harness in those terms throughout: cases
+> synthesized to speech with piper, POSTed to `/respond_stream`, transcribed by
+> the server's Whisper, and the reply recovered by re-transcribing the streamed
+> PCM. **None of that pipeline exists any more** — the Raspberry Pi that
+> provided the microphone and speaker was repurposed (`archive/pi/README.md`).
+>
+> What actually ships today: `tests/eval_turns.py` drives `/respond_text` with
+> the case text, checks the reply directly, and grades it with the same LLM
+> judge. `tests/README.md` describes the current harness; the golden file's own
+> header lists exactly which fields changed and why.
+>
+> The document is kept because the *reasoning* survives the transport — why an
+> LLM judge, why the deterministic checks come first, why the judge is graded
+> against itself, why the nightly gate compares same-backend medians only. Read
+> the design; treat every audio mechanism as historical.
+
 Goal: catch **quality** regressions (wrong answers, bad tool routing, misheard
 speech, rambling replies) automatically, the way `perf_check.py` already catches
 **latency** regressions — no human listening required. Runs on the PC against the

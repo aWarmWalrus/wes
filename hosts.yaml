@@ -1,32 +1,36 @@
 # WES host registry — the single source of truth for machine identities, LAN
-# IPs, and service ports. Read at runtime via wes_hosts.py by the PC server,
-# the Discord bot, and the Pi client (env vars still override per process); the
-# server also exposes it to Jarvis through the `lookup_hosts` tool so he can
-# answer "what's the Pi's IP?" without anything hard-coded into his prompt.
+# IPs, and service ports. Read at runtime via wes_hosts.py by the PC server and
+# the Discord bot (env vars still override per process); the server also exposes
+# it to Jarvis through the `lookup_hosts` tool so he can answer "what port is
+# Grafana on?" without anything hard-coded into his prompt.
 #
 # When the network changes, edit HERE — don't duplicate IPs/ports in code or
 # docs. CLAUDE.md's machines table and docs/observability.md point back to this.
+#
+# ONE HOST as of 2026-09-02. There used to be a `pi` entry (Raspberry Pi 5 +
+# Hailo-8, 10.0.0.79) that ran the voice client, Prometheus and Grafana; the
+# owner repurposed the hardware, so monitoring moved onto the PC in Docker and
+# the voice tier was retired to archive/pi/. The registry is deliberately kept
+# for the single host rather than deleted — the ports below are still read by
+# the server, the bot and the observability stack, and a second machine is a
+# config change rather than a code change.
 hosts:
   pc:
     # mDNS name, NOT a fixed IP: the PC's Wi-Fi adapter gets a DHCP lease that
-    # flaps between addresses (seen .168 and .91). The Pi resolves this .local
-    # name to whatever the current IP is, so scrapes/URLs survive lease changes.
-    # (2026-07-24; was a hardcoded IP that broke on every renewal.)
+    # flaps between addresses (seen .168 and .91). Anything off-box resolves
+    # this .local name to whatever the current IP is, so URLs survive lease
+    # changes. (2026-07-24; was a hardcoded IP that broke on every renewal.)
     ip: DESKTOP-R2PFF9T.local
     hostname: DESKTOP-R2PFF9T
-    role: PC (RTX 5060 Ti 16GB) — Whisper STT, Gemma LLM/VLM via Ollama, piper TTS
+    # Quoted: an unquoted YAML scalar cannot contain ": ".
+    role: "PC (RTX 5060 Ti 16GB) — the whole of WES: Gemma LLM via Ollama, Discord frontend, fantasy GM, monitoring"
     ports:
-      server: 8080          # wes_server Flask (respond/stream/announce/metrics/turns)
+      server: 8080          # wes_server Flask (respond_text/announce/metrics/turns)
       windows_exporter: 9182
       gpu_exporter: 9835
       ollama: 11434         # local, reached over loopback from the server
-  pi:
-    ip: 10.0.0.79
-    hostname: raspberrypi
-    aliases: [walrus-pi]
-    role: Raspberry Pi 5 + Hailo-8 — wake word, audio out, on-device vision
-    ports:
-      pi_state: 8090        # read-only Pi state/vision endpoint the server calls
-      prometheus: 9090
-      grafana: 3000
-      node_exporter: 9100
+      prometheus: 9090      # Docker, moved off the Pi 2026-09-02
+      # 3001, NOT 3000: Open WebUI holds 3000 on this machine (it was moved
+      # there during the 2026-09-02 E: migration, after it silently shadowed
+      # the WES server on 8080). Grafana lost the coin toss.
+      grafana: 3001

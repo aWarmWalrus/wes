@@ -5,39 +5,28 @@
 # and rots fast. Versions below are what is installed and known-good as of
 # 2026-07-29 (332 unit tests green, perf within baseline).
 #
-# Install / rebuild (the venv must live on C: — Z:\ is the Pi's Samba share
-# and a Windows venv cannot run from it; see docs/setup.md):
-#   C:\Users\awarm\wes-pc\.venv\Scripts\python.exe -m pip install -r Z:\wes\pc\requirements.txt
+# Install / rebuild (see docs/setup.md):
+#   C:\Users\awarm\wes-pc\.venv\Scripts\python.exe -m pip install -r C:\Users\awarm\wes\pc\requirements.txt
 #
-# Verify the two load-bearing pins survived any upgrade:
-#   ...\python.exe -m pip freeze | Select-String "ctranslate2|onnxruntime"
-#
-# NOTE: the Pi has a SEPARATE runtime venv (~/wes/.venv) with its own deps
-# (openwakeword, tflite-runtime, onnxruntime 1.27 — the pin below is PC-only).
-# Hailo/cv2 code runs on the Pi's SYSTEM python3, not a venv at all.
-
-# --- Load-bearing pins: do NOT bump without re-testing on this PC ---
-# 4.8.0 segfaults (0xC0000005) on Whisper model load on this machine.
-ctranslate2==4.4.0
-# 1.27.0's DLL init fails on Windows here; piper-tts needs onnxruntime.
-onnxruntime==1.20.1
+# THE SPEECH STACK IS GONE as of 2026-09-02. faster-whisper (STT), piper-tts
+# (TTS), PyChromecast (Cast output) and the ctranslate2/onnxruntime/numpy pins
+# they dragged along were all removed with the Raspberry Pi tier — nothing
+# records audio into this service and nothing plays audio out of it any more
+# (archive/pi/README.md). Two of those pins were load-bearing and painful
+# (ctranslate2 4.4.0 because 4.8.0 segfaulted on Whisper model load here;
+# onnxruntime 1.20.1 because 1.27.0's DLL init failed on Windows) — if speech
+# ever comes back, `git log -- pc/requirements.txt` has the details.
 
 # --- Web service ---
 Flask==3.1.3
 requests==2.34.2
 PyYAML==6.0.3              # hosts.yaml registry (wes_hosts.py)
 
-# --- Speech: STT in, TTS out ---
-faster-whisper==1.2.1      # pulls ctranslate2 — respects the pin above
-piper-tts==1.4.2           # pulls onnxruntime — respects the pin above
-numpy==1.26.4              # 2.x untested against this ctranslate2/piper pair
-
 # --- LLM fallback tier ---
 anthropic==0.113.0         # Claude: error-fallback + eval judge
 
 # --- Frontends & integrations ---
 discord.py==2.7.1          # pc/wes_discord.py
-PyChromecast==14.0.10      # Google Cast output mode (docs/audio.md)
 playwright==1.61.0         # Yahoo fantasy scraping (#029/#030); needs `playwright install chromium`
 
 # --- Sleeper draft automation ---

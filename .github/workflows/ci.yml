@@ -38,17 +38,17 @@ jobs:
       # workflow that sat unmerged on a branch listed four files by name and had
       # already fallen behind by four more.)
       #
-      # The two exclusions are structural, not flaky:
-      #   test_e2e.py   — needs a live server + a real Claude API call (costs money)
-      #   test_faces.py — needs Pi hardware; runs under the Pi's SYSTEM python3
-      #                   (cv2 + hailo_platform), never under this venv
+      # The one exclusion is structural, not flaky:
+      #   test_e2e.py — needs a live server + a real Claude API call (costs money)
       # Anything else that can't run here doesn't belong in the unit suite.
+      # (test_faces.py used to be excluded too — it needed Pi hardware. The Pi
+      # was retired 2026-09-02 and the file moved to archive/pi/, which pytest
+      # never collects because this step names `tests/` explicitly.)
       # See tests/README.md.
       - name: Run unit tests
         run: |
           python -m pytest tests/ -q \
-            --ignore=tests/test_e2e.py \
-            --ignore=tests/test_faces.py
+            --ignore=tests/test_e2e.py
 
   # Guards the invariant that broke production for a week: the launcher env and
   # hosts.yaml must stay consistent with what the code actually reads. Cheap,
@@ -62,13 +62,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install PyYAML==6.0.3
-      - name: hosts.yaml loads and exposes both hosts
+      - name: hosts.yaml loads and exposes the PC
         run: |
           python -c "
           import wes_hosts
           wes_hosts.load(force=True)
           print(wes_hosts.summary())
           assert wes_hosts.ip('pc'), 'pc missing from hosts.yaml'
-          assert wes_hosts.ip('pi'), 'pi missing from hosts.yaml'
           assert wes_hosts.url('pc', 'server').startswith('http'), 'pc server url malformed'
+          assert wes_hosts.url('pc', 'grafana').startswith('http'), 'pc grafana url malformed'
           "

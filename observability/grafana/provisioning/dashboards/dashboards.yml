@@ -1,0 +1,21 @@
+# Dashboard provider: load every dashboard JSON in observability/dashboards/,
+# which docker-compose.yml mounts read-only at /var/lib/grafana/dashboards.
+#
+# Provisioned dashboards are READ-ONLY in the Grafana UI by design — the repo is
+# the source of truth. To change one: edit the JSON here, then
+#   docker compose restart grafana
+# (Ad-hoc dashboards built in the UI still work; they just are not versioned.)
+apiVersion: 1
+
+providers:
+  - name: WES
+    folder: WES
+    type: file
+    disableDeletion: false
+    # The mount is read-only, so let Grafana notice edits rather than trying to
+    # write back into it.
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

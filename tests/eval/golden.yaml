@@ -1,71 +1,82 @@
-# Golden set for the eval harness (docs/eval-design.md). Phase 1 fields:
-#   id                  unique name; also the fixture filename
-#   say                 sentence synthesized with piper and POSTed as the turn
-#                       (special value SILENCE posts 1s of silence)
-#   turns               instead of `say`: a list of utterances posted in order
-#                       as one conversation (server memory); all `expect`
-#                       checks and the judge apply to the LAST turn's reply.
-#                       The runner resets server conversation memory before
-#                       every case, so cases never leak into each other.
-#   requires_pi         skip unless the Pi's :8090 answers (vision/status cases)
+# Golden set for the eval harness (docs/eval-design.md). Fields:
+#   id                  unique name
+#   say                 the message POSTed as the turn (text)
+#   turns               instead of `say`: a list of messages sent in order as
+#                       one conversation (server memory); all `expect` checks
+#                       and the judge apply to the LAST turn's reply. The runner
+#                       resets server conversation memory before every case, so
+#                       cases never leak into each other.
 #   web_search          skip unless --web-search / WES_EVAL_WEB_SEARCH=1 (these
 #                       hit the PAID web-search API — run weekly, not nightly)
 #   expect:
-#     transcript_includes  substrings the STT transcript must contain (case-insens)
-#     reply_regex          must match the RE-TRANSCRIBED reply audio (case-insens);
-#                          keep loose — it survives a whisper round-trip
-#     min_audio_s / max_audio_s   spoken-reply length bounds (brevity checks)
+#     reply_regex          must match the reply (case-insensitive)
+#     reply_not_regex      must NOT match the reply
+#     max_reply_chars      reply length ceiling (the brevity check)
 #     max_total_ms         wall-clock bound for the whole turn (default 30000)
-# Phase 3 will add exact `tools:` / `route:` assertions via X-Tools/X-Route
-# headers; `judge:` is scored by Haiku from phase 2 on.
+#
+# CHANGED 2026-09-02, when the Pi and the voice pipeline retired. Cases used to
+# be spoken: `say` was synthesized with piper, POSTed as WAV, and the reply was
+# re-transcribed by Whisper before these checks ran. Three things followed:
+#   - `transcript_includes` is gone. It asserted that STT heard the question,
+#     and the question is now sent as text.
+#   - `min_audio_s` is gone. It caught a reply that produced almost no audio;
+#     an empty reply now fails outright, and a good typed answer is legitimately
+#     terse ("It's 4:28 PM." is 13 characters and correct).
+#   - `max_audio_s` became `max_reply_chars`, and was RE-CALIBRATED rather than
+#     converted. A straight ~15-chars-per-spoken-second conversion kept the
+#     spoken budget, and typed replies are longer by design: the prompt no
+#     longer asks for one or two spoken sentences, and simple formatting is
+#     allowed. Three cases failed on that alone on the first text run. These
+#     ceilings now mean "did not write an essay when a sentence would do",
+#     which is what the check was always for.
+#   - several regexes are looser than they need to be, because they had to
+#     survive a speech round-trip — hence "teen" for "team" and "bm" for "pm"
+#     below. They are being tightened case by case as each is next touched,
+#     rather than in one sweep, so a real regression is never mistaken for a
+#     strictness change.
+# Removed with the hardware: `pi-status` (asked the Pi's :8090 for temperature
+# and load), `lexicon-hailo` (asked whether the Hailo accelerator was busy) and
+# `robust-silence` (posted one second of silence to check the no-speech path).
 
 - id: time-basic
   say: "What time is it right now"
   expect:
-    transcript_includes: [time]
     reply_regex: '\d{1,2}|o.?clock|morning|afternoon|evening'
-    min_audio_s: 1.0
-    max_audio_s: 15
+    max_reply_chars: 200
   judge: "Does the reply state the current time plausibly and concisely?"
 
 - id: date-today
   say: "What is the date today"
   expect:
-    transcript_includes: [date]
     reply_regex: 'january|february|march|april|may|june|july|august|september|october|november|december'
-    min_audio_s: 1.0
-    max_audio_s: 15
+    max_reply_chars: 200
   judge: "Does the reply state today's date?"
 
 - id: greeting-brief
   say: "Hello there, how are you doing today"
   expect:
-    transcript_includes: [hello]
-    min_audio_s: 0.5
-    max_audio_s: 15
+    max_reply_chars: 300
   judge: "Is the reply a short, natural greeting with no invented facts?"
 
 - id: capital-fact
   say: "What is the capital of France"
   expect:
-    transcript_includes: [capital, france]
     reply_regex: 'paris'
-    max_audio_s: 15
+    max_reply_chars: 200
   judge: "Does the reply correctly say Paris, concisely?"
 
 - id: math-simple
   say: "What is twelve plus thirteen"
   expect:
     reply_regex: '25|twenty.?five'
-    max_audio_s: 15
+    max_reply_chars: 200
   judge: "Does the reply correctly answer 25?"
 
 - id: self-name
   say: "What is your name"
   expect:
-    transcript_includes: [name]
     reply_regex: 'jarvis'
-    max_audio_s: 15
+    max_reply_chars: 200
   judge: "Does the assistant identify itself as Jarvis?"
 
 - id: escalation-math
@@ -74,14 +85,13 @@
     leaves at four PM going eighty miles per hour. At what time does the second
     train catch up to the first train
   expect:
-    transcript_includes: [train]
-    # whisper mangles a spoken "7:00 PM" wildly across runs: '7 0 0 p.m.',
-    # '7-0-0-BM', 'seven'. Allow digits/colons/dots/hyphens between the 7 and the
-    # meridiem, and accept the 'bm' mis-hearing of 'pm'. The judge confirms 7pm;
-    # this just keeps the deterministic check from flaking on STT noise.
+    # Whisper used to mangle a spoken "7:00 PM" wildly across runs ('7 0 0
+    # p.m.', '7-0-0-BM', 'seven'), so this allows digits/colons/dots/hyphens
+    # between the 7 and the meridiem and accepts 'bm' for 'pm'. Turns are text
+    # now and none of that can happen; left until next revision (see the header).
     reply_regex: 'seven|7[\s:0.\-]*(p\.?m\.?|pm|bm|o.?clock)'
     max_total_ms: 60000
-    max_audio_s: 60
+    max_reply_chars: 900
   judge: >-
     Correct answer is 7pm. Does the reply state it? (Working shown is fine
     but should be brief.)
@@ -94,61 +104,34 @@
 - id: escalation-silent
   say: "Prove that the square root of two is irrational"
   expect:
-    transcript_includes: [square root]
     reply_not_regex: "claude|hand(ing)? (this |it )?off|ask (someone|somebody|them|him|her)|i can'?t answer|beyond (me|my)"
     max_total_ms: 60000
-    max_audio_s: 90
+    max_reply_chars: 2500
   judge: >-
     Does the reply itself present a mathematical argument that the square root
     of two is irrational (any standard proof sketch counts), rather than
     deferring, refusing, or telling the user to ask something or someone else?
 
-- id: robust-silence
-  say: SILENCE
-  expect:
-    reply_regex: "didn't catch|did not catch|sorry"
-    min_audio_s: 0.5
-    max_audio_s: 10
-  judge: "Does the assistant gracefully say it didn't hear anything?"
+# `robust-silence` posted 1s of silence and expected "I didn't catch that".
+# There is no microphone to be silent into any more (2026-09-02).
 
 - id: brevity-open-ended
   say: "Tell me something interesting about the moon"
   expect:
-    transcript_includes: [moon]
     reply_regex: 'moon|lunar'
-    max_audio_s: 25
-  judge: "Is the reply one or two natural spoken sentences about the moon?"
+    max_reply_chars: 400
+  judge: "Is the reply one or two natural sentences about the moon?"
 
-- id: lexicon-hailo
-  say: "Is the Hailo accelerator busy right now"
-  expect:
-    # 'Hailo' is a homophone of 'Halo' — whisper may spell either even with
-    # biasing (measured 2026-07-04); the router must understand regardless
-    transcript_includes: [accelerator]
-    max_audio_s: 20
-  judge: >-
-    Does the reply address the Hailo accelerator's status reasonably (a tool
-    answer or honest uncertainty — not a mishearing of 'Hailo')?
+# `lexicon-hailo` asked whether the Hailo accelerator was busy. It covered
+# Whisper's contextual biasing over a word it reliably misheard as "Halo".
+# Both the accelerator and the biasing retired with the Pi (2026-09-02).
 
-# REMOVED 2026-08-29: `lexicon-names` ("say hello to Kaia and Ellis"). It
-# alternated 0/1/0/1/0 from 2026-08-17 -- Whisper spelled them "Kaya" and
-# "Alice" about half the time -- so it gave a different answer run to run and
-# told you nothing either way. A case that flips on identical input is worse
-# than no case: it teaches you to ignore a red nightly. Deleted rather than
-# loosened, which would have hidden the flake instead of removing it.
-# `lexicon-hailo` still covers the biasing behaviour that does matter.
-
-# #002: WES has NO deferred actions, so any promise to act later is a promise it
-# cannot keep. A turn must end with a real answer (or a real escalation) — never
-# "I'll look into it and get back to you". The server-side unkept-promise guard
-# re-runs such a turn at the deep tier; these cases are its regression net.
 - id: promise-not-deferred
   say: "Explain the quadratic formula to a toddler"
   expect:
-    transcript_includes: [quadratic]
     reply_not_regex: "get back to (you|ya)|let you know|look into (it|that|this)|i'?ll (find out|research|investigate|dig into)|give me a (moment|second|minute|sec)"
     max_total_ms: 60000
-    max_audio_s: 60
+    max_reply_chars: 900
   judge: >-
     Does the reply actually attempt a toddler-level explanation of the quadratic
     formula right now, rather than promising to look into it, find out, or get
@@ -161,10 +144,9 @@
     - "What is the Riemann hypothesis"
     - "Can you look into it and tell me why it matters"
   expect:
-    transcript_includes: [look into]
     reply_not_regex: "get back to (you|ya)|let you know|i'?ll (find out|research|investigate|dig into)|give me a (moment|second|minute|sec)"
     max_total_ms: 60000
-    max_audio_s: 90
+    max_reply_chars: 2500
   judge: >-
     The user asked the assistant to look into why the Riemann hypothesis
     matters. Does the reply explain why it matters NOW, rather than promising to
@@ -175,45 +157,26 @@
     - "Please remember that my favorite color is purple"
     - "What is my favorite color"
   expect:
-    # 'favo'/'colo': the British piper voice makes whisper spell these
-    # favourite/colour — substrings must survive both spellings
-    transcript_includes: [favo, colo]
     reply_regex: 'purple'
-    max_audio_s: 15
+    max_reply_chars: 200
   judge: >-
     Earlier in this conversation the user said their favorite color is purple.
     Does the reply correctly recall purple?
 
-- id: pi-status
-  say: "How is the Raspberry Pi doing right now"
-  requires_pi: true
-  expect:
-    reply_regex: 'temperature|degrees|celsius|memory|load|fine|good|healthy'
-    max_audio_s: 25
-  judge: >-
-    Does the reply report plausible live Pi status (temperature/memory/load)
-    rather than guessing or refusing?
+# `pi-status` asked how the Raspberry Pi was doing, via the get_system_status
+# tool. Removed 2026-09-02 with the host it read.
 
-# Fantasy read (#029 P0): the reply must come from the fantasy_my_team tool, not
-# invented players. Either a real roster or a graceful "needs connecting /
-# couldn't reach Yahoo" is correct; making up named players/stats is the failure
-# this guards.
-#
-# CHANGED 2026-07-29 (#033): this case used to say "basketball". Yahoo rolled the
-# NBA season over and league nba.l.114020 stopped resolving, so the case began
-# asserting against a league that no longer exists — a TRUE failure, not a flake.
-# Repointed at FOOTBALL, where the owner has a real drafted roster. That also puts
-# the NFL read path under nightly cover, which it otherwise lacked. Point this
-# back at basketball once an NBA team is registered for the new season.
 - id: fantasy-roster
   say: "What's on my fantasy football team right now"
   expect:
-    # Generous on purpose. `reply` is the spoken reply transcribed BACK by
-    # Whisper, so common words get mangled — an observed run said "Your TEEN
-    # currently features Jalen hurt … Gemma Chase … Breeze Hole", i.e. team→teen,
-    # Ja'Marr→Gemma, Breece Hall→Breeze Hole. The judge scored it 2/2 correct.
-    # So the deterministic check only proves the reply is ABOUT a fantasy roster;
-    # the judge is the real grader here (see #011 on STT eval flakes).
+    # Generous because the reply USED to be re-transcribed by Whisper, which
+    # mangled common words — one run read "Your TEEN currently features Jalen
+    # hurt … Gemma Chase … Breeze Hole" (team→teen, Ja'Marr→Gemma, Breece
+    # Hall→Breeze Hole) and the judge still scored it 2/2. Turns are text now,
+    # so 'teen' could go; it is left until this case is next revised, so a
+    # regression here cannot be confused with the regex getting stricter. Even
+    # tightened, this check only proves the reply is ABOUT a fantasy roster —
+    # the judge is the real grader.
     reply_regex: 'roster|team|teen|fantasy|yahoo|sign|connect|reach|player|quarterback|receiv|back ?field|lineup'
     # Explicit budget (the 30s default is too tight, as for fantasy-value which
     # sets 50s): this case pays for a real headless-Chrome scrape AND then has the
@@ -221,7 +184,7 @@
     # the roster it reads aloud; the tool itself is only 4-5s. This case guards
     # GROUNDING — latency regressions belong to perf_check.py's tight threshold.
     max_total_ms: 50000
-    max_audio_s: 25
+    max_reply_chars: 800
   judge: >-
     The assistant HAS a real tool (fantasy_my_team) that reads the user's actual
     Yahoo fantasy roster live, so a reply listing specific players/scoring IS
@@ -243,7 +206,8 @@
 # grading the model as wrong for honestly reporting a write it had just made,
 # and was itself causing a real Yahoo write at 03:36 every eval night.
 #
-# The harness now sends `X-WES-No-Writes: 1` (see tests/stream_client.py), so
+# The harness now sends `X-WES-No-Writes: 1` (see `ask_server` in
+# tests/eval_turns.py), so
 # this case exercises the executor's DRY-RUN path. What it guards is unchanged
 # in spirit and now actually true: the reply must reflect what the tool
 # reported, and must not overclaim.
@@ -252,7 +216,7 @@
   expect:
     reply_regex: 'propose|log|start|bench|lineup|already|optimal|couldn.?t|connect|configured'
     max_total_ms: 60000
-    max_audio_s: 40
+    max_reply_chars: 700
   judge: >-
     The user asked to check for lineup changes. The assistant has a
     fantasy_propose_lineup_change tool that computes the optimal lineup and diffs
@@ -270,7 +234,7 @@
   expect:
     reply_regex: 'start|lineup|QB|WR|RB|TE|bench|roster|couldn.?t|connect'
     max_total_ms: 60000
-    max_audio_s: 40
+    max_reply_chars: 800
   judge: >-
     The user asked who to start. The assistant has a fantasy_optimize_lineup tool
     that computes the optimal lineup from the real roster, real player stats and
@@ -292,10 +256,9 @@
   say: "What is the weather in London right now"
   web_search: true
   expect:
-    transcript_includes: [weather, london]
     reply_regex: 'degree|°|sunny|cloud|rain|clear|temperature|weather|forecast|warm|cool|cold|mild|humid|wind|couldn.?t|reach'
     max_total_ms: 45000
-    max_audio_s: 30
+    max_reply_chars: 450
   judge: >-
     The user asked for London's CURRENT weather, and the assistant has a live
     web-search tool. A good reply gives a plausible current weather report (a
@@ -311,7 +274,7 @@
   expect:
     reply_regex: 'point|rebound|assist|average|stat|per game|season|worth|start|couldn.?t|find'
     max_total_ms: 50000
-    max_audio_s: 30
+    max_reply_chars: 450
   judge: >-
     The user asked how good an NBA player is for fantasy. The assistant has a
     fantasy_player_value tool returning the player's real stat line, so a good
@@ -327,7 +290,7 @@
   expect:
     reply_regex: 'play|game|next|vs|against|couldn.?t|schedule|recognize'
     max_total_ms: 50000
-    max_audio_s: 25
+    max_reply_chars: 400
   judge: >-
     The user asked when the Brooklyn Nets next play. The assistant has an
     nba_schedule tool that reads the real season schedule, so a good reply
@@ -346,7 +309,7 @@
     # paraphrased run-to-run, so the JUDGE carries correctness, not the regex.
     reply_regex: 'point|rebound|lead|net|game|stat|play'
     max_total_ms: 50000
-    max_audio_s: 25
+    max_reply_chars: 400
   judge: >-
     The user asked who's leading in points/rebounds in the Nets' current game.
     The assistant has an nba_top_performers tool that reads the real box

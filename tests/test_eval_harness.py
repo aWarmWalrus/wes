@@ -17,8 +17,9 @@ class TestCheckCase:
     """Deterministic per-case checks — especially the negative-match assertion
     that gates the invisible-escalation rule (escalation-silent)."""
 
-    def _res(self, transcript="q"):
-        return {"transcript": transcript, "audio_s": 2.0, "total_ms": 1000}
+    def _res(self, transcript="q", reply_chars=40):
+        return {"transcript": transcript, "reply_chars": reply_chars,
+                "total_ms": 1000}
 
     def test_reply_not_regex_fails_on_match(self):
         case = {"expect": {"reply_not_regex": "claude|hand(ing)? off"}}
@@ -96,7 +97,16 @@ class TestHistorySchema:
         monkeypatch.setattr(ev, "HISTORY", path)
         return path
 
+    @staticmethod
+    def _row(**vals):
+        """A history row as a list positioned by ev.FIELDS, so adding or
+        removing a column never silently shifts the data under it."""
+        return [str(vals.get(k, "")) for k in ev.FIELDS]
+
     def test_old_header_migrates_and_appends(self, tmp_path, monkeypatch):
+        # The real pre-2026-09-02 header, audio columns and all. Migrating it is
+        # not hypothetical: this is what tests/eval_history.csv on disk looks
+        # like, and the next real run has to rewrite it in place.
         old = ["ts", "case", "passed", "fails", "transcript", "reply", "spec",
                "stt_ms", "ttfa_ms", "total_ms", "audio_s"]
         path = self._with_history(
@@ -116,14 +126,13 @@ class TestHistorySchema:
     def test_prior_judge_averages_groups_by_run(self, tmp_path, monkeypatch):
         self._with_history(
             tmp_path, monkeypatch, ev.FIELDS,
-            [["t1", "a", "1", "", "", "", "0", "1", "1", "1", "1",
-              "haiku", "2", "2", "2", "0", ""],
-             ["t1", "b", "1", "", "", "", "0", "1", "1", "1", "1",
-              "haiku", "1", "2", "2", "0", ""],
-             ["t2", "a", "1", "", "", "", "0", "1", "1", "1", "1",
-              "", "", "", "", "", ""],   # unjudged run: excluded
-             ["t3", "a", "1", "", "", "", "0", "1", "1", "1", "1",
-              "haiku", "1", "1", "1", "0", ""]])
+            [self._row(ts="t1", case="a", passed=1, judge="haiku",
+                       judge_correct=2),
+             self._row(ts="t1", case="b", passed=1, judge="haiku",
+                       judge_correct=1),
+             self._row(ts="t2", case="a", passed=1),  # unjudged run: excluded
+             self._row(ts="t3", case="a", passed=1, judge="haiku",
+                       judge_correct=1)])
         assert ev.prior_judge_averages("haiku") == [1.5, 1.0]
 
     def test_prior_judge_averages_separates_backends(self, tmp_path,
@@ -133,8 +142,8 @@ class TestHistorySchema:
         old = [f for f in ev.FIELDS if f != "judge"]
         self._with_history(
             tmp_path, monkeypatch, old,
-            [["t0", "a", "1", "", "", "", "0", "1", "1", "1", "1",
-              "2", "2", "2", "0", ""]])
+            [[str({"ts": "t0", "case": "a", "passed": 1,
+                   "judge_correct": 2}.get(k, "")) for k in old]])
         ev.append_history([  # migrates, then adds a local-judged run
             {k: "" for k in ev.FIELDS} |
             {"ts": "t1", "case": "a", "passed": "1",
@@ -183,7 +192,7 @@ class TestHistorySchema:
     def test_previous_results_reads_last_run(self, tmp_path, monkeypatch):
         self._with_history(
             tmp_path, monkeypatch, ev.FIELDS,
-            [["t1", "a", "1"] + [""] * (len(ev.FIELDS) - 3),
-             ["t2", "a", "0"] + [""] * (len(ev.FIELDS) - 3),
-             ["t2", "b", "1"] + [""] * (len(ev.FIELDS) - 3)])
+            [self._row(ts="t1", case="a", passed=1),
+             self._row(ts="t2", case="a", passed=0),
+             self._row(ts="t2", case="b", passed=1)])
         assert ev.previous_results() == {"a": False, "b": True}

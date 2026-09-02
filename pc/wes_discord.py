@@ -2,9 +2,9 @@
 
 A thin bridge, not a pipeline: forwards the owner's Discord messages to the
 local server's text endpoint (`POST /respond_text`, channel "discord") and
-posts the reply back. No audio path is involved, so the house audio rule is
-never in play, and the "discord" conversation channel keeps remote chats from
-clobbering the in-house voice context.
+posts the reply back. Since the Raspberry Pi tier retired (2026-09-02) this is
+the ONLY interactive frontend WES has — it used to be the away-from-home
+alternative to talking to the speaker in the house.
 
 Auth is a hard allowlist of one Discord user ID — everyone else is ignored
 silently. This process is an internet-facing door into the tool loop, so it
@@ -12,15 +12,15 @@ stays read/answer-only by design (the server exposes no action tools yet;
 revisit the rails here before it does).
 
 Run (PC, same venv as the server):
-    C:\\Users\\awarm\\wes-pc\\.venv\\Scripts\\python.exe Z:\\wes\\pc\\wes_discord.py
+    C:\\Users\\awarm\\wes-pc\\.venv\\Scripts\\python.exe C:\\Users\\awarm\\wes\\pc\\wes_discord.py
 
 Env:
     WES_DISCORD_TOKEN     bot token (Discord developer portal; user env, like
                           the Anthropic key — never the repo)
     WES_DISCORD_OWNER_ID  the one Discord user ID allowed to talk to the bot
     WES_SERVER_URL        default http://127.0.0.1:8080
-    WES_PROM_URL          Prometheus for the alert watcher (default the Pi,
-                          http://10.0.0.79:9090); WES_ALERT_POLL_S interval
+    WES_PROM_URL          Prometheus for the alert watcher (default
+                          http://127.0.0.1:9090); WES_ALERT_POLL_S interval
     WES_FANTASY_POLL_S    fantasy-write watcher poll interval (default 60s;
                           see fantasy_watch — DMs on a real Yahoo lineup write)
 """
@@ -36,18 +36,26 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wes_hosts  # noqa: E402 — host registry (hosts.yaml); repo root on path
 import wes_execute  # noqa: E402 — fantasy ledger path + kill switch (#029 P3)
 
-# The server runs on the same PC (loopback); Prometheus is on the Pi.
+# Everything runs on this PC now, so both of these are loopback. Prometheus was
+# on the Pi until 2026-09-02; it moved here in Docker with the rest of the
+# monitoring stack (observability/docker-compose.yml).
 SERVER_URL = os.environ.get(
     "WES_SERVER_URL",
     f"http://127.0.0.1:{wes_hosts.port('pc', 'server', default=8080)}")
 OWNER_ID = int(os.environ.get("WES_DISCORD_OWNER_ID", "0"))
 CONV_CHANNEL = "discord"
 
-# Alerting: Prometheus (on the Pi) evaluates the rules in
+# Alerting: Prometheus evaluates the rules in
 # observability/prometheus/wes-alerts.yml; this bot only polls the firing set
 # and DMs the owner on changes — Prometheus owns thresholds and durations.
+#
+# Loopback, NOT the registry's `pc` address: hosts.yaml gives the PC an mDNS
+# name (DESKTOP-R2PFF9T.local) so that off-box scrapers survive its flapping
+# DHCP lease, and resolving that from the box itself is a needless dependency on
+# mDNS working. The port still comes from the registry.
 PROM_URL = os.environ.get(
-    "WES_PROM_URL", wes_hosts.url("pi", "prometheus", default="http://10.0.0.79:9090"))
+    "WES_PROM_URL",
+    f"http://127.0.0.1:{wes_hosts.port('pc', 'prometheus', default=9090)}")
 ALERT_POLL_S = float(os.environ.get("WES_ALERT_POLL_S", "60"))
 # DM once if Prometheus itself is unreachable this many polls in a row.
 PROM_FAIL_POLLS = 5
@@ -100,7 +108,7 @@ def ask_server(text):
 
 
 def reset_server():
-    """Clear the Discord conversation channel only — never the voice one."""
+    """Clear the Discord conversation channel only — never another channel's."""
     return _post_json("/reset_conversation", {"channel": CONV_CHANNEL})["cleared_turns"]
 
 
@@ -109,30 +117,27 @@ def reset_server():
 # Keep in sync when rules are added/renamed.
 ALERT_CONTEXT = {
     "TargetDown": (
-        "Prometheus (on the Pi) has been unable to scrape this metrics target "
-        "for 5 minutes. It usually means the exporter process died, the host "
-        "is off/asleep, or a firewall/network path broke. For a PC target "
-        "(windows_exporter :9182 or nvidia_gpu_exporter :9835) the likely cause "
-        "is the 'WES Exporters' scheduled task stopping; for the Pi's own "
-        "node_exporter it's more serious. While a target is down, the metrics "
-        "and dashboards it feeds are blank."),
+        "Prometheus has been unable to scrape this metrics target for 5 "
+        "minutes. It usually means the exporter process died or a firewall or "
+        "network path broke. For windows_exporter (:9182) or "
+        "nvidia_gpu_exporter (:9835) the likely cause is the 'WES Exporters' "
+        "scheduled task stopping; for the WES server's own metrics it means the "
+        "server is down, which matters much more. While a target is down, the "
+        "metrics and dashboards it feeds are blank."),
     "GPUHot": (
         "The PC's RTX 5060 Ti GPU has been above 85 degrees Celsius for 5 "
         "minutes. The GPU runs the local Gemma models; sustained heat can throttle "
         "inference and shortens hardware life. Worth checking case airflow or "
         "whether something is pinning the GPU."),
-    "PiHot": (
-        "The Raspberry Pi 5's CPU has been above 80 degrees Celsius for 5 "
-        "minutes. The Pi runs the voice client, Prometheus and Grafana; at ~85C "
-        "it throttles. Check the Pi's fan/heatsink and ambient temperature."),
-    "PiDiskLow": (
-        "The Pi's SD card root filesystem has been under 10 percent free for 30 "
-        "minutes. If it fills up, logging, Prometheus, and the voice client can "
-        "fail. Prometheus data and journald logs are the usual culprits."),
+    # PiHot and PiDiskLow lived here until 2026-09-02. The Pi was repurposed;
+    # its rules went with it (observability/prometheus/wes-alerts.yml).
     "PCDiskLow": (
         "The PC's C: drive has been under 10 percent free for 30 minutes. The "
-        "WES server, models, and logs live there; a full disk can crash the "
-        "server."),
+        "WES server and its logs live there; a full disk can crash the server."),
+    "EDiskLow": (
+        "The PC's E: drive has been under 10 percent free for 30 minutes. The "
+        "Ollama model store and the conda environment live there, so a full E: "
+        "stops the local model from loading at all."),
 }
 
 
@@ -242,9 +247,11 @@ async def alert_watch(client):
             if fails == PROM_FAIL_POLLS and not prom_down:
                 prom_down = True
                 try:
-                    await dm("🚨 WES alert: can't reach Prometheus on the Pi "
+                    await dm("🚨 WES alert: can't reach Prometheus "
                              f"(down {PROM_FAIL_POLLS} polls) — no monitoring "
-                             "until it's back.")
+                             "until it's back. It runs in Docker on this PC; "
+                             "`docker compose ps` in observability/ will say "
+                             "whether the container is up.")
                 except Exception as e2:  # noqa: BLE001
                     print(f"[alerts] DM failed: {e2!a}", flush=True)
         await asyncio.sleep(ALERT_POLL_S)

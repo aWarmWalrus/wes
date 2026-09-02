@@ -1,8 +1,12 @@
 # WES metrics exporters — started at logon by the "WES Exporters" scheduled task.
 # Runs windows_exporter (:9182, host CPU/RAM/disk/net) and nvidia_gpu_exporter
-# (:9835, GPU util/VRAM/temp via nvidia-smi). Scraped by Prometheus on the Pi
-# (10.0.0.79:9090); graphs in Grafana at http://10.0.0.79:3000.
-# See docs/observability.md in the repo.
+# (:9835, GPU util/VRAM/temp via nvidia-smi). Scraped every 15s by the
+# Prometheus container on this machine (127.0.0.1:9090); graphs in Grafana at
+# http://localhost:3001. Both used to run on the Pi, which was repurposed on
+# 2026-09-02 — see observability/docker-compose.yml and docs/observability.md.
+#
+# These still bind 0.0.0.0, not loopback: Prometheus runs inside WSL and reaches
+# them across the NAT gateway, which is not a loopback path.
 
 $base = "C:\Users\awarm\wes-pc"
 $logdir = "$base\logs"

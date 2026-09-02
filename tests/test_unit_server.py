@@ -1,11 +1,18 @@
 """Fast unit tests for pure server logic — no network, no API, no model loads.
 
-Run: cd Z:\\wes\\tests && python -m pytest        (from the wes-pc venv)
+Run: python -m pytest tests/        (from the wes-pc venv)
 These are the regression tripwires for the server's non-LLM logic.
+
+Nine classes were removed on 2026-09-02 when the Raspberry Pi tier retired and
+the voice/vision half of the server went with it: TestVlmPrompt,
+TestDescribeSceneCache, TestFaceSummary and TestSceneContext (camera + face
+recognition), TestNextSentence and TestTtsClean (TTS sentence splitting and
+markdown stripping), TestSttBias (Whisper contextual biasing), and TestNorm +
+TestSpeculationLookup (the speculative-reply cache). They were deleted rather
+than skipped — the code they covered no longer exists. See archive/pi/README.md.
 """
 import json
 import re
-import threading
 import time
 
 import pytest
@@ -13,102 +20,18 @@ import pytest
 import wes_server as ws
 
 
-class TestVlmPrompt:
-    def test_no_identities_returns_base(self):
-        assert ws._vlm_prompt(None) == ws.VLM_PROMPT
-        assert ws._vlm_prompt([]) == ws.VLM_PROMPT
-
-    def test_unknown_only_returns_base(self):
-        assert ws._vlm_prompt([{"name": "unknown", "position": "center"}]) == ws.VLM_PROMPT
-
-    def test_known_person_woven_in(self):
-        p = ws._vlm_prompt([{"name": "charlie", "clothing": "orange", "position": "center"}])
-        assert "charlie" in p and "orange" in p and "center" in p
-        assert p != ws.VLM_PROMPT
-
-    def test_dict_coerced_to_list(self):
-        p = ws._vlm_prompt({"name": "cindy", "clothing": "blue", "position": "left"})
-        assert "cindy" in p and "blue" in p
-
-    def test_multiple_people_get_disambiguation_hint(self):
-        p = ws._vlm_prompt([
-            {"name": "charlie", "clothing": "orange", "position": "center"},
-            {"name": "cindy", "clothing": "blue", "position": "left"},
-        ])
-        assert "charlie" in p and "cindy" in p
-        assert "clothing" in p.lower() and "apart" in p.lower()
-
-    def test_garbage_input_is_safe(self):
-        assert ws._vlm_prompt("not a list") == ws.VLM_PROMPT
-        assert ws._vlm_prompt([1, 2, 3]) == ws.VLM_PROMPT  # non-dict items filtered out
-
-
-class TestNextSentence:
-    def test_splits_on_terminator_space(self):
-        s, rest = ws.next_sentence("Hello there. How are")
-        assert s == "Hello there." and rest == "How are"
-
-    def test_no_complete_sentence(self):
-        s, rest = ws.next_sentence("Hello there")
-        assert s is None and rest == "Hello there"
-
-    def test_question_and_exclamation(self):
-        assert ws.next_sentence("Really? yes")[0] == "Really?"
-        assert ws.next_sentence("Wow! ok")[0] == "Wow!"
-
-    def test_decimal_is_not_split(self):
-        # "3.5" has no space after the '.', so the split must land after "degrees."
-        s, _ = ws.next_sentence("It is 3.5 degrees. Warm")
-        assert s == "It is 3.5 degrees."
-
-
-class TestNorm:
-    def test_lowercases_and_strips_punct(self):
-        assert ws._norm("What's the TIME?!") == "whats the time"
-
-    def test_all_punct_is_empty(self):
-        assert ws._norm("...") == ""
-
-
-class TestSpeculationLookup:
-    def setup_method(self):
-        ws._spec_cache.clear()
-
-    def _put(self, transcript, reply):
-        ev = threading.Event()
-        ev.set()
-        ws._spec_cache[ws._norm(transcript)] = {
-            "reply": reply, "event": ev, "ts": time.time(),
-        }
-
-    def test_exact_match(self):
-        self._put("what time is it", "It's noon.")
-        assert ws.lookup_speculation("What time is it?") == "It's noon."
-
-    def test_prefix_match_above_ratio(self):
-        self._put("what is the weather today", "Sunny.")
-        assert ws.lookup_speculation("what is the weather today ok") == "Sunny."
-
-    def test_no_match_below_ratio(self):
-        self._put("what", "X")
-        assert ws.lookup_speculation("what is the weather like outside today") is None
-
-    def test_empty_transcript(self):
-        assert ws.lookup_speculation("") is None
-
-
 class TestRateLimitBudget:
+    """The Claude call-rate counter. It used to gate speculative calls as well;
+    speculation went with the microphone, but the counter still runs."""
+
     def setup_method(self):
         with ws._rate_lock:
             ws._rate_calls.clear()
 
-    def test_budget_ok_when_idle(self):
-        assert ws._spec_budget_ok() is True
-
-    def test_budget_exhausted_at_reserve(self):
-        for _ in range(max(0, ws._RATE_LIMIT_RPM - ws._SPEC_RESERVE)):
+    def test_counts_recent_calls(self):
+        for _ in range(3):
             ws._record_llm_call()
-        assert ws._spec_budget_ok() is False
+        assert ws._llm_calls_last_min() == 3
 
     def test_calls_older_than_a_minute_expire(self):
         with ws._rate_lock:
@@ -136,7 +59,10 @@ class TestRunTool:
 
     def test_lookup_hosts_returns_registry(self):
         out = ws.run_tool("lookup_hosts", {})
-        assert "DESKTOP-R2PFF9T.local" in out and "10.0.0.79" in out  # from hosts.yaml
+        # From hosts.yaml. The Pi's 10.0.0.79 was asserted here too until that
+        # host was retired (2026-09-02); a port is checked instead so the
+        # assertion still fails if the summary stops carrying real detail.
+        assert "DESKTOP-R2PFF9T.local" in out and "server 8080" in out
 
     def test_lookup_hosts_is_registered(self):
         names = [t["name"] for t in ws.TOOLS]
@@ -231,34 +157,6 @@ class TestRunTool:
         assert ws.run_tool("nba_top_performers", {}) == "leaders for None"
 
 
-class TestDescribeSceneCache:
-    def _prime(self, desc, faces, age=0.0):
-        now = time.time() - age
-        with ws._scene_lock:
-            ws._scene_cache.update(desc=desc, ts=now, faces=faces, faces_ts=now)
-
-    def test_fresh_cache_hit_includes_people(self):
-        self._prime("A test scene.", [
-            {"name": "charlie", "position": "center", "clothing": "orange"}])
-        out = ws.describe_scene()
-        assert out["description"] == "A test scene."
-        assert out["recognition_ran"] is True
-        assert out["people"][0]["name"] == "charlie"
-
-    def test_stale_cache_is_not_returned(self, monkeypatch):
-        self._prime("Old stale scene.", [], age=ws.SCENE_TTL + 5)
-
-        def boom(*a, **k):
-            raise OSError("network disabled in test")
-
-        monkeypatch.setattr(ws.urllib.request, "urlopen", boom)
-        try:
-            result = ws.describe_scene()  # stale -> tries to capture (which we block)
-        except OSError:
-            result = None
-        assert result is None or result.get("description") != "Old stale scene."
-
-
 class TestConversationMemory:
     """Sliding-window conversation memory (LiveKit ChatContext pattern)."""
 
@@ -294,14 +192,14 @@ class TestConversationMemory:
 
     def test_idle_ttl_clears_context(self):
         ws.record_turn("hi", "hello")
-        ws._conv_last["voice"] = time.time() - ws.CONV_TTL - 1
+        ws._conv_last["text"] = time.time() - ws.CONV_TTL - 1
         assert ws.conversation_context() == []
 
     def test_channels_are_isolated(self):
-        ws.record_turn("voice question", "voice answer")
+        ws.record_turn("default question", "default answer")
         ws.record_turn("remote question", "remote answer", channel="discord")
         assert [m["content"] for m in ws.conversation_context()] == \
-            ["voice question", "voice answer"]
+            ["default question", "default answer"]
         assert [m["content"] for m in ws.conversation_context("discord")] == \
             ["remote question", "remote answer"]
 
@@ -325,18 +223,9 @@ class TestConversationMemory:
         assert ws.reset_conversation() == 2
         assert ws.conversation_context() == []
 
-    def test_interrupted_reply_is_tagged(self):
-        ws.record_spoken_turn("tell me a story", "Once upon a time", False)
-        ctx = ws.conversation_context()
-        assert ctx[1]["content"] == "Once upon a time" + ws.INTERRUPT_TAG
-
-    def test_completed_reply_is_not_tagged(self):
-        ws.record_spoken_turn("hi", "Hello there.", True)
-        assert ws.conversation_context()[1]["content"] == "Hello there."
-
-    def test_interrupted_before_any_audio_records_nothing(self):
-        ws.record_spoken_turn("tell me a story", "", False)
-        assert ws.conversation_context() == []
+    # Three barge-in tests lived here (record_spoken_turn tagging a reply the
+    # user cut off mid-playback). Nothing can be interrupted mid-delivery now
+    # that every channel is text — see archive/pi/README.md.
 
     def test_roles_always_alternate_user_first(self):
         # the Anthropic API rejects non-alternating roles; the window cap is
@@ -349,28 +238,31 @@ class TestConversationMemory:
 
     # --- Phase 0 (#023): per-channel depth + persistence -------------------
 
-    def test_discord_window_is_deeper_than_voice(self):
+    def test_discord_window_is_deeper_than_the_default(self):
+        """Discord gets an explicit deep, long-lived window; anything without a
+        policy falls back to the shallow default. That default was tuned for the
+        retired voice channel and is deliberately still small — a channel nobody
+        configured should get the cheap window, not Discord's 40-turn one."""
         dmax = ws._conv_policy("discord")[0]
-        vmax = ws._conv_policy("voice")[0]
-        assert dmax > vmax
-        # Discord keeps far more than the voice depth; voice is capped tight.
-        for i in range(vmax + 10):
+        default_max = ws._conv_policy("something_new")[0]
+        assert dmax > default_max
+        for i in range(default_max + 10):
             ws.record_turn(f"dq{i}", f"da{i}", channel="discord")
-            ws.record_turn(f"vq{i}", f"va{i}", channel="voice")
-        assert len(ws.conversation_context("discord")) == 2 * (vmax + 10)
-        assert len(ws.conversation_context("voice")) == 2 * vmax
+            ws.record_turn(f"oq{i}", f"oa{i}", channel="other")
+        assert len(ws.conversation_context("discord")) == 2 * (default_max + 10)
+        assert len(ws.conversation_context("other")) == 2 * default_max
 
-    def test_discord_ttl_outlives_voice_ttl(self):
-        # a gap that would expire voice must NOT expire discord
+    def test_discord_ttl_outlives_the_default_ttl(self):
+        # a gap that would expire the default channel must NOT expire discord
         ws.record_turn("q", "a", channel="discord")
         ws._conv_last["discord"] = time.time() - ws.CONV_TTL - 1
         assert ws.conversation_context("discord") != []
 
-    def test_no_bleed_discord_content_absent_from_voice(self):
+    def test_no_bleed_discord_content_absent_from_other_channels(self):
         ws.record_turn("secret discord thing", "ok", channel="discord")
-        joined = " ".join(m["content"] for m in ws.conversation_context("voice"))
+        joined = " ".join(m["content"] for m in ws.conversation_context("other"))
         assert "secret discord thing" not in joined
-        assert ws.conversation_context("voice") == []
+        assert ws.conversation_context("other") == []
 
     def test_window_survives_restart(self):
         ws.record_turn("my name is charlie", "Hi Charlie.", channel="discord")
@@ -385,15 +277,15 @@ class TestConversationMemory:
 
     def test_stale_window_not_reloaded(self, monkeypatch):
         import os
-        ws.record_turn("old", "reply", channel="voice")
-        path = ws._conv_file("voice")
-        # age the file past the voice TTL
+        ws.record_turn("old", "reply", channel="other")
+        path = ws._conv_file("other")
+        # age the file past the default TTL
         old = time.time() - ws.CONV_TTL - 10
         os.utime(path, (old, old))
         ws._convs.clear()
         ws._conv_last.clear()
         ws.load_conversations()
-        assert ws.conversation_context("voice") == []
+        assert ws.conversation_context("other") == []
 
     def test_reset_removes_persisted_file(self):
         import os
@@ -401,39 +293,6 @@ class TestConversationMemory:
         assert os.path.exists(ws._conv_file("discord"))
         ws.reset_conversation("discord")
         assert not os.path.exists(ws._conv_file("discord"))
-
-
-class TestSttBias:
-    """Contextual-biasing prompt for whisper (lexicon + conversation tail)."""
-
-    def setup_method(self):
-        ws.reset_conversation()
-
-    def teardown_method(self):
-        ws.reset_conversation()
-
-    def test_lexicon_names_present(self):
-        p = ws.stt_bias_prompt()
-        for word in ("Jarvis", "Hailo", "Hue", "ecobee", "Matcha",
-                     "Charlie", "Cindy", "Brooklyn", "NBA"):
-            assert word in p
-
-    def test_recent_conversation_is_appended(self):
-        ws.record_turn("tell me about the moon", "The moon has no atmosphere.")
-        p = ws.stt_bias_prompt()
-        assert "moon" in p
-        assert p.index("Jarvis") < p.index("moon")  # lexicon first
-
-    def test_prompt_bounded_even_with_long_turns(self):
-        # overlong prompts make whisper hallucinate; the conversation tail
-        # must be truncated, never the lexicon
-        ws.record_turn("x " * 500, "y " * 500)
-        p = ws.stt_bias_prompt()
-        assert len(p) <= len(ws.STT_LEXICON) + 301
-        # A word from the END of the lexicon: if truncation ever ate the
-        # lexicon instead of the conversation tail, this is what would go
-        # missing. Was "Ellis" until that name was dropped 2026-08-29.
-        assert "Nets" in p
 
 
 class TestOllamaBackend:
@@ -444,7 +303,7 @@ class TestOllamaBackend:
         out = ws._ollama_tools()
         assert len(out) == len(ws.TOOLS)
         names = [t["function"]["name"] for t in out]
-        assert "describe_scene" in names and "get_datetime" in names
+        assert "fantasy_optimize_lineup" in names and "get_datetime" in names
         for t in out:
             assert t["type"] == "function"
             assert "type" in t["function"]["parameters"]
@@ -612,39 +471,37 @@ class TestOllamaBackend:
         assert calls[1]["options"]["num_predict"] == ws.EFFORT_BUDGET["standard"][1]
 
     def test_local_failure_falls_back_to_claude(self, monkeypatch):
+        """Ollama being down must not lose the turn.
+
+        This used to assert on `stream_reply`, the voice path's generator, which
+        also had to decide whether a MID-reply failure could be restarted on
+        another backend — it could not, because the earlier half had already
+        been spoken, so it apologised in place instead. Every turn is buffered
+        now (nothing reaches the user until it is complete), so `think` can
+        simply fall back whole and that special case is gone."""
         monkeypatch.setattr(ws, "LLM_BACKEND", "local")
 
-        def boom(transcript):
+        def boom(transcript, channel="text", use_tools=True):
             raise OSError("ollama down")
-            yield  # pragma: no cover — makes this a generator
 
-        monkeypatch.setattr(ws, "_stream_local", boom)
-        monkeypatch.setattr(ws, "_stream_claude", lambda t: iter(["claude reply"]))
-        assert "".join(ws.stream_reply("hi")) == "claude reply"
+        monkeypatch.setattr(ws, "_think_local", boom)
+        monkeypatch.setattr(ws, "_think_claude",
+                            lambda t, channel="text": "claude reply")
+        assert ws.think("hi") == "claude reply"
 
-    def test_midstream_failure_does_not_restart(self, monkeypatch):
+    def test_partial_local_reply_still_falls_back_whole(self, monkeypatch):
+        """A failure after some deltas were generated is still a clean fallback:
+        the caller joined them and delivered nothing, so there is no half-spoken
+        reply to preserve and Claude answers the whole question."""
         monkeypatch.setattr(ws, "LLM_BACKEND", "local")
 
-        def partial(transcript):
-            yield "First half"
+        def partial(transcript, channel="text", use_tools=True):
             raise OSError("connection dropped")
 
-        monkeypatch.setattr(ws, "_stream_local", partial)
-        monkeypatch.setattr(
-            ws, "_stream_claude",
-            lambda t: (_ for _ in ()).throw(AssertionError("must not fall back")))
-        out = "".join(ws.stream_reply("hi"))
-        assert out.startswith("First half") and "lost my train of thought" in out
-
-    def test_spec_budget_unlimited_when_local(self, monkeypatch):
-        monkeypatch.setattr(ws, "LLM_BACKEND", "local")
-        for _ in range(ws._RATE_LIMIT_RPM + 5):
-            ws._record_llm_call()
-        try:
-            assert ws._spec_budget_ok() is True
-        finally:
-            with ws._rate_lock:
-                ws._rate_calls.clear()
+        monkeypatch.setattr(ws, "_think_local", partial)
+        monkeypatch.setattr(ws, "_think_claude",
+                            lambda t, channel="text": "complete claude answer")
+        assert ws.think("hi") == "complete claude answer"
 
 
 class TestEscalation:
@@ -923,11 +780,13 @@ class TestUnkeptPromiseGuard:
         assert out == [ws.ESCALATE_ACK, "Claude answer."]
         assert len(calls) == 1  # handed off — no further local rounds
 
-    def test_escalation_ack_is_a_flushable_sentence(self):
-        # The ack must end terminator+space or the TTS splitter would hold it
-        # until Claude's first token, defeating its purpose.
-        sent, rest = ws.next_sentence(ws.ESCALATE_ACK)
-        assert sent is not None and rest == ""
+    def test_escalation_ack_is_a_complete_sentence(self):
+        # Asserted via next_sentence() until the TTS splitter retired with the
+        # voice tier: the ack had to end terminator+space or the splitter would
+        # hold it until the deep tier's first token, defeating its purpose. The
+        # shape is still what the constant documents, so it is still checked.
+        assert ws.ESCALATE_ACK.rstrip()[-1] in ".!?"
+        assert ws.ESCALATE_ACK.endswith(" ")
 
     def test_escalation_ack_disabled_by_empty_string(self, monkeypatch):
         fake, _ = TestOllamaBackend._fake_urlopen([
@@ -974,7 +833,7 @@ class TestUnkeptPromiseGuard:
         assert deep["options"]["num_predict"] > 512  # room for thinking
         # The deep tier must not see the escalate tool (no recursion).
         names = [t["function"]["name"] for t in deep.get("tools") or []]
-        assert "escalate_hard" not in names and "describe_scene" in names
+        assert "escalate_hard" not in names and "get_datetime" in names
         # Router call is unchanged: default model, no thinking.
         assert calls[0]["model"] == ws.LOCAL_LLM_MODEL
         assert calls[0]["think"] is False
@@ -1047,59 +906,25 @@ class TestUnkeptPromiseGuard:
         assert "tool" in roles
 
 
-class TestTtsClean:
-    """Markdown/symbol stripping so piper never reads 'asterisk asterisk'."""
-
-    def test_plain_text_untouched(self):
-        assert ws.tts_clean("It's 9:32 AM on July 4th.") == "It's 9:32 AM on July 4th."
-
-    def test_emphasis_stripped(self):
-        assert ws.tts_clean("the answer is **7pm**, not *6pm*") == \
-            "the answer is 7pm, not 6pm"
-
-    def test_link_keeps_text(self):
-        assert ws.tts_clean("see [the docs](https://x.y/z) for more") == \
-            "see the docs for more"
-
-    def test_lists_and_headings_stripped(self):
-        out = ws.tts_clean("## Steps\n- first thing\n2. second thing")
-        assert out == "Steps\nfirst thing\nsecond thing"
-
-    def test_code_fence_and_inline_code(self):
-        assert ws.tts_clean("run ```bash\nls -la\n``` or `pwd`") == \
-            "run \nls -la\n or pwd"
-
-    def test_symbols_translated(self):
-        assert ws.tts_clean("A → B ✓") == "A to B"
-
-    def test_jr_sr_spoken_out(self):
-        # piper reads "Jr." as "J R dot" -> expand to the spoken word
-        assert ws.tts_clean("Mikel Brown Jr. had 20 points") == \
-            "Mikel Brown Junior had 20 points"
-        assert ws.tts_clean("Tim Hardaway Jr and Gary Sr") == \
-            "Tim Hardaway Junior and Gary Senior"
-
-    def test_ack_survives_cleaning(self):
-        # The escalation ack goes through the same path; it must not vanish.
-        assert ws.tts_clean(ws.ESCALATE_ACK) == ws.ESCALATE_ACK.strip()
-
-
 class TestChannelSystemPrompt:
-    """Text channels override the voice framing so the model never says
-    'voice command' to someone typing on Discord."""
+    """The persona is channel-agnostic; the presentation note is appended.
 
-    def test_voice_channel_gets_the_voice_note(self):
-        p = ws.system_prompt("voice")
-        assert p.startswith(ws.SYSTEM_PROMPT)  # channel-agnostic persona first
-        assert ws.VOICE_CHANNEL_NOTE in p
-        assert ws.TEXT_CHANNEL_NOTE not in p
+    There were two notes and `system_prompt` chose between them by channel. The
+    voice one retired with the Pi (2026-09-02), so every channel is typed."""
 
-    def test_text_channels_get_the_text_note(self):
-        for ch in ("discord", "text"):
+    def test_every_channel_gets_the_text_note(self):
+        for ch in ("discord", "text", "voice", "something_unknown"):
             p = ws.system_prompt(ch)
             assert ws.TEXT_CHANNEL_NOTE in p
-            assert ws.VOICE_CHANNEL_NOTE not in p
-            assert p.startswith(ws.SYSTEM_PROMPT)  # same persona, different note
+            assert p.startswith(ws.SYSTEM_PROMPT)  # persona first
+
+    def test_prompt_never_claims_a_speaker_or_camera(self):
+        """The model must not offer capabilities the hardware no longer has —
+        it will call a tool that isn't there and then narrate the failure."""
+        p = ws.system_prompt("discord").lower()
+        for gone in ("speaking this reply aloud", "text-to-speech",
+                     "house's camera", "raspberry pi"):
+            assert gone not in p
 
     def test_stream_local_uses_channel_prompt(self, monkeypatch):
         fake, calls = TestOllamaBackend._fake_urlopen([[
@@ -1544,59 +1369,6 @@ class TestDurableMemory:
         monkeypatch.setattr(ws.urllib.request, "urlopen", fake)
         reply = "".join(ws._stream_local("remember the sky is blue"))
         assert "remember" in reply.lower() and "sky is blue" in reply
-
-
-class TestFaceSummary:
-    def test_no_data(self):
-        out = ws._face_summary(None)
-        assert out == {"recognition_ran": False, "people": []}
-
-    def test_people_summarized(self):
-        out = ws._face_summary([
-            {"name": "cindy", "position": "left", "clothing": "blue", "similarity": 0.9}])
-        assert out["recognition_ran"] is True
-        assert out["people"] == [
-            {"name": "cindy", "position": "left", "clothing": "blue"}]
-
-
-class TestSceneContext:
-    def _prime_faces(self, faces, age=0.0):
-        with ws._scene_lock:
-            ws._scene_cache["faces"] = faces
-            ws._scene_cache["faces_ts"] = time.time() - age
-
-    def test_no_data_is_empty(self):
-        self._prime_faces(None)
-        assert ws._scene_context() == ""
-
-    def test_stale_data_is_empty(self):
-        self._prime_faces([{"name": "charlie"}], age=ws.SCENE_TTL + 5)
-        assert ws._scene_context() == ""
-
-    def test_known_person_present(self):
-        self._prime_faces([
-            {"name": "charlie", "position": "center", "clothing": "orange"}])
-        ctx = ws._scene_context()
-        assert "charlie" in ctx and "center" in ctx and "orange" in ctx
-        # The behavioral instruction: assume listed people ARE in view.
-        assert "ARE in view" in ctx
-
-    def test_unknown_only(self):
-        self._prime_faces([{"name": "unknown", "position": "left", "clothing": "gray"}])
-        ctx = ws._scene_context()
-        assert "none match" in ctx and "charlie" not in ctx
-
-    def test_nobody_in_frame(self):
-        self._prime_faces([])
-        assert "no people" in ws._scene_context()
-
-    def test_mixed_known_and_unknown(self):
-        self._prime_faces([
-            {"name": "charlie", "position": "center", "clothing": "orange"},
-            {"name": "unknown", "position": "left", "clothing": "gray"},
-        ])
-        ctx = ws._scene_context()
-        assert "charlie" in ctx and "1 unrecognized" in ctx
 
 
 class TestFantasyRosterMovesTool:

@@ -39,3 +39,17 @@ log/DM-only per the house rule.
 Depends on nothing hard — can precede #004; once HA exists they compose ("turn
 off the lights at 11"). Would also close part of the "deferred action" gap in
 #002.
+
+## Update 2026-09-02 — delivery is Discord-only
+
+The Pi was repurposed, so two details above are stale:
+
+- Storage "`~/wes/schedules.json` on the Pi" — must be PC-side.
+- "the Pi client already has a monitor thread" as the host for the scheduler
+  loop. The nearest live equivalent is `wes_discord.py`, which already runs two
+  background watchers (`alert_watch`, `fantasy_watch`) in its own process. That
+  is the obvious home, with the caveat that it shares fate with the bot (#032).
+
+The acceptance criterion "fires via announce (voice when home, Discord when
+away)" collapses to just Discord, which makes this **simpler**, not blocked:
+`/announce` is unchanged and is still the right primitive.
