@@ -147,8 +147,15 @@ this machine runs **inside WSL** and needs `sudo`, so:
 & C:\Users\awarm\wes-pc\wes-dev.ps1 obs ps
 ```
 
-First-time setup is one file: copy `observability/.env.example` to
-`observability/.env` and set `WES_WINDOWS_HOST` to the WSL default gateway
-(`wsl -e bash -lc 'ip route show default'`). That address is how the containers
-reach the Windows-side exporters, and it changes when WSL restarts — the failure
-mode and the fix are in `docs/observability.md`.
+First-time setup is two steps:
+
+1. Copy `observability/.env.example` to `observability/.env` and set
+   `WES_WINDOWS_HOST` to the WSL default gateway
+   (`wsl -e bash -lc 'ip route show default'`). That address is how the
+   containers reach the Windows-side exporters, and it changes when WSL
+   restarts.
+2. Run `observability/allow-wsl-scrape.ps1` **elevated**, once. Without it the
+   Windows firewall silently drops every scrape and three targets go down at
+   once while Grafana looks fine.
+
+Both failure modes, and how to tell them apart, are in `docs/observability.md`.

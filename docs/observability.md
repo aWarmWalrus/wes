@@ -40,6 +40,83 @@ is also where the operational detail lives — read it before changing anything.
   (`cpu,memory,os,logical_disk,net,thermalzone`); the old `cs` collector was
   removed in v0.31 (its metrics moved into `os`).
 
+### Windows Firewall: run `observability/allow-wsl-scrape.ps1` once
+
+Prometheus is now *inside WSL* and the exporters are on *Windows*, so every
+scrape arrives as inbound traffic at the Windows firewall and is dropped by
+default. **This bit the very first run of the moved stack** (2026-09-02): both
+containers healthy, Grafana serving, and three targets down at once with
+`context deadline exceeded`.
+
+Two things make it identifiable:
+
+- **A timeout, not a connection refused.** Refused means nothing is listening;
+  a timeout means something ate the packet. The exporters were listening on
+  `0.0.0.0` the whole time.
+- **Port 11434 (Ollama) was reachable from WSL and these were not** — same
+  gateway, same direction, different port. That rules out a wrong
+  `WES_WINDOWS_HOST` and points squarely at per-port rules.
+
+Fix, once, elevated:
+
+```powershell
+Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-NoExit',
+  '-File','C:\Users\awarm\wes\observability\allow-wsl-scrape.ps1'
+```
+
+It is idempotent, logs to `wes-pc\logs\allow-wsl-scrape.log`, and has a
+`-Remove` switch. It allows TCP 8080/9182/9835 from `172.16.0.0/12` rather than
+the exact WSL subnet, because WSL regenerates its subnet just as it regenerates
+the gateway — a rule pinned to today's `172.22.64.0/20` would work until a
+future reboot and then fail in a way that looks exactly like the problem it
+fixed. That range is private and unroutable and the LAN here is `10.0.0.x`, so
+no other host gains access; the script's header argues the tradeoff and takes
+`-RemoteAddress` if you want it exact.
+
+#### An allow rule alone is not enough — clear the per-exe Block rules
+
+**Windows evaluates Block before Allow.** This machine had three enabled
+inbound Block rules, one per executable, created by dismissing the "Windows
+Defender Firewall has blocked some features of this app" popup:
+
+| Rule name | Program | Silently blocked |
+|---|---|---|
+| `windows_exporter.exe` | `wes-pc\bin\windows_exporter.exe` | :9182 |
+| `nvidia_gpu_exporter.exe` | `wes-pc\bin\nvidia_gpu_exporter.exe` | :9835 |
+| **`Python`** | `E:\miniconda3\python.exe` | **:8080, i.e. wes_server** |
+
+With those present the allow rule is correct and completely inert. The script
+removes them, matching on **program path, never rule name** — the names are
+whatever Windows chose, and "Python" is both uninformative and far too broad to
+match on. Removing a Block rule opens nothing by itself: inbound is default-deny
+and the allow rule is scoped to the WSL range.
+
+The `Python` entry is the one that hides. `E:\miniconda3\python.exe` is what
+actually binds :8080 — the venv's `python.exe` is a shim that execs the base
+interpreter — and it almost certainly dates from the E: migration, when that
+new interpreter first opened a port.
+
+#### Inspect with `netsh`, not the cmdlets
+
+> **`Get-NetFirewallRule` throws `Access is denied` unelevated on this machine**,
+> and with `-ErrorAction SilentlyContinue` that is indistinguishable from "no
+> such rule". On 2026-09-02 three separate wrong diagnoses were built on that
+> false negative — including a confident claim in this very document that the
+> rules below did not exist. They did.
+>
+> From a normal shell, read the firewall with netsh, which works unelevated:
+>
+> ```powershell
+> netsh advfirewall firewall show rule name=all verbose
+> netsh advfirewall firewall show rule name="WES metrics (Prometheus scrape from WSL)"
+> ```
+
+For the record, the rule this document has always described —
+*"WES exporters (Prometheus scrape from Pi)"*, Private profile, TCP 9182+9835
+from `10.0.0.79/32` — **is still present**. It is dead weight now that the Pi is
+gone, and harmless; the script deliberately leaves it alone rather than deciding
+that for you.
+
 ### The one fragile piece: `windows-host`
 
 Docker runs **inside WSL** here, and the exporters run on **Windows**, so every
