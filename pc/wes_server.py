@@ -1370,6 +1370,14 @@ def _uniform_draft_turn(rec):
         if out.get(key) is None:
             out[key] = ""
     out.setdefault("seconds", None)
+    # Ollama's duration breakdown (draft_log.timings). Absent on records written
+    # before 2026-09-03 and on any call that failed before the server answered,
+    # so they get the same null-not-missing treatment as everything else.
+    # `queued_s` is the interesting one: wall minus the model's own work, i.e.
+    # time spent waiting behind another request.
+    for key in ("load_s", "prompt_s", "gen_s", "queued_s",
+                "prompt_tok", "gen_tok"):
+        out.setdefault(key, None)
     out.setdefault("escalated", False)
     if not isinstance(out.get("tools"), list):
         out["tools"] = []

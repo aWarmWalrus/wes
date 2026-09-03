@@ -347,10 +347,23 @@ class TestTheModelCallKeepsThePin:
             lambda post: ag._ask_model({"shortlist": []}, _post_fn=post))
         assert body["keep_alive"] == -1, "omitting keep_alive unpins the model"
         assert body["options"]["num_predict"] == 256
+        # Omitting num_ctx loads the 12b at its NATIVE 256K context: +3.8GB of
+        # KV cache and a ~5s reload, and with keep_alive=-1 it would pin the
+        # bloated copy. Measured on the live box 2026-09-03.
+        assert body["options"]["num_ctx"] == ag.NUM_CTX == 16384
         # The settings that were already right must stay right.
         assert body["think"] is False
         assert body["options"]["temperature"] == 0
         assert body["format"] == "json"
+
+    def test_both_callers_agree_on_the_context_size(self):
+        """Ollama keys a loaded model on its context size, so a mismatch here
+        makes the draft and the server evict each other's copy on every
+        alternation -- a ~5s reload each way, invisible except as latency."""
+        import wes_server as ws
+        from sleeper import agent as ag
+        from sleeper import banter as wb
+        assert ag.NUM_CTX == wb.NUM_CTX == ws.NUM_CTX
 
     def test_banter_call_pins_the_model_too(self):
         """A chat line between turns must not be what evicts the model the next
@@ -366,5 +379,6 @@ class TestTheModelCallKeepsThePin:
         wb._ask({"draft": {}}, _post_fn=capture)
         assert sent["keep_alive"] == -1
         assert sent["options"]["num_predict"] == 128
+        assert sent["options"]["num_ctx"] == wb.NUM_CTX
         assert sent["options"]["temperature"] == 0.8   # still not arithmetic
         assert sent["think"] is False

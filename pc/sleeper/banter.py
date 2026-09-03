@@ -45,6 +45,9 @@ import urllib.request
 OLLAMA_URL = os.environ.get("WES_OLLAMA_URL", "http://127.0.0.1:11434")
 MODEL = os.environ.get("WES_BANTER_MODEL",
                        os.environ.get("WES_ESCALATE_MODEL", "gemma4:12b"))
+# Same env var as wes_server and sleeper.agent -- see the note in agent.py. A
+# mismatched num_ctx makes every alternation between callers reload the model.
+NUM_CTX = int(os.environ.get("WES_NUM_CTX", "16384"))
 
 # Floor between messages, in seconds. THE ONLY VOLUME CONTROL, now that the
 # prompt no longer asks for restraint -- picks arrive far faster than chat, so
@@ -224,11 +227,13 @@ def _ask(payload, _post_fn=None):
         "model": MODEL, "stream": False, "format": "json", "think": False,
         "keep_alive": -1,
         "options": {"temperature": 0.8,    # banter, not arithmetic
-                    "num_predict": 128},
+                    "num_predict": 128,
+                    "num_ctx": NUM_CTX},
         "messages": [{"role": "system", "content": SYSTEM},
                      {"role": "user", "content": json.dumps(payload)}],
     }).encode()
     raw = None
+    resp = None      # the whole Ollama reply, for its duration breakdown
     t0 = time.time()
     try:
         if _post_fn is not None:
@@ -238,14 +243,18 @@ def _ask(payload, _post_fn=None):
                 OLLAMA_URL + "/api/chat", data=body,
                 headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=60) as r:
-                raw = json.load(r)["message"]["content"]
+                resp = json.load(r)
+            raw = resp["message"]["content"]
         got = json.loads(raw)
-        wes_draft_log.log_call("draft.banter", payload, raw,
-                               time.time() - t0, model=MODEL)
+        wall = time.time() - t0
+        wes_draft_log.log_call("draft.banter", payload, raw, wall, model=MODEL,
+                               **wes_draft_log.timings(resp, wall))
         return got if isinstance(got, dict) else None
     except Exception as e:  # noqa: BLE001 — banter must never break a draft
-        wes_draft_log.log_call("draft.banter", payload, raw, time.time() - t0,
-                               error=f"{type(e).__name__}: {e}", model=MODEL)
+        wall = time.time() - t0
+        wes_draft_log.log_call("draft.banter", payload, raw, wall,
+                               error=f"{type(e).__name__}: {e}", model=MODEL,
+                               **wes_draft_log.timings(resp, wall))
         return None
 
 

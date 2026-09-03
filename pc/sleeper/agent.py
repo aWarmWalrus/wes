@@ -50,6 +50,11 @@ from sleeper import data as wes_sleeper
 OLLAMA_URL = os.environ.get("WES_OLLAMA_URL", "http://127.0.0.1:11434")
 PICK_MODEL = os.environ.get("WES_DRAFT_MODEL",
                             os.environ.get("WES_ESCALATE_MODEL", "gemma4:12b"))
+# READS THE SAME ENV VAR AS wes_server, so the two cannot drift apart. Ollama
+# keys a loaded model on its context size: if the draft asks for a different
+# num_ctx than the server, each one evicts and reloads the other's copy every
+# time they alternate. Matching them makes that cost zero.
+NUM_CTX = int(os.environ.get("WES_NUM_CTX", "16384"))
 
 # How far ahead to start thinking. Deciding at "0 picks away" leaves no room for
 # the model call plus the submission; one pick of warning is the difference
@@ -145,6 +150,14 @@ def _ask_model(payload, _post_fn=None, system=None, _kind="draft.pick"):
     behind one `reason` sentence per pick and no record of the shortlist that
     produced it. Working out why a pick looked wrong meant rebuilding the board
     afterwards and guessing. The payload is the question; it is written down."""
+    # num_ctx MUST MATCH THE SERVER'S, and it is not optional garnish. Ollama
+    # keys a loaded model on its context size, so a call that omits num_ctx
+    # loads gemma4:12b at its NATIVE 256K context -- measured 2026-09-03: VRAM
+    # 10.1GB -> 13.8GB, an extra 3.8GB of KV cache, and a full ~5s reload. Worse,
+    # it does that EVERY TIME the draft and the server alternate, because each
+    # one evicts the other's context. With keep_alive=-1 below it would also
+    # pin the bloated copy indefinitely rather than letting it expire.
+    #
     # keep_alive=-1 KEEPS THE PIN. Ollama's keep_alive is per-request and
     # rewrites the model's expiry, so a call that omits it silently resets the
     # pin the server's warmup set (`keep_alive=-1`) to Ollama's 5-minute
@@ -159,11 +172,13 @@ def _ask_model(payload, _post_fn=None, system=None, _kind="draft.pick"):
     body = json.dumps({
         "model": PICK_MODEL, "stream": False, "format": "json",
         "think": False, "keep_alive": -1,
-        "options": {"temperature": 0, "num_predict": 256},
+        "options": {"temperature": 0, "num_predict": 256,
+                    "num_ctx": NUM_CTX},
         "messages": [{"role": "system", "content": system or SYSTEM},
                      {"role": "user", "content": json.dumps(payload)}],
     }).encode()
     raw = None
+    resp = None      # the whole Ollama reply, for its duration breakdown
     t0 = time.time()
     try:
         if _post_fn is not None:
@@ -173,18 +188,22 @@ def _ask_model(payload, _post_fn=None, system=None, _kind="draft.pick"):
                 OLLAMA_URL + "/api/chat", data=body,
                 headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=90) as r:
-                raw = json.load(r)["message"]["content"]
+                resp = json.load(r)
+            raw = resp["message"]["content"]
         got = json.loads(_strip_fence(raw))
-        wes_draft_log.log_call(_kind, payload, raw, time.time() - t0,
-                               model=PICK_MODEL)
+        wall = time.time() - t0
+        wes_draft_log.log_call(_kind, payload, raw, wall, model=PICK_MODEL,
+                               **wes_draft_log.timings(resp, wall))
         return got
     except Exception as e:  # noqa: BLE001 — a failed call must fall back, not raise
         # THE FAILURES ARE THE POINT. A model call that returned nothing, or
         # unparseable JSON, is exactly the turn you want to read afterwards --
         # and it is the one a summary-only log throws away.
-        wes_draft_log.log_call(_kind, payload, raw, time.time() - t0,
+        wall = time.time() - t0
+        wes_draft_log.log_call(_kind, payload, raw, wall,
                                error=f"{type(e).__name__}: {e}",
-                               model=PICK_MODEL)
+                               model=PICK_MODEL,
+                               **wes_draft_log.timings(resp, wall))
         return None
 
 

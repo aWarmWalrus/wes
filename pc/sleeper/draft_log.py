@@ -82,6 +82,46 @@ def log_call(kind, payload, reply, seconds=None, error=None, **extra):
         print(f"[draft-log] {type(e).__name__}: {e}", flush=True)
 
 
+def timings(resp, wall):
+    """Ollama's own duration breakdown, plus the derived queue wait.
+
+    WALL TIME ALONE IS MISLEADING, and it cost an afternoon on 2026-09-03. A
+    draft showed picks taking 61s, 53s and 67s against a 120s clock; replaying
+    those exact payloads afterwards took 8.1s, 3.3s and 4.6s. The prompts were
+    never the problem. Ollama SERIALISES requests -- measured at three
+    concurrent calls doing 1.35s of work each while waiting 0.00s, 1.35s and
+    2.71s -- so a call can report a few seconds of real work and forty seconds
+    of wall clock because it sat behind somebody else's. One Ollama serves this
+    whole machine, so "somebody else" is usually the live WES server.
+
+    `queued_s` is the number that separates those two worlds: wall minus the
+    model's own load + prompt + generate. Big `gen_s` means the model is slow.
+    Big `queued_s` means it never got a turn. Only one of those is fixed by a
+    faster prompt.
+
+    Returns {} when the response is not an Ollama reply dict -- tests inject a
+    plain string through `_post_fn`, and a logger must not care."""
+    if not isinstance(resp, dict):
+        return {}
+    ns = 1e9
+    load_s = (resp.get("load_duration") or 0) / ns
+    prompt_s = (resp.get("prompt_eval_duration") or 0) / ns
+    gen_s = (resp.get("eval_duration") or 0) / ns
+    out = {
+        "load_s": round(load_s, 2),
+        "prompt_s": round(prompt_s, 2),
+        "gen_s": round(gen_s, 2),
+        "prompt_tok": resp.get("prompt_eval_count"),
+        "gen_tok": resp.get("eval_count"),
+    }
+    if wall is not None:
+        # Clamped at zero: the durations come from the server and the wall from
+        # the client, so a fast call can round to a hair below the sum. A small
+        # negative here would read as a measurement bug rather than a fast call.
+        out["queued_s"] = round(max(0.0, wall - (load_s + prompt_s + gen_s)), 2)
+    return out
+
+
 def _stringify(v):
     if v is None or isinstance(v, str):
         return v or ""

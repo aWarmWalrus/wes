@@ -593,6 +593,16 @@
               "type": "number"
             },
             {
+              "selector": "queued_s",
+              "text": "queued",
+              "type": "number"
+            },
+            {
+              "selector": "gen_s",
+              "text": "gen",
+              "type": "number"
+            },
+            {
               "selector": "model",
               "text": "model",
               "type": "string"

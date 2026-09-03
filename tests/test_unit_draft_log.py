@@ -372,3 +372,64 @@ class TestTheEndpointEmitsAUniformSchema:
         with ws.app.test_client() as c:
             rows = c.get("/draft_turns?pretty=1").get_json()["turns"]
         assert all(isinstance(r.get("detail"), str) and r["detail"] for r in rows)
+
+
+class TestTimingBreakdown:
+    """Wall time alone hid a real problem for an afternoon.
+
+    A draft showed picks at 61s, 53s and 67s against a 120s clock; replaying
+    those exact payloads afterwards took 8.1s, 3.3s and 4.6s. Ollama serialises
+    requests, so a call can do three seconds of work and spend forty waiting
+    behind another -- and one Ollama serves this whole machine. `queued_s`
+    separates "the model is slow" from "the model never got a turn".
+    """
+
+    def test_derives_queue_time_from_the_ollama_durations(self):
+        ns = 10 ** 9
+        got = wes_draft_log.timings(
+            {"load_duration": 1 * ns, "prompt_eval_duration": 2 * ns,
+             "eval_duration": 3 * ns, "prompt_eval_count": 610,
+             "eval_count": 85},
+            wall=40.0)
+        assert got["load_s"] == 1.0
+        assert got["prompt_s"] == 2.0
+        assert got["gen_s"] == 3.0
+        assert got["prompt_tok"] == 610 and got["gen_tok"] == 85
+        assert got["queued_s"] == 34.0, "40s wall, 6s of work -> 34s queued"
+
+    def test_a_fast_call_never_reports_negative_queueing(self):
+        """The durations come from the server and the wall from the client, so
+        a fast call can round to a hair below the sum. Negative queue time would
+        read as a measurement bug rather than a fast call."""
+        ns = 10 ** 9
+        got = wes_draft_log.timings(
+            {"load_duration": 0, "prompt_eval_duration": ns,
+             "eval_duration": 2 * ns}, wall=2.99)
+        assert got["queued_s"] == 0.0
+
+    def test_missing_durations_are_zero_not_a_crash(self):
+        got = wes_draft_log.timings({"eval_count": 12}, wall=5.0)
+        assert got["gen_s"] == 0.0 and got["queued_s"] == 5.0
+        assert got["gen_tok"] == 12 and got["prompt_tok"] is None
+
+    def test_a_non_dict_response_yields_nothing(self):
+        """Tests inject a plain string through `_post_fn`; a logger must not
+        care, and must not invent numbers it does not have."""
+        assert wes_draft_log.timings("just a string", wall=1.0) == {}
+        assert wes_draft_log.timings(None, wall=1.0) == {}
+
+    def test_the_endpoint_serves_the_new_fields_uniformly(self):
+        """Records written before this existed have no timing keys at all --
+        the same null-vs-missing trap that killed the panel this morning."""
+        import wes_server as ws
+        wes_draft_log.log_call("draft.pick", {}, "ok", 1.0, model="m")   # no timings
+        wes_draft_log.log_call("draft.pick", {}, "ok", 40.0, model="m",
+                               load_s=0.0, prompt_s=1.0, gen_s=2.0,
+                               queued_s=37.0, prompt_tok=600, gen_tok=80)
+        with ws.app.test_client() as c:
+            rows = c.get("/draft_turns").get_json()["turns"]
+        for key in ("load_s", "prompt_s", "gen_s", "queued_s"):
+            assert all(key in r for r in rows), f"{key} missing from a row"
+        newest = rows[0]
+        assert newest["queued_s"] == 37.0
+        assert rows[1]["queued_s"] is None      # absent, honestly, not 0.0
