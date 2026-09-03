@@ -1336,9 +1336,44 @@ def recent_draft_turns(n=20, kind=None):
     two files, no coupling."""
     try:
         from sleeper import draft_log as wes_draft_log
-        return wes_draft_log.recent(n, kind)
+        return [_uniform_draft_turn(r) for r in wes_draft_log.recent(n, kind)]
     except Exception:  # noqa: BLE001 — never break the endpoint on a bad file
         return []
+
+
+# Every row must carry every key, even when the record never had it.
+#
+# The draft log is deliberately heterogeneous — a `draft.pick` has a model and a
+# latency, a `draft.banter.said` outcome record has neither but does have `mode`
+# and `reacting_to` — so a raw read gives rows with different key sets. That is
+# fine for a file and wrong for a table: Grafana's Infinity datasource selects
+# columns BY NAME and types them, so a `type: string` column whose key is absent
+# resolves to null and the panel dies with
+#
+#     TypeError: Cannot read properties of null (reading 'length')
+#
+# which names neither the column nor the row. Measured on the real log: `error`
+# was absent from 24 of 25 rows and `model` from 9. Normalising here rather than
+# in the dashboard keeps the fix with the contract — any consumer of
+# /draft_turns gets a stable schema, not just this one panel.
+_DRAFT_TEXT_FIELDS = ("ts", "channel", "model", "transcript", "reply",
+                      "error", "mode", "reacting_to")
+
+
+def _uniform_draft_turn(rec):
+    """One log record -> a row with the full key set. Absent/None TEXT fields
+    become "", because that is what a table renders as blank; `seconds` stays
+    None when a record timed no call, since a numeric column handles null and
+    0.0 would be a lie."""
+    out = dict(rec)
+    for key in _DRAFT_TEXT_FIELDS:
+        if out.get(key) is None:
+            out[key] = ""
+    out.setdefault("seconds", None)
+    out.setdefault("escalated", False)
+    if not isinstance(out.get("tools"), list):
+        out["tools"] = []
+    return out
 
 
 # A LiveKit-style interruption tag and `record_spoken_turn` lived here: when the

@@ -294,3 +294,81 @@ class TestTheAgentsActuallyCallIt:
         got = wes_draft_log.recent(5, kind="draft.banter.dropped")
         assert got and "39" in got[0]["error"]
         assert "Brock Bowers" in got[0]["transcript"]
+
+
+class TestTheEndpointEmitsAUniformSchema:
+    """Every row carries every key, whatever the record actually held.
+
+    The draft log is deliberately heterogeneous -- a `draft.pick` has a model
+    and a latency, a `draft.banter.said` outcome record has neither -- which is
+    right for a file and wrong for a table. Grafana's Infinity datasource
+    selects columns BY NAME and types them, so a `type: string` column whose key
+    is missing resolves to null and the whole panel dies with
+
+        TypeError: Cannot read properties of null (reading 'length')
+
+    naming neither the column nor the row. Seen live 2026-09-03 on the "Draft
+    agent calls" panel; on the real log `error` was absent from 24 of 25 rows
+    and `model` from 9.
+    """
+
+    # The columns observability/dashboards/wes-overview.json selects as strings.
+    STRING_COLUMNS = ("ts", "channel", "model", "transcript", "reply", "error")
+
+    def test_missing_text_fields_come_back_as_empty_strings(self):
+        import wes_server as ws
+        # A banter outcome record: no model, no seconds, no error.
+        wes_draft_log.log_call("draft.banter.said", {"draft": {}}, "nice pick",
+                               mode="auto", reacting_to="pick 12")
+        with ws.app.test_client() as c:
+            row = c.get("/draft_turns").get_json()["turns"][0]
+        for col in self.STRING_COLUMNS:
+            assert col in row, f"{col} missing entirely"
+            assert row[col] is not None, f"{col} is null -- the panel crashes"
+            assert isinstance(row[col], str)
+
+    def test_every_row_has_the_same_keys_even_when_kinds_differ(self):
+        import wes_server as ws
+        wes_draft_log.log_call("draft.pick", {"shortlist": []}, "ok", 1.2,
+                               model="gemma4:12b")
+        wes_draft_log.log_call("draft.banter.said", {}, "ha", mode="auto")
+        wes_draft_log.log_call("draft.banter.dropped", {}, "no",
+                               error="fabricated a pick number")
+        with ws.app.test_client() as c:
+            rows = c.get("/draft_turns").get_json()["turns"]
+        assert len(rows) == 3
+        for col in self.STRING_COLUMNS:
+            assert all(col in r and r[col] is not None for r in rows), col
+
+    def test_seconds_stays_null_rather_than_becoming_zero(self):
+        """A numeric column renders null as blank, which is honest. 0.0 would
+        claim the call took no time, which is a different and false statement."""
+        import wes_server as ws
+        wes_draft_log.log_call("draft.banter.said", {}, "hi")   # times no call
+        wes_draft_log.log_call("draft.pick", {}, "ok", 2.5)
+        with ws.app.test_client() as c:
+            rows = c.get("/draft_turns").get_json()["turns"]
+        by_kind = {r["channel"]: r for r in rows}
+        assert by_kind["draft.banter.said"]["seconds"] is None
+        assert by_kind["draft.pick"]["seconds"] == 2.5
+
+    def test_real_values_are_never_clobbered(self):
+        import wes_server as ws
+        wes_draft_log.log_call("draft.pick", {"shortlist": ["Gibbs"]},
+                               "took Gibbs", 3.3, model="gemma4:12b")
+        with ws.app.test_client() as c:
+            row = c.get("/draft_turns").get_json()["turns"][0]
+        assert row["model"] == "gemma4:12b"
+        assert row["seconds"] == 3.3
+        assert "Gibbs" in row["transcript"] and row["reply"] == "took Gibbs"
+        assert row["error"] == ""      # genuinely absent -> blank, not null
+
+    def test_pretty_view_is_uniform_too(self):
+        """?pretty=1 feeds the 'Latest call in full' panel, which selects
+        `detail` as a string -- same crash if a row lacks it."""
+        import wes_server as ws
+        wes_draft_log.log_call("draft.banter.said", {}, "hi", mode="auto")
+        wes_draft_log.log_call("draft.pick", {}, "ok", 1.0, model="m")
+        with ws.app.test_client() as c:
+            rows = c.get("/draft_turns?pretty=1").get_json()["turns"]
+        assert all(isinstance(r.get("detail"), str) and r["detail"] for r in rows)
