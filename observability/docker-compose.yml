@@ -55,7 +55,11 @@ services:
       - --web.enable-lifecycle          # POST /-/reload instead of a restart
 
   grafana:
-    image: grafana/grafana:11.5.1
+    # 11.6.11 is not arbitrary: it is the LOWEST release that satisfies the
+    # Infinity plugin's declared grafanaDependency (">=11.6.11-0 <12 || ...").
+    # See the GF_INSTALL_PLUGINS note below -- these two versions are coupled
+    # and must be changed together.
+    image: grafana/grafana:11.6.11
     container_name: wes-grafana
     restart: unless-stopped
     depends_on: [prometheus]
@@ -72,7 +76,20 @@ services:
       # The turns/draft tables need the Infinity datasource plugin. Installed at
       # container start so a rebuilt container is not a manual `grafana cli` step
       # the way it was on the Pi.
-      GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource"
+      #
+      # PINNED, AND COUPLED TO THE IMAGE TAG ABOVE. This was unpinned for about a
+      # day, which is the whole failure: the image was pinned to 11.5.1 while the
+      # plugin floated to 4.0.0, whose grafanaDependency is ">=11.6.11-0". Grafana
+      # refused to load it (the API showed the plugin present but enabled=false)
+      # and the browser reported a 404 on module.js with a confusing
+      # "Could not load plugin ... react/jsx-runtime" SystemJS error -- which
+      # looks like a broken build and is really a version-floor mismatch.
+      #
+      # A pinned host with a floating plugin will always drift eventually. To
+      # upgrade: raise BOTH, checking the new plugin's grafanaDependency at
+      # https://grafana.com/api/plugins/yesoreyeram-infinity-datasource
+      # (or GET /api/plugins/<id>/settings on a running instance).
+      GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource 4.0.0"
       GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: ""
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
