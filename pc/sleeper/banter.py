@@ -215,9 +215,16 @@ def _ask(payload, _post_fn=None):
     produced was traced by hand afterwards, against an API, because the thing
     the model was looking at when it said it was never written down."""
     from sleeper import draft_log as wes_draft_log
+    # keep_alive=-1 for the same reason as the pick call (see agent.py): an
+    # omitted value resets the server's pin to Ollama's 5-minute default, so a
+    # chat line between turns can be what evicts the model the next PICK needs.
+    # num_predict: a banter line is one sentence -- measured 82-112 tokens --
+    # and 128 keeps a chatty generation from running into the pick clock.
     body = json.dumps({
         "model": MODEL, "stream": False, "format": "json", "think": False,
-        "options": {"temperature": 0.8},   # banter, not arithmetic
+        "keep_alive": -1,
+        "options": {"temperature": 0.8,    # banter, not arithmetic
+                    "num_predict": 128},
         "messages": [{"role": "system", "content": SYSTEM},
                      {"role": "user", "content": json.dumps(payload)}],
     }).encode()

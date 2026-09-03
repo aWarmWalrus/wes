@@ -316,3 +316,55 @@ class TestFormatDecision:
     def test_no_candidate_reports_the_reason(self):
         assert agent.format_decision(
             {"candidate": None, "reason": "no candidates"}) == "no candidates"
+
+
+class TestTheModelCallKeepsThePin:
+    """Ollama's keep_alive is PER REQUEST and rewrites the model's expiry, so a
+    call that omits it resets the pin `wes_server.warmup()` set (keep_alive=-1)
+    to Ollama's 5-minute default.
+
+    Measured 2026-09-03: after a mock draft the model had been evicted, and the
+    next call paid a 4-5s cold load. It is not only the draft that pays -- the
+    whole machine shares one Ollama, so the next Discord turn pays it too. In a
+    12-team draft on a 600s clock the gap between our turns routinely exceeds
+    five minutes, which is exactly when this bites.
+    """
+
+    def _body_of(self, send):
+        import json
+        sent = {}
+
+        def capture(body):
+            sent.update(json.loads(body))
+            return '{"player_key": "X", "reason": "y"}'
+
+        send(capture)
+        return sent
+
+    def test_pick_call_pins_the_model_and_caps_generation(self):
+        from sleeper import agent as ag
+        body = self._body_of(
+            lambda post: ag._ask_model({"shortlist": []}, _post_fn=post))
+        assert body["keep_alive"] == -1, "omitting keep_alive unpins the model"
+        assert body["options"]["num_predict"] == 256
+        # The settings that were already right must stay right.
+        assert body["think"] is False
+        assert body["options"]["temperature"] == 0
+        assert body["format"] == "json"
+
+    def test_banter_call_pins_the_model_too(self):
+        """A chat line between turns must not be what evicts the model the next
+        PICK needs."""
+        import json
+        from sleeper import banter as wb
+        sent = {}
+
+        def capture(body):
+            sent.update(json.loads(body))
+            return '{"message": "nice pick"}'
+
+        wb._ask({"draft": {}}, _post_fn=capture)
+        assert sent["keep_alive"] == -1
+        assert sent["options"]["num_predict"] == 128
+        assert sent["options"]["temperature"] == 0.8   # still not arithmetic
+        assert sent["think"] is False

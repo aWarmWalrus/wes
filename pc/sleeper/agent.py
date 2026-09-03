@@ -145,9 +145,21 @@ def _ask_model(payload, _post_fn=None, system=None, _kind="draft.pick"):
     behind one `reason` sentence per pick and no record of the shortlist that
     produced it. Working out why a pick looked wrong meant rebuilding the board
     afterwards and guessing. The payload is the question; it is written down."""
+    # keep_alive=-1 KEEPS THE PIN. Ollama's keep_alive is per-request and
+    # rewrites the model's expiry, so a call that omits it silently resets the
+    # pin the server's warmup set (`keep_alive=-1`) to Ollama's 5-minute
+    # default. Measured 2026-09-03: the model was evicted after a mock draft,
+    # and the next call paid a 4-5s cold load. In a 12-team draft on a 600s
+    # clock the gap between our turns routinely exceeds 5 minutes, so without
+    # this most picks would pay that load -- and so would the next Discord turn,
+    # since the whole machine shares one Ollama.
+    #
+    # num_predict caps a runaway. Replies here measure 85-154 tokens; 256 is
+    # generous and bounds the worst case, which was previously unbounded.
     body = json.dumps({
         "model": PICK_MODEL, "stream": False, "format": "json",
-        "think": False, "options": {"temperature": 0},
+        "think": False, "keep_alive": -1,
+        "options": {"temperature": 0, "num_predict": 256},
         "messages": [{"role": "system", "content": system or SYSTEM},
                      {"role": "user", "content": json.dumps(payload)}],
     }).encode()
