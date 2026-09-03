@@ -140,7 +140,7 @@ def _banter_context(draft_id, league_id, roster_id, state, wait,
 def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         _state_fn=None, _decide_fn=None, _submit_fn=None, _sleep_fn=None,
         _now_fn=None, _board_fn=None, _ledger_path=None, _record_fn=None,
-        banter_mode="off", banter_gap=None, _banter=None):
+        banter_mode="off", banter_gap=None, _banter=None, _explain_fn=None):
     """Watch and draft until the draft ends. Returns a short summary string."""
     turn_fn = _state_fn or wes_sleeper.draft_turn
     board_fn = _board_fn or wes_sleeper.draft_candidates
@@ -148,6 +148,10 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
     sleep = _sleep_fn or time.sleep
     now = _now_fn or time.time
     record = _record_fn or draft_reporting._record
+    # Fills a decision's rationale AFTER the click, off the clock. Injectable
+    # so a test can assert it ran without reaching a model; it is also
+    # idempotent, so a caller supplying its own explained decision is untouched.
+    explain_fn = _explain_fn or wes_draft_agent.attach_explanation
     # Banter shares this process ON PURPOSE. The Chrome profile is a persistent
     # singleton, so a second process reading the chat would collide with the
     # one submitting picks. Only touched when we are NOT on the clock.
@@ -343,8 +347,15 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             acted_on.add(pick_no)
             continue
 
+        # with_explanation=False KEEPS THE SECOND MODEL CALL OFF THE CLOCK.
+        # `decide_one` used to make both calls before returning, so the pick and
+        # the paragraph about the pick both sat between our turn and the click
+        # -- and the TIMING line below reported them as one `model` number,
+        # which is why 61s looked like one slow call. The explanation is asked
+        # about a pick that is already fixed, so it loses nothing by waiting;
+        # `attach_explanation` runs it after the click, below.
         decision = (_decide_fn or wes_draft_agent.decide_one)(
-            cands, context=ctx)
+            cands, context=ctx, with_explanation=False)
         t_decide = now()
         pick = decision["candidate"]
         reason, source = decision["reason"], decision["source"]
@@ -358,6 +369,9 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
         if not wes_execute.writes_enabled():
             _log(f"pick {pick_no}: WOULD take {pick['name']} ({source}: "
                  f"{reason}) — writes are off")
+            # A shadow run has no clock to protect and its whole value is the
+            # record, so the explanation is worth waiting for here.
+            explain_fn(decision, cands, context=ctx)
             record(league_id, roster_id, draft_id, pick_no, board, decision,
                    "would_draft", note="writes are off",
                    _ledger_path=_ledger_path)
@@ -445,6 +459,21 @@ def run(draft_id, league_id, roster_id, max_seconds=6 * 3600,
             # and the player nearly taken are what make a draft reviewable
             # afterwards, and this agent has already been caught narrating a
             # check it did not perform.
+            #
+            # ASKED FOR HERE, after the click and after the TIMING line, so it
+            # costs the pick nothing. The log and the ledger below read exactly
+            # the same as when `decide_one` produced it inline.
+            #
+            # GUARDED SEPARATELY, and this is not belt-and-braces. The pick has
+            # ALREADY LANDED at this point, so an exception escaping here would
+            # fall into the handler below and record a successful pick as
+            # "failed" -- a false entry in the ledger about a real roster. A
+            # missing paragraph must never be able to say that.
+            try:
+                explain_fn(decision, cands, context=ctx)
+            except Exception as ex:  # noqa: BLE001 — see above
+                _log(f"pick {pick_no}: explanation failed ({ex}) — the pick "
+                     f"stands")
             _log(f"pick {pick_no}: DRAFTED "
                  f"{wes_draft_agent.format_decision(decision)}")
             record(league_id, roster_id, draft_id, pick_no, board, decision,

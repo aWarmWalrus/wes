@@ -18,6 +18,24 @@ CAND = {"player_key": "77", "name": "Target Guy", "positions": ["RB"],
         "team": "SF", "vor": 12.0}
 
 
+@pytest.fixture(autouse=True)
+def _no_explanation_calls(monkeypatch):
+    """Keep the post-click explanation off the network.
+
+    Since 2026-09-03 the loop fills a decision's rationale AFTER the click, by
+    calling the model a second time -- deliberately, to get that call off the
+    pick clock. `attach_explanation` is idempotent, so a stub decision that
+    already carries `considered` skips it; but the module's `_decision()` helper
+    defaults to an empty rationale, so without this the loop tests would each
+    make a real Ollama call. They passed either way (the call fails closed and
+    nothing asserts on it), which is precisely why it needed pinning: a test
+    that silently reaches the network is one that is slow here and red in CI.
+    """
+    from sleeper import agent as wes_draft_agent
+    monkeypatch.setattr(wes_draft_agent, "attach_explanation",
+                        lambda decision, *a, **k: decision)
+
+
 def _decision(cand, reason="why", source="model", considered=None,
               runner_up=None, why_not=""):
     """A decision dict shaped like wes_draft_agent.decide_one returns.
@@ -699,3 +717,77 @@ class TestBanterKnowsItsOwnRoster:
             assert ctx["recent_picks"][0]["by"] == "US", "ours needs no lookup"
         finally:
             ws.slot_names = orig
+
+
+class TestTheExplanationIsOffTheClock:
+    """The rationale is asked for AFTER the pick is submitted.
+
+    `decide_one` used to make both calls before returning, so the pick call and
+    the paragraph about the pick both sat between "our turn" and the click --
+    and the loop's TIMING line reported them together as one `model` number,
+    which is why a 61s reading looked like one slow call rather than two
+    ordinary ones. The explanation is asked about a pick that is already fixed,
+    so it can wait; what it cannot do is spend the clock.
+    """
+
+    def _run(self, monkeypatch, order, submit_fn=None):
+        monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
+
+        def decide(c, **kw):
+            order.append(("decide", kw.get("with_explanation")))
+            return _decision(CAND, "why", "model")
+
+        def submit(*a):
+            order.append(("submit", None))
+            if submit_fn:
+                submit_fn(*a)
+
+        def explain(decision, *a, **k):
+            order.append(("explain", None))
+            decision["considered"] = ["late but free"]
+            return decision
+
+        return loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
+                        _board_fn=_board(), _decide_fn=decide,
+                        _submit_fn=submit, _explain_fn=explain,
+                        _sleep_fn=lambda _s: None)
+
+    def test_the_decision_call_asks_for_no_explanation(self, monkeypatch):
+        order = []
+        self._run(monkeypatch, order)
+        assert ("decide", False) in order, \
+            "the pick call must not also pay for the explanation"
+
+    def test_the_explanation_runs_after_the_submit(self, monkeypatch):
+        order = []
+        self._run(monkeypatch, order)
+        steps = [k for k, _ in order]
+        assert steps.index("submit") < steps.index("explain"), \
+            f"explanation must not precede the click: {steps}"
+
+    def test_a_failed_explanation_does_not_lose_the_pick(self, monkeypatch):
+        """A missing paragraph is a cosmetic loss; a lost pick is not."""
+        monkeypatch.setattr(wes_execute, "writes_enabled", lambda: True)
+        monkeypatch.setattr(wes_sleeper, "drafted_player_ids_fresh",
+                            lambda d: set())
+        calls = []
+
+        def boom(*a, **k):
+            raise RuntimeError("model down")
+
+        rows = []
+        out = loop.run("D", "L", 1, _state_fn=_states([_state(0)]),
+                       _board_fn=_board(),
+                       _decide_fn=lambda c, **kw: _decision(CAND, "why", "model"),
+                       _submit_fn=lambda *a: calls.append(a),
+                       _record_fn=lambda *a, **k: rows.append(
+                           {"outcome": k.get("outcome") or a[6]}),
+                       _explain_fn=boom, _sleep_fn=lambda _s: None)
+        assert calls == [("D", "77", "Target Guy")], "the pick still landed"
+        assert "made 1 pick" in out
+        # And it must not be RECORDED as a failure. The pick has already landed
+        # when the explanation runs, so an escaping exception would otherwise
+        # write "failed" to the ledger about a roster spot that really is ours.
+        assert rows and rows[-1]["outcome"] == "drafted",             f"a failed explanation must not mark the pick failed: {rows}"

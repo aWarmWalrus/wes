@@ -385,6 +385,46 @@ def decide_one(candidates, context=None, _post_fn=None,
     return out(match, reason, "model", detail=True)
 
 
+def attach_explanation(decision, candidates, context=None, _post_fn=None):
+    """Fill in a decision's `considered` / `runner_up` / `why_not` AFTER the
+    pick has been submitted. Mutates and returns `decision`.
+
+    THE EXPLANATION IS NOT ON THE CLOCK ANY MORE. `decide_one` used to make
+    both calls before returning, so the pick call and the explain call both sat
+    between "our turn" and the click -- the draft's TIMING line reported them
+    together as one `model` number, which is why it read as a single slow call.
+    Measured 2026-09-03: 61s, 53s and 67s of `model` time against a 120s clock,
+    for two calls that individually take a few seconds.
+
+    Splitting them is safe precisely because the explanation was ALWAYS
+    post-hoc: it is asked about a pick that is already fixed (see `explain`),
+    so nothing it returns can change what was taken. The only thing that
+    changes is when we pay for it.
+
+    IDEMPOTENT: a decision that already carries a rationale is returned
+    untouched. That matters because `decide_one(with_explanation=True)` still
+    exists and still explains inline -- callers that use it must not be charged
+    for a second call -- and because it keeps a caller that supplies its own
+    decision (the draft-loop tests do) from reaching the network.
+
+    Never raises, and leaves the fields empty if the call fails -- a missing
+    paragraph must not cost the next pick."""
+    if not decision or not decision.get("candidate"):
+        return decision
+    if decision.get("considered") or decision.get("runner_up"):
+        return decision
+    try:
+        got = explain(candidates, decision["candidate"], context=context,
+                      _post_fn=_post_fn)
+        (decision["considered"], decision["runner_up"],
+         decision["why_not"]) = got
+    except Exception as e:  # noqa: BLE001 — see the docstring
+        decision["why_not"] = decision.get("why_not") or ""
+        print(f"[draft] explanation failed ({type(e).__name__}: {e})",
+              flush=True)
+    return decision
+
+
 def format_decision(d):
     """The decision as log lines. Multi-line on purpose: a draft is reviewed
     afterwards, and a rationale squeezed onto one line is a rationale nobody
