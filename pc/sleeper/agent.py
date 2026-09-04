@@ -169,6 +169,15 @@ def _ask_model(payload, _post_fn=None, system=None, _kind="draft.pick"):
     #
     # num_predict caps a runaway. Replies here measure 85-154 tokens; 256 is
     # generous and bounds the worst case, which was previously unbounded.
+    #
+    # think STAYS FALSE, and the cap is why it is not a free experiment.
+    # THINKING TOKENS COUNT AGAINST num_predict. Measured 2026-09-03 on a real
+    # pick payload: think=False generated 89 tokens in 2.08s; think=True spent
+    # the entire 256-token budget (2.8x slower) and the visible JSON was
+    # truncated -- which parses as garbage, which falls back to the engine's
+    # sort. So enabling thinking here would not merely be slower, it would
+    # quietly stop the model picking at all. Raise num_predict well past the
+    # thinking budget first, and measure the fallback rate before trusting it.
     body = json.dumps({
         "model": PICK_MODEL, "stream": False, "format": "json",
         "think": False, "keep_alive": -1,
