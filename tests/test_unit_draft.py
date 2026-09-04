@@ -381,3 +381,47 @@ class TestMustFill:
     def test_unknown_picks_left_does_not_invent_a_constraint(self):
         """None is UNKNOWN. Guessing here would force a kicker in round 2."""
         assert draft.must_fill({"K": 1}, None) == ()
+
+
+class TestFlexShare:
+    """Flex is capacity for ONE of several positions, not for each of them.
+
+    This was divided in `replacement_levels` and added WHOLE in the Sleeper
+    board's over-fill penalty. The penalty therefore tolerated 5 RBs, 5 WRs and
+    4 TEs before charging anything -- fourteen slots of slack on a fifteen-man
+    roster -- so once the nominal starters were filled, raw VOR took every
+    remaining pick and RB's scarcity edge won each one. Two consecutive live
+    mocks finished 8 RB / 3 WR and 7 RB / 2 WR in leagues that start two of
+    each (2026-09-03, 2026-09-04).
+
+    `targets_from_slots` already refuses to do this and says why in its
+    docstring (it produced `TE: 3`); the penalty was the last place that did.
+    """
+
+    def test_flex_is_split_across_eligible_positions(self):
+        assert draft.flex_share(2, {"RB", "WR", "TE"}) == pytest.approx(2 / 3)
+        assert draft.flex_share(1, {"RB", "WR"}) == pytest.approx(0.5)
+
+    def test_no_flex_is_no_share(self):
+        assert draft.flex_share(0, {"RB", "WR"}) == 0.0
+        assert draft.flex_share(2, set()) == 0.0
+        assert draft.flex_share(None, {"RB"}) == 0.0
+
+    def test_the_share_never_exceeds_the_real_capacity(self):
+        """THE BUG, stated as an invariant: whatever is handed to one position
+        must not exceed what the league actually has. Adding the full flex to
+        each of three positions promised six flex slots in a two-flex league."""
+        flex, pos = 2, {"RB", "WR", "TE"}
+        share = draft.flex_share(flex, pos)
+        assert share * len(pos) == pytest.approx(flex)
+        assert share < flex
+
+    def test_replacement_levels_use_the_same_share(self):
+        """Both callers must agree, or the board values a position on one
+        assumption and penalises it on another."""
+        board = [{"positions": ["RB"], "value": float(50 - i)} for i in range(60)]
+        board += [{"positions": ["WR"], "value": float(50 - i)} for i in range(60)]
+        targets = {"RB": 2, "WR": 2}
+        repl = draft.replacement_levels(board, targets, 2, {"RB", "WR"}, 12)
+        # 2 dedicated + 1.0 shared = 3 starters -> the 36th at that position.
+        assert repl["RB"] == pytest.approx(board[35]["value"])

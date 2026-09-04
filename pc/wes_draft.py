@@ -255,6 +255,26 @@ def targets_from_slots(slots):
     return targets, flex, flex_pos
 
 
+def flex_share(flex, flex_pos):
+    """Flex capacity attributable to ONE position. PURE.
+
+    Flex is capacity for one of SEVERAL positions, not capacity for each of
+    them, so it is split evenly across the eligible ones. Crude -- it does not
+    pretend to know this league's flex habits -- but it moves the number in the
+    right direction and, more importantly, it is ONE number used everywhere.
+
+    Extracted 2026-09-04 because it was not. `replacement_levels` divided the
+    flex; the roster-need penalty in the Sleeper board added it WHOLE to every
+    eligible position, so a 2-flex league tolerated 5 RBs, 5 WRs and 4 TEs
+    before any over-fill cost -- fourteen slots of tolerance on a fifteen-man
+    roster. The penalty therefore almost never bound, and once RB and WR were
+    nominally filled, raw VOR decided every remaining pick. `targets_from_slots`
+    already refuses to do exactly this (see its docstring, on TE: 3); the
+    penalty was the one place that still did.
+    """
+    return (flex / len(flex_pos)) if flex and flex_pos else 0.0
+
+
 def replacement_levels(players, targets, flex, flex_pos, teams):
     """Per-position replacement value: what the LAST startable player at that
     position is worth, league-wide. PURE.
@@ -281,10 +301,7 @@ def replacement_levels(players, targets, flex, flex_pos, teams):
     for vals in by_pos.values():
         vals.sort(reverse=True)
 
-    # Flex capacity is shared, so split it evenly across the positions that can
-    # fill it. Crude, but it moves replacement in the right direction and does
-    # not pretend to know this league's flex habits.
-    share = (flex / len(flex_pos)) if flex and flex_pos else 0.0
+    share = flex_share(flex, flex_pos)
 
     out = {}
     for pos, vals in by_pos.items():

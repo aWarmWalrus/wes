@@ -1003,7 +1003,15 @@ def draft_candidates(league_id, draft_id, roster_id, limit=8, _get_fn=None,
         # `startable` is how many of this position can actually take the field;
         # one backup beyond that is reasonable, and every one after that is a
         # bench flyer competing against a starting slot nobody has filled.
-        startable = targets.get(pos, 0) + (flex if pos in flex_pos else 0)
+        # THE FLEX SHARE, not the whole flex. Adding all of it to every
+        # eligible position let this league tolerate 5 RBs, 5 WRs and 4 TEs
+        # before any over-fill cost -- 14 slots of slack on a 15-man roster --
+        # so the penalty never bound and raw VOR took every pick after the
+        # nominal starters were filled. Result, twice running: 7 RB / 2 WR in a
+        # league that starts two of each (2026-09-04). `wes_draft.flex_share`
+        # is the same number `replacement_levels` already used.
+        startable = targets.get(pos, 0) + (
+            wes_draft.flex_share(flex, flex_pos) if pos in flex_pos else 0.0)
         surplus = have.get(pos, 0) - (startable + 1)
         # An unfilled slot is not equally urgent at every position. Once the
         # skill slots were full, K and DEF were the only gaps left and took the
