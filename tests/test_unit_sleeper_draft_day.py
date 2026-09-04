@@ -269,3 +269,58 @@ class TestModelResidencyCheck:
             f"preflight must return (ok, lines), got {got!r}"
         ok, lines = got
         assert isinstance(ok, bool) and isinstance(lines, list) and lines
+
+
+class TestDiscordBotAdvisory:
+    """The bot shares this Ollama, and Ollama serialises PER MODEL.
+
+    A Discord turn on the deep tier (thinking on, 2048-token budget) holds
+    gemma4:12b for ~36s, and a pick landing in that window waits behind it --
+    measured 2026-09-03 at 2.07s of work and 37.32s queued, which is exactly the
+    40s picks the mock draft produced. Advisory rather than a failure: harmless
+    on a 600s clock, expensive on a 60s one, and stopping the bot is a
+    judgement call about being reachable on Discord, not a correctness one.
+    """
+
+    def _lines(self, monkeypatch, running):
+        from sleeper import draft_day as day
+        monkeypatch.setattr(day, "_discord_bot_running", lambda: running)
+        monkeypatch.setattr(day.wes_sleeper, "league",
+                            lambda *a, **k: (_ for _ in ()).throw(
+                                RuntimeError("no network in unit tests")))
+        _ok, lines = day.preflight(_probe_browser=False)
+        return "\n".join(lines)
+
+    def test_says_nothing_alarming_when_the_bot_is_stopped(self, monkeypatch):
+        out = self._lines(monkeypatch, False)
+        assert "RUNNING" not in out
+
+    def test_unknown_state_is_silent_rather_than_guessing(self, monkeypatch):
+        """schtasks can fail or the task can be absent. Reporting 'stopped' on
+        no evidence would be a claim we cannot support."""
+        out = self._lines(monkeypatch, None)
+        assert "WES Discord" not in out
+
+    def test_it_never_fails_the_preflight(self, monkeypatch):
+        """A running bot is a trade-off, not a broken pre-condition. Failing
+        here would refuse to draft over something harmless on a long clock."""
+        from sleeper import draft_day as day
+        monkeypatch.setattr(day, "_discord_bot_running", lambda: True)
+        monkeypatch.setattr(day.wes_sleeper, "league",
+                            lambda *a, **k: {"draft_id": None, "name": "x",
+                                             "status": "pre_draft"})
+        ok, lines = day.preflight(_probe_browser=False)
+        joined = "\n".join(lines)
+        assert "WES Discord is RUNNING" in joined
+        assert "[FAIL] WES Discord" not in joined
+
+    def test_the_probe_returns_none_when_schtasks_is_unavailable(self,
+                                                                monkeypatch):
+        import subprocess
+        from sleeper import draft_day as day
+
+        def boom(*a, **k):
+            raise FileNotFoundError("schtasks")
+
+        monkeypatch.setattr(subprocess, "run", boom)
+        assert day._discord_bot_running() is None

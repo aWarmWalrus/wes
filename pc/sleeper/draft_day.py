@@ -54,6 +54,34 @@ USERNAME = wes_sleeper.USERNAME       # WES_SLEEPER_USER overrides
 SNAPSHOT_MAX_AGE_S = 36 * 3600
 
 
+def _discord_bot_running():
+    """True if the "WES Discord" scheduled task is running, None if unknown.
+
+    Not a failure -- an advisory. The bot and the draft share one Ollama, and
+    Ollama serialises requests PER MODEL, so a Discord turn on the deep tier
+    (thinking on, 2048-token budget) holds gemma4:12b for ~36s and a pick that
+    lands in that window waits behind it. Measured 2026-09-03: a pick doing
+    2.07s of work took 39.39s wall, 37.32s of it queued -- which accounts
+    exactly for the 40s picks seen in the 2026-09-03 mock.
+
+    Harmless on a 600s clock and expensive on a 60s one, so this reports rather
+    than decides. Stopping the bot is one command and the pre-flight says so.
+    """
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["schtasks", "/query", "/tn", "WES Discord", "/fo", "list"],
+            capture_output=True, text=True, timeout=15)
+        if out.returncode != 0:
+            return None
+        for line in out.stdout.splitlines():
+            if line.lower().startswith("status:"):
+                return line.split(":", 1)[1].strip().lower() == "running"
+        return None
+    except Exception:  # noqa: BLE001 — a pre-flight probe must not raise
+        return None
+
+
 def _resident_models():
     """Model names Ollama currently holds in memory, or None if unreadable."""
     import urllib.request
@@ -278,6 +306,19 @@ def preflight(league_id=LEAGUE, username=USERNAME, draft_id=None,
         else:
             check("both models resident", True,
                   f"{', '.join(sorted(resident))}")
+
+    # Advisory, never a failure: whether the OTHER user of this Ollama is up.
+    bot = _discord_bot_running()
+    if bot:
+        lines.append(
+            "  [ -- ] WES Discord is RUNNING — it shares this Ollama, and a "
+            "Discord turn on the deep tier holds gemma4:12b for ~36s. A pick "
+            "landing in that window waits behind it (measured: 2.07s of work, "
+            "37.32s queued). Fine on a long clock; on a short one stop it: "
+            "Stop-ScheduledTask -TaskName 'WES Discord'")
+    elif bot is False:
+        lines.append("  [ -- ] WES Discord is stopped — picks have the 12b to "
+                     "themselves")
 
     if _probe_browser and wes_sleeper.TOKEN:
         # The session is the single most likely thing to be broken on the day,
