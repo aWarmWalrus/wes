@@ -38,14 +38,31 @@ class TestPickVerdict:
         assert small["verdict"] == "reach"
         assert large["verdict"] == "a bit early"
 
-    def test_no_verdict_below_the_drafted_pool(self):
+    def test_a_pick_below_the_drafted_pool_is_never_a_reach(self):
         """THE KICKER CASE. Ka'imi Fairbairn went at pick 83 with a market rank
         around 200 — a completely normal round-14 kicker — and the first cut of
         this called it a 'reach, 19.5 rounds early'. Consensus rank stops
-        meaning anything past the players a draft will actually take."""
-        assert b.pick_verdict(83, 200, teams=6, rounds=15) is None   # pool = 90
-        # ...and the same player in a draft deep enough to reach him is judged.
-        assert b.pick_verdict(83, 200, teams=16, rounds=15) is not None
+        meaning anything past the players a draft will actually take.
+
+        THE ASSERTION CHANGED ON 2026-09-04, and deliberately. This used to
+        demand None, which also made every genuinely unranked player invisible
+        — including one taken at pick 8 of a live draft (see
+        TestUnrankedPlayers). Returning a verdict anchored at pool+1 keeps the
+        kicker sane at 1.3 rounds instead of 19.5 while letting the round-one
+        reach through.
+
+        What the original test was really protecting is unchanged and is what
+        is asserted now: this pick must never be called a reach, and must never
+        be notable enough to start a conversation about it."""
+        got = b.pick_verdict(83, 200, teams=6, rounds=15)          # pool = 90
+        assert got["verdict"] != "reach"
+        assert got["verdict"] not in b.NOTABLE_VERDICTS
+        assert got["rounds_early"] < 2, "19.5 rounds early was the bug"
+        # ...and the same player in a draft deep enough to reach him is judged
+        # on his real rank rather than the pool boundary.
+        deep = b.pick_verdict(83, 200, teams=16, rounds=15)
+        assert deep is not None and deep["market_rank"] == 200
+        assert "unranked" not in deep
 
     def test_a_defence_taken_absurdly_early_is_still_a_reach(self):
         """The pool rule must not become a blanket excuse for K/DEF: a defence
@@ -54,10 +71,73 @@ class TestPickVerdict:
         got = b.pick_verdict(pick_no=30, market_rank=85, teams=6, rounds=15)
         assert got["verdict"] == "reach"
 
-    def test_an_unranked_player_gets_no_verdict(self):
-        assert b.pick_verdict(10, None, teams=6, rounds=15) is None
+    def test_missing_inputs_still_give_no_verdict(self):
         assert b.pick_verdict(None, 10, teams=6, rounds=15) is None
         assert b.pick_verdict(10, 20, teams=0, rounds=15) is None
+
+
+class TestUnrankedPlayers:
+    """An unranked player taken INSIDE the pool is the biggest reach there is.
+
+    This used to return None, and that blindness was visible in a live draft
+    (2026-09-04): one manager took Jjay Mcafee at pick 8, Dakereon Joyner at 32
+    and Camerun Peoples at 41 -- nobody had any of them ranked -- and the bot
+    said nothing about any of it, because Sleeper returns no search_rank for
+    players outside its ranked pool. Across 64 picks the scale produced 38
+    value verdicts, 20 "about right", and ZERO reaches. A draft does not behave
+    that way; the scale did.
+
+    The old guard bailed on a missing rank AND on a rank past the drafted pool.
+    It was written for the opposite case -- a round-14 kicker whose rank of
+    ~200 made him "19.5 rounds early" -- and conflating the two cost every real
+    reach.
+    """
+
+    def test_unranked_taken_in_round_one_is_a_reach(self):
+        got = b.pick_verdict(pick_no=8, market_rank=None, teams=12, rounds=15)
+        assert got["verdict"] == "reach"
+        assert got["unranked"] is True
+
+    def test_unranked_reports_no_rank_rather_than_a_made_up_one(self):
+        """`rounds_early` is a FLOOR here -- we know the player is below the
+        pool, not where in it. market_rank must stay null so the prompt says
+        'nobody had him ranked' instead of quoting a number it cannot support."""
+        got = b.pick_verdict(pick_no=32, market_rank=None, teams=12, rounds=15)
+        assert got["market_rank"] is None
+        assert got["unranked"] is True
+        assert got["rounds_early"] > 0
+
+    def test_the_round_14_kicker_stays_sane(self):
+        """THE REGRESSION THIS MUST NOT REINTRODUCE. Anchoring at pool+1 rather
+        than the raw rank is what keeps him at 1.3 rounds early -- 'a bit
+        early', which is not notable and starts no conversation -- instead of
+        the 19.5 that made the bot worth muting."""
+        got = b.pick_verdict(pick_no=83, market_rank=200, teams=6, rounds=15)
+        assert got["verdict"] == "a bit early"
+        assert got["rounds_early"] < 2
+        assert got["verdict"] not in b.NOTABLE_VERDICTS
+
+    def test_unranked_outside_the_pool_is_still_nothing_to_say(self):
+        """Pick 200 of a 180-pick draft: he is below the pool and so is the
+        pick. There is no comparison to make."""
+        assert b.pick_verdict(200, None, teams=12, rounds=15) is None
+
+    def test_a_ranked_player_is_unaffected(self):
+        got = b.pick_verdict(pick_no=50, market_rank=20, teams=12, rounds=15)
+        assert got["verdict"] == "steal"
+        assert got["market_rank"] == 20
+        assert "unranked" not in got
+
+    def test_without_a_pool_size_an_unranked_pick_is_unjudgeable(self):
+        """No `rounds` means no pool, so there is no anchor to measure from."""
+        assert b.pick_verdict(8, None, teams=12, rounds=None) is None
+
+    def test_the_real_draft_that_exposed_this(self):
+        """The three picks from the 2026-09-04 mock, verbatim."""
+        for pick_no in (8, 32, 41):
+            got = b.pick_verdict(pick_no, None, teams=12, rounds=15)
+            assert got and got["verdict"] == "reach", pick_no
+            assert got["verdict"] in b.NOTABLE_VERDICTS, "must break silence"
 
 
 class TestTheBriefTellsItToUseThisMaterial:

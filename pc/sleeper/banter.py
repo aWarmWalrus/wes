@@ -104,6 +104,12 @@ SYSTEM = (
     "(negative means it fell to them). `market_rank` is where the player was "
     "ranked overall. TRUST THESE NUMBERS, do not recompute them -- and do not "
     "call something a reach when the verdict says it was value.\n"
+    "  * `unranked` -- true when NOBODY had the player ranked and he was "
+    "taken inside the draft anyway. That is the biggest reach there is and "
+    "it is worth saying so. But `market_rank` is null there and "
+    "`rounds_early` is only a MINIMUM, so say 'nobody had him ranked' or "
+    "'I have never heard of him' -- do NOT quote the number, because we "
+    "know he was below the pool and not where in it.\n"
     "  * `we_wanted` -- true when somebody took a player who was on YOUR "
     "shortlist for that very pick. That is the most quotable thing that "
     "happens in a draft and you should usually say so.\n"
@@ -192,11 +198,38 @@ def pick_verdict(pick_no, market_rank, teams, rounds=None):
     muting. Kickers and defences are the common case; deep bench flyers are
     the same problem.
     """
-    if not pick_no or not market_rank or not teams:
+    if not pick_no or not teams:
         return None
-    if rounds and market_rank > teams * rounds:
-        return None
-    rounds_early = (market_rank - pick_no) / float(teams)
+
+    # UNRANKED IS NOT UNJUDGEABLE, and treating it as such made the bot blind
+    # to the biggest reaches there are. Sleeper returns no search_rank for
+    # anyone outside its ranked pool, so "Jjay Mcafee at pick 8" -- a player
+    # nobody has ranked, taken in ROUND ONE -- scored None and never reached
+    # the chat, while every ordinary pick scored "good value" (observed live
+    # 2026-09-04: 0 reaches and 0 "a bit early" across 64 picks, against 38
+    # value verdicts. A draft does not behave that way; the scale did).
+    #
+    # The old guard bailed on both a missing rank and a rank past the drafted
+    # pool. That was written for the OPPOSITE case -- a round-14 kicker whose
+    # rank of ~200 made him "19.5 rounds early" -- and the two are not the same
+    # thing. Being unranked only tells us the player is BELOW the pool, so:
+    #
+    #   * taken inside the pool -> we know he went earlier than his rank, and
+    #     how much earlier is bounded below by (pool + 1 - pick).
+    #   * taken outside the pool -> genuinely nothing to say. Still None.
+    #
+    # Anchoring at pool + 1 rather than the raw rank is what keeps the kicker
+    # sane: at pick 83 of a 90-pick pool he is 1.3 rounds early ("a bit
+    # early", not notable), instead of 19.5.
+    pool = teams * rounds if rounds else None
+    unranked = not market_rank or (pool and market_rank > pool)
+    if unranked:
+        if not pool or pick_no > pool:
+            return None
+        effective_rank = pool + 1
+    else:
+        effective_rank = market_rank
+    rounds_early = (effective_rank - pick_no) / float(teams)
     if rounds_early >= 1.5:
         verdict = "reach"
     elif rounds_early >= 0.5:
@@ -207,8 +240,15 @@ def pick_verdict(pick_no, market_rank, teams, rounds=None):
         verdict = "good value"
     else:
         verdict = "about right"
-    return {"verdict": verdict, "rounds_early": round(rounds_early, 1),
-            "market_rank": market_rank}
+    out = {"verdict": verdict, "rounds_early": round(rounds_early, 1),
+           "market_rank": market_rank if not unranked else None}
+    if unranked:
+        # FLAGGED, because rounds_early is a FLOOR here, not a measurement: we
+        # know the player is below the pool, not where. The prompt uses this to
+        # say "nobody had him ranked" instead of quoting a precise number it
+        # cannot support -- the same discipline as every other checkable claim.
+        out["unranked"] = True
+    return out
 
 
 def _ask(payload, _post_fn=None):
