@@ -36,6 +36,7 @@ already happened once:
 Better to fail all of them at 12:30 than one of them at 13:00.
 """
 import argparse
+import json
 import sys
 import time
 
@@ -51,6 +52,18 @@ USERNAME = wes_sleeper.USERNAME       # WES_SLEEPER_USER overrides
 # How stale a snapshot may be before draft day is a bad time to find out. The
 # thing takes ~5s to rebuild, so there is no reason to run on a week-old board.
 SNAPSHOT_MAX_AGE_S = 36 * 3600
+
+
+def _resident_models():
+    """Model names Ollama currently holds in memory, or None if unreadable."""
+    import urllib.request
+    from sleeper import agent as wes_draft_agent
+    try:
+        with urllib.request.urlopen(
+                wes_draft_agent.OLLAMA_URL + "/api/ps", timeout=10) as r:
+            return [m.get("name") for m in json.load(r).get("models", [])]
+    except Exception:  # noqa: BLE001 — a pre-flight probe must not raise
+        return None
 
 
 def preflight(league_id=LEAGUE, username=USERNAME, draft_id=None,
@@ -213,6 +226,58 @@ def preflight(league_id=LEAGUE, username=USERNAME, draft_id=None,
           if isinstance(got, dict) else
           f"{wes_draft_agent.PICK_MODEL} gave no usable reply — every pick "
           f"would fall back to the engine")
+
+    # THE BANTER MODEL IS WARMED HERE ON PURPOSE, when it is a different one.
+    #
+    # Loading a second model can evict the first: measured 2026-09-03, the
+    # first gemma3:4b call evicted the pinned gemma4:12b, which then paid a
+    # 3.62s reload. Once BOTH are resident they coexist happily (8.4GB + 3.1GB,
+    # zero reloads across six alternating cycles) -- the cost is entirely in the
+    # transition. Paying it here, minutes before the room opens, means the first
+    # chat line of the draft cannot be what evicts the model the next pick needs.
+    #
+    # It also reports headroom, because two models leave ~2GB spare on this
+    # card and anything else wanting VRAM makes that a thrash rather than a fit.
+    from sleeper import banter as wes_banter
+    if wes_banter.MODEL != wes_draft_agent.PICK_MODEL:
+        got_b = wes_banter._ask({"draft": {}, "note": "pre-flight warm-up"})
+        check("banter model", isinstance(got_b, dict),
+              f"{wes_banter.MODEL} answered"
+              if isinstance(got_b, dict) else
+              f"{wes_banter.MODEL} gave no usable reply — chat would go quiet "
+              f"(picks are unaffected)")
+
+        # THEN ASK OLLAMA WHAT IS ACTUALLY RESIDENT, rather than assuming the
+        # warm-up left both there. The first version of this check announced
+        # "now resident alongside gemma4:12b" without looking, and was wrong:
+        # loading the 4b had evicted the 12b, so the very next pick would have
+        # paid a reload while the pre-flight said everything was fine. That is
+        # the exact class of failure `wes-dev.ps1 models check` exists for --
+        # config asserting something reality does not agree with.
+        resident = _resident_models()
+        if resident is None:
+            check("both models resident", False,
+                  "could not read /api/ps — cannot confirm the pick model "
+                  "survived loading the banter model")
+        elif wes_draft_agent.PICK_MODEL not in resident:
+            # Put it back, then say so. Re-warming is a few seconds here and
+            # saves them off the first pick's clock.
+            wes_draft_agent._ask_model(
+                {"context": {"phase": "starters"}, "shortlist": [
+                    {"player_key": "1", "name": "Test Player",
+                     "position": "RB"}]})
+            again = _resident_models() or []
+            check("both models resident", wes_draft_agent.PICK_MODEL in again,
+                  f"{wes_draft_agent.PICK_MODEL} was evicted by the banter "
+                  f"model and has been reloaded; resident now: "
+                  f"{', '.join(again) or 'none'}"
+                  if wes_draft_agent.PICK_MODEL in again else
+                  f"{wes_draft_agent.PICK_MODEL} keeps being evicted — the two "
+                  f"models do not fit together. Set WES_BANTER_MODEL to "
+                  f"{wes_draft_agent.PICK_MODEL} to put chat back on one model")
+        else:
+            check("both models resident", True,
+                  f"{', '.join(sorted(resident))}")
 
     if _probe_browser and wes_sleeper.TOKEN:
         # The session is the single most likely thing to be broken on the day,

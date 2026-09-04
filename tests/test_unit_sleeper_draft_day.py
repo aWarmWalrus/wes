@@ -208,3 +208,64 @@ class TestJoinIsOptIn:
                       lambda *a, **k: seen.append(k.get("max_age")) or 1)
         _lines(wired, join=True, _join_fn=lambda d, u: 1)
         assert seen and seen[0] == 0
+
+
+class TestModelResidencyCheck:
+    """Two models must both be resident before the room opens.
+
+    Loading a second model can EVICT the first: measured 2026-09-03, the first
+    gemma3:4b call evicted the pinned gemma4:12b, which then paid a 3.62s
+    reload. Once both are up they coexist happily, so the entire cost sits in
+    the transition -- and the pre-flight is the right place to pay it, minutes
+    before the clock matters rather than on the first chat line of the draft.
+    """
+
+    def test_reports_what_ollama_actually_holds(self, monkeypatch):
+        import json as _json
+        from sleeper import draft_day as day
+
+        class Resp:
+            def read(self):
+                return _json.dumps({"models": [{"name": "gemma4:12b"},
+                                               {"name": "gemma3:4b"}]}).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr(day.json, "load", lambda r: _json.loads(r.read()))
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: Resp())
+        assert day._resident_models() == ["gemma4:12b", "gemma3:4b"]
+
+    def test_an_unreachable_ollama_is_none_not_an_exception(self, monkeypatch):
+        """None means 'could not look', which the caller reports as a FAILED
+        check. An empty list would mean 'nothing is loaded' -- a different and
+        much more alarming claim."""
+        import urllib.request
+        from sleeper import draft_day as day
+
+        def boom(*a, **k):
+            raise OSError("connection refused")
+
+        monkeypatch.setattr(urllib.request, "urlopen", boom)
+        assert day._resident_models() is None
+
+    def test_preflight_still_returns_ok_and_lines(self, monkeypatch):
+        """A REGRESSION GUARD FOR A REAL BREAK. The residency helper was first
+        written at column 0 in the middle of `preflight`, which silently ended
+        that function early: it returned None, the browser check became dead
+        code inside the helper, and the launcher died with 'cannot unpack
+        non-iterable NoneType object'. Nothing about the pre-flight's own
+        assertions would have caught it."""
+        from sleeper import draft_day as day
+        monkeypatch.setattr(day.wes_sleeper, "league",
+                            lambda *a, **k: (_ for _ in ()).throw(
+                                RuntimeError("no network in unit tests")))
+        got = day.preflight(_probe_browser=False)
+        assert isinstance(got, tuple) and len(got) == 2, \
+            f"preflight must return (ok, lines), got {got!r}"
+        ok, lines = got
+        assert isinstance(ok, bool) and isinstance(lines, list) and lines

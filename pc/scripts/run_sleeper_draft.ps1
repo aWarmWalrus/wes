@@ -51,6 +51,24 @@ if (-not $env:WES_SLEEPER_USER) {
         'WES_SLEEPER_USER', 'User')
 }
 
+# BANTER RUNS ON THE SMALL MODEL, picks stay on the 12b.
+#
+# Measured on 12 real logged payloads (2026-09-03): gemma3:4b answers a chat
+# line in 0.73s median against the 12b's 2.03s, produces valid JSON just as
+# reliably, and was not caught by the unverifiable() falsehood guard once. It
+# takes chat off the 12b entirely, so a chat line can no longer queue ahead of
+# a pick -- one Ollama serves this whole machine and it serialises requests.
+#
+# THE COST IS TONE, and it is visible: the 4b is formulaic ("Ugh, X?
+# Seriously?" three times running) and produced one line that read as
+# semantically inverted. The falsehood guard catches checkable false claims,
+# not clumsy ones. It also costs ~3GB of VRAM, leaving roughly 2GB spare on
+# this card once both models are resident.
+#
+# To put chat back on the 12b, delete this line (the code falls back to
+# WES_ESCALATE_MODEL). The pre-flight warms whichever model is configured.
+if (-not $env:WES_BANTER_MODEL) { $env:WES_BANTER_MODEL = "gemma3:4b" }
+
 # RUN AS A MODULE, not a script path. The Sleeper code lives in the `sleeper`
 # package now, and `python pc\sleeper\draft_day.py` would put pc\sleeper on
 # sys.path instead of pc -- so `from sleeper import data` would not resolve.

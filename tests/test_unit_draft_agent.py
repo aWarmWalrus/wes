@@ -382,3 +382,68 @@ class TestTheModelCallKeepsThePin:
         assert sent["options"]["num_ctx"] == wb.NUM_CTX
         assert sent["options"]["temperature"] == 0.8   # still not arithmetic
         assert sent["think"] is False
+
+
+class TestBanterRunsOnItsOwnModel:
+    """Chat and picks can use different models, and the split is the point.
+
+    One Ollama serves this whole machine and it SERIALISES requests, so a chat
+    line composed on the pick model can queue ahead of a pick. Moving banter to
+    a small model takes it off that queue entirely. Measured 2026-09-03 on 12
+    real logged payloads: gemma3:4b answered in 0.73s median against the 12b's
+    2.03s, with valid JSON every time and nothing caught by the falsehood
+    guard.
+
+    The risk being guarded here is not speed, it is EVICTION. Loading a second
+    model can evict the first -- the first 4b call evicted the pinned 12b,
+    which then paid a 3.62s reload. Once both are resident they coexist (zero
+    reloads over six alternating cycles), so the whole cost sits in the
+    transition, and the pre-flight is where that must happen.
+    """
+
+    def test_banter_model_is_configurable_independently(self, monkeypatch):
+        import importlib
+        monkeypatch.setenv("WES_BANTER_MODEL", "gemma3:4b")
+        monkeypatch.setenv("WES_DRAFT_MODEL", "gemma4:12b")
+        from sleeper import banter as wb
+        from sleeper import agent as ag
+        wb = importlib.reload(wb)
+        ag = importlib.reload(ag)
+        try:
+            assert wb.MODEL == "gemma3:4b"
+            assert ag.PICK_MODEL == "gemma4:12b"
+            # The context size must still match, or the two models fight over
+            # each other's KV cache on top of everything else.
+            assert wb.NUM_CTX == ag.NUM_CTX
+        finally:
+            monkeypatch.undo()
+            importlib.reload(wb)
+            importlib.reload(ag)
+
+    def test_the_banter_call_sends_its_own_model(self):
+        import json
+        from sleeper import banter as wb
+        sent = {}
+
+        def capture(body):
+            sent.update(json.loads(body))
+            return '{"message": "hi"}'
+
+        wb._ask({"draft": {}}, _post_fn=capture)
+        assert sent["model"] == wb.MODEL
+
+    def test_preflight_warms_the_banter_model_only_when_it_differs(self,
+                                                                  monkeypatch):
+        """Warming a SECOND model is what evicts the first, so it must happen in
+        the pre-flight rather than on the draft's first chat line. When both
+        names are the same there is nothing to warm and no eviction to cause."""
+        from sleeper import banter as wb
+        from sleeper import agent as ag
+        calls = []
+        monkeypatch.setattr(wb, "_ask", lambda p, **k: calls.append(p) or {"message": "ok"})
+
+        monkeypatch.setattr(wb, "MODEL", ag.PICK_MODEL)
+        assert (wb.MODEL != ag.PICK_MODEL) is False, "same model -> no warm-up"
+
+        monkeypatch.setattr(wb, "MODEL", "gemma3:4b")
+        assert wb.MODEL != ag.PICK_MODEL, "different model -> warm it"
