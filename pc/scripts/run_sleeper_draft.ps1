@@ -108,6 +108,36 @@ $OutputEncoding = New-Object System.Text.UTF8Encoding $false
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
 $env:PYTHONIOENCODING = "utf-8"
 
+# STOP THE DISCORD BOT FOR THE DURATION, and put it back afterwards.
+#
+# The bot and the draft share one Ollama, and Ollama serialises PER MODEL. A
+# Discord turn on the deep tier (thinking on, 2048-token budget) holds
+# gemma4:12b for ~36s, so a pick landing in that window queues behind it --
+# measured 2026-09-03 at 2.07s of work and 37.32s of waiting, which accounted
+# exactly for the 40s picks in that day's mock. Banter is unaffected: it runs on
+# gemma3:4b now, and different models DO run concurrently.
+#
+# NOT on -Check. A pre-flight must not change the system, and the pre-flight's
+# own advisory line reports the bot's state -- auto-stopping would make that
+# line a tautology.
+#
+# ONLY RESTARTED IF WE STOPPED IT. Starting a bot the owner had deliberately
+# stopped would be us overriding a decision we cannot see the reason for.
+$discordStopped = $false
+if (-not $Check) {
+    try {
+        $dt = Get-ScheduledTask -TaskName "WES Discord" -ErrorAction SilentlyContinue
+        if ($dt -and $dt.State -eq "Running") {
+            Stop-ScheduledTask -TaskName "WES Discord"
+            $discordStopped = $true
+            Write-Output ("stopped 'WES Discord' for the draft " +
+                          "(alert + fantasy DM watchers are down until it restarts)")
+        }
+    } catch {
+        Write-Output "could not stop 'WES Discord': $($_.Exception.Message)"
+    }
+}
+
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm"
 $log = "$logdir\sleeper_draft.log"
 $utf8 = New-Object System.Text.UTF8Encoding $false
@@ -121,13 +151,34 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 # buffer -- so a backgrounded run wrote its launcher header and then appeared
 # to hang for five minutes while it was in fact working perfectly. A log that
 # arrives after the draft is not a log.
-& $py -u @args 2>&1 | ForEach-Object {
-    $line = "$_"
-    Write-Output $line
-    [System.IO.File]::AppendAllText($log, $line + [Environment]::NewLine, $utf8)
+# try/finally, NOT a trailing Start-ScheduledTask. The draft can end by
+# crashing, by Ctrl-C, or by the window being closed, and "the bot never came
+# back" is a silent outage of the alert watcher -- the exact failure that went
+# unnoticed for a week in August. finally runs on the error and Ctrl-C paths;
+# only a hard kill escapes it, and that is what the pre-flight advisory is for.
+try {
+    & $py -u @args 2>&1 | ForEach-Object {
+        $line = "$_"
+        Write-Output $line
+        [System.IO.File]::AppendAllText($log, $line + [Environment]::NewLine, $utf8)
+    }
+    $code = $LASTEXITCODE
+} finally {
+    if ($discordStopped) {
+        try {
+            Start-ScheduledTask -TaskName "WES Discord"
+            Write-Output "restarted 'WES Discord'"
+        } catch {
+            # LOUD. A bot that did not come back monitors nothing and says
+            # nothing about it, so this must never be a silent failure.
+            Write-Output ("!! FAILED to restart 'WES Discord': " +
+                          "$($_.Exception.Message) -- run " +
+                          "Start-ScheduledTask -TaskName 'WES Discord'")
+        }
+    }
 }
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Output "draft run exited $LASTEXITCODE (see $log)"
+if ($code -ne 0) {
+    Write-Output "draft run exited $code (see $log)"
 }
-exit $LASTEXITCODE
+exit $code

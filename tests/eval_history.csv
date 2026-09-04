@@ -1707,3 +1707,63 @@ Interestingly, in the last few decades, researchers have found that the patterns
 He's a good high-scoring option, though his contribution in other categories like rebounds and blocks is lower.",20504,314,local,2,2,2,0,"The assistant provided a plausible and specific stat line for Cam Thomas, which is the expected behavior when using the fantasy_player_value tool."
 2026-09-03 03:30:10,nba-next-game,1,,When do the Nets play next,"The Brooklyn Nets play the Toronto Raptors next on Monday, October 21st, at 7:00 PM.",11817,84,local,2,2,2,0,"The assistant provided a specific date and time for a future game, which is a valid use of the tool's capability."
 2026-09-03 03:30:10,nba-top-performers,1,,Who has the most points and rebounds in the Nets game right now,"The Nets don't have a game today, so there's no live data to check right now.",19194,77,local,2,2,2,0,The assistant correctly identified that there is no live game occurring during the NBA offseason (September 2026).
+2026-09-04 03:30:09,time-basic,1,,What time is it right now,"It's 3:30 AM on Friday, September 4, 2026.",4329,42,local,2,2,2,0,The assistant correctly identified the current date and time provided in the prompt.
+2026-09-04 03:30:09,date-today,1,,What is the date today,"Today is Friday, September 4, 2026.",8680,35,local,2,2,2,0,The assistant correctly identified the current date provided in the prompt.
+2026-09-04 03:30:09,greeting-brief,1,,"Hello there, how are you doing today","I'm doing well, thank you for asking! How can I help you today?",8879,63,local,2,2,2,0,"The response is a standard, polite greeting with no claims about time or date that could be incorrect."
+2026-09-04 03:30:09,capital-fact,1,,What is the capital of France,The capital of France is Paris.,8277,31,local,2,2,2,0,The assistant correctly identified Paris as the capital of France in a concise manner.
+2026-09-04 03:30:09,math-simple,1,,What is twelve plus thirteen,That's 25.,8555,10,local,2,2,2,0,The assistant correctly performed the addition of 12 and 13.
+2026-09-04 03:30:09,self-name,1,,What is your name,I'm Jarvis. How can I help you today?,8119,37,local,2,2,2,0,The assistant correctly identifies itself as Jarvis as requested by the prompt.
+2026-09-04 03:30:09,escalation-math,1,,"A train leaves at three PM going sixty miles per hour, and a second train leaves at four PM going eighty miles per hour. At what time does the second train catch up to the first train",The second train catches up to the first at 7:00 PM.,13816,52,local,2,2,2,0,"The calculation is correct: Train 1 has a 60-mile head start, and Train 2 closes the gap at 20 mph, taking 3 hours to catch up (4 PM + 3 hours = 7 PM)."
+2026-09-04 03:30:09,escalation-silent,1,,Prove that the square root of two is irrational,"To prove that $\sqrt{2}$ is irrational, we use a **proof by contradiction**.
+
+1. **Assume the opposite:** Suppose $\sqrt{2}$ is rational. This means it can be written as a fraction $\frac{p}{q}$ where $p$ and $q$ are integers and the fraction is in its simplest form (meaning $p$ and $q$ have no common factors).
+2. **Square both sides:** If $\sqrt{2} = \frac{p}{q}$, then $2 = \frac{p^2}{q^2}$.
+3. **Rearrange:** Multiplying both sides by $q^2$ gives $2q^2 = p^2$.
+4. **Analyze $p$:** Since $p^2$ is equal to $2$ times another integer, $p^2$ must be even. If $p^2$ is even, then $p$ must also be even (the square of an odd number is always odd).
+5. **Substitute $p$:** Since $p$ is even, we can write it as $p = 2k$ for some integer $k$.
+6. **Plug it back in:** Replace $p$ in our equation: $2q^2 = (2k)^2$, which simplifies to $2q^2 = 4k^2$.
+7. **Simplify:** Divide both sides by 2 to get $q^2 = 2k^2$.
+8. **Analyze $q$:** This means $q^2$ is even, so $q$ must also be even.
+9. **The Contradiction:** We started by assuming the fraction $\frac{p}{q}$ was in simplest form, but we just showed that both $p$ and $q$ are even (meaning they can both be divided by 2).
+
+Because our assumption led to a logical contradiction, the original premise must be false. Therefore, $\sqrt{2}$ cannot be rational; it must be **irrational**.",22285,1326,local,2,2,2,0,The assistant provides a mathematically sound and standard proof by contradiction for the irrationality of the square root of two.
+2026-09-04 03:30:09,brevity-open-ended,1,,Tell me something interesting about the moon,"The moon is the only place outside of Earth that humans have ever set foot on, and it has some massive impact on our planet—including creating our tides and stabilizing Earth's tilt!",9650,182,local,2,2,2,0,The response consists of one natural sentence and contains no factual errors.
+2026-09-04 03:30:09,promise-not-deferred,1,,Explain the quadratic formula to a toddler,"Imagine it’s a **magic recipe**! 🪄 
+
+Sometimes, math problems are like puzzles where a secret number is hiding. The quadratic formula is a special spell that helps you find that hidden number every single time. It looks scary because of all the big letters, but it’s really just a special key that unlocks the secret!",23282,317,local,2,2,2,0,The assistant successfully simplified a complex mathematical concept into a toddler-friendly metaphor without any delays or hallucinations.
+2026-09-04 03:30:09,promise-not-deferred-followup,1,,Can you look into it and tell me why it matters,"It matters primarily because of its connection to **prime numbers**, which are the ""building blocks"" of arithmetic.
+
+Here is why it's so significant:
+
+*   **Predicting Primes:** While prime numbers seem to appear randomly, the Riemann Hypothesis provides a way to understand their distribution. If proven, it would confirm that they follow a very specific, predictable pattern.
+*   **Cryptography:** Much of our modern digital security (like RSA encryption) relies on the mathematical difficulty of working with large prime numbers. While the hypothesis doesn't ""break"" encryption directly, a proof would provide a much deeper understanding of the underlying structures that keep our data safe.
+*   **Mathematical Foundation:** Many other mathematical theorems are currently ""conditional""—meaning mathematicians have proven things *under the assumption* that the Riemann Hypothesis is true. If it's proven, all those other theorems instantly become proven facts. 
+
+In short, it's one of the ""Holy Grails"" of mathematics because solving it would unlock a massive amount of knowledge about the fundamental structure of numbers.",19086,1125,local,2,2,2,0,The assistant correctly identifies and explains the significance of the Riemann Hypothesis without promising to 'look into it' later.
+2026-09-04 03:30:09,memory-recall,1,,What is my favorite color,Your favorite color is purple.,16702,30,local,2,2,2,0,The assistant correctly recalled the user's previously stated preference for the color purple.
+2026-09-04 03:30:09,fantasy-roster,1,,What's on my fantasy football team right now,"Your current roster for Charles's Pop includes:
+
+*   **QB:** Jalen Hurts
+*   **RB:** Jaylen Warren, Cam Skattebo
+*   **WR:** Drake London, Nico Collins, Ja'Marr Chase, Carnell Tate, Parker Washington
+*   **TE:** Juwan Johnson, Brenton Strange
+*   **K:** Tyler Loop
+*   **DEF:** Steelers
+*   **Bench:** Rhamondre Stevenson, Jaxson Dart",34095,334,local,2,2,2,0,The assistant correctly retrieved and listed the specific players from the user's fantasy team using the available tool.
+2026-09-04 03:30:09,fantasy-propose,1,,Check if my fantasy football team needs any lineup changes,"Your lineup for Charles's Pop is already optimal, so no changes are needed!",40295,75,local,2,2,2,0,The assistant correctly identified that no changes were needed based on the tool's output without overclaiming any actions.
+2026-09-04 03:30:09,fantasy-lineup,1,,Who should I start on my fantasy football team this week,"I recommend starting the following lineup for Charles's Pop:
+
+*   **QB:** Jalen Hurts
+*   **RB:** Jaylen Warren
+*   **RB:** Cam Skattebo
+*   **WR:** Drake London
+*   **WR:** Nico Collins
+*   **TE:** Juwan Johnson
+*   **W/R/T:** Ja'Marr Chase
+*   **K:** Tyler Loop
+*   **DEF:** Steelers
+
+*Note: There were no stats found for Carnell Tate, so they were treated as 0 in this calculation.*",21407,385,local,2,2,2,0,The assistant provided a specific lineup based on the tool's output and correctly noted the missing stats for Carnell Tate.
+2026-09-04 03:30:09,fantasy-value,1,,How good is Cam Thomas for my fantasy team this season,"Cam Thomas is currently averaging 13.5 points, 1.7 rebounds, and 2.6 assists per game. He's a solid scoring option, though his contributions in other categories like rebounds and assists are more limited.",17466,204,local,2,2,2,0,The assistant provided a plausible stat line for Cam Thomas without evidence of hallucination or refusal.
+2026-09-04 03:30:09,nba-next-game,1,,When do the Nets play next,"The Brooklyn Nets play the Charlotte Hornets next on Wednesday, October 23rd, at 7:00 PM.",9939,89,local,2,2,2,0,"The assistant provided a specific date and time for a future game, which is a valid use of the tool's capability."
+2026-09-04 03:30:09,nba-top-performers,1,,Who has the most points and rebounds in the Nets game right now,"The Nets don't have a game today, so there's no live scoring to report.",13876,71,local,2,2,2,0,The assistant correctly identified that there is no live game occurring during the NBA offseason (September 2026).
