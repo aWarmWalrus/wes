@@ -51,23 +51,30 @@ if (-not $env:WES_SLEEPER_USER) {
         'WES_SLEEPER_USER', 'User')
 }
 
-# BANTER RUNS ON THE SMALL MODEL, picks stay on the 12b.
+# BANTER RUNS ON THE PICK MODEL. Tried gemma3:4b for a day and reverted it
+# live, mid-mock, on 2026-09-04.
 #
-# Measured on 12 real logged payloads (2026-09-03): gemma3:4b answers a chat
-# line in 0.73s median against the 12b's 2.03s, produces valid JSON just as
-# reliably, and was not caught by the unverifiable() falsehood guard once. It
-# takes chat off the 12b entirely, so a chat line can no longer queue ahead of
-# a pick -- one Ollama serves this whole machine and it serialises requests.
+# The speed was real -- 0.73s median against 2.03s on 12 replayed payloads --
+# and it took chat off the pick model's queue entirely, since Ollama serialises
+# per model but runs different models concurrently. None of that was worth it.
 #
-# THE COST IS TONE, and it is visible: the 4b is formulaic ("Ugh, X?
-# Seriously?" three times running) and produced one line that read as
-# semantically inverted. The falsehood guard catches checkable false claims,
-# not clumsy ones. It also costs ~3GB of VRAM, leaving roughly 2GB spare on
-# this card once both models are resident.
+# THE 4B FABRICATED PICK NUMBERS. It posted "Puka at 5 feels like a bit of a
+# reach" -- twice -- in a draft where pick 5 was Ja'Marr Chase and Puka went at
+# 10. The payload it was handed had the correct picks in it both times. It also
+# fell into a stock cadence ("Ugh, X? Seriously?") across unrelated prompts.
 #
-# To put chat back on the 12b, delete this line (the code falls back to
-# WES_ESCALATE_MODEL). The pre-flight warms whichever model is configured.
-if (-not $env:WES_BANTER_MODEL) { $env:WES_BANTER_MODEL = "gemma3:4b" }
+# WORSE, unverifiable() did not catch either "Puka at 5", though it caught the
+# same shape of error from the 12b a week earlier ("says Mark Andrews went at
+# 13; he went at 125"). So the guard is not a safety net that makes a weaker
+# model acceptable here -- it has a hole, and the smaller model finds it more
+# often. Chat posts in public under the owner's account; a confidently wrong
+# pick number is the one output that cannot be walked back.
+#
+# To try a small model again: set WES_BANTER_MODEL before running, and fix the
+# guard first. The pre-flight warms and verifies whichever model is configured.
+if (-not $env:WES_BANTER_MODEL) {
+    $env:WES_BANTER_MODEL = $(if ($env:WES_ESCALATE_MODEL) { $env:WES_ESCALATE_MODEL } else { "gemma4:12b" })
+}
 
 # RUN AS A MODULE, not a script path. The Sleeper code lives in the `sleeper`
 # package now, and `python pc\sleeper\draft_day.py` would put pc\sleeper on
